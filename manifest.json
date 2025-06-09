@@ -1,13 +1,22 @@
 {
   "name": "Falāh AI Bot",
   "short_name": "Falāh",
-  "start_url": ".",
+  "description": "Falāh AI Bot: Swing‐trade signals, Telegram alerts & sheet log",
+  "start_url": "/falah-ai-bot/index.html",
+  "scope": "/falah-ai-bot/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "description": "Your AI-powered halal swing trading assistant",
-  "icons": [{
-    "src": "icon.png",
-    "sizes": "192x192",
-    "type": "image/png"
-  }]
+  "theme_color": "#205081",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
 }

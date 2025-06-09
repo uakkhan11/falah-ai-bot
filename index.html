@@ -1,37 +1,28 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Falāh AI Bot</title>
-    <link rel="manifest" href="manifest.json">
-    <!-- load telegram first -->
-    <script src="telegram.js"></script>
-    <!-- then load our Google-Sheets JSONP logic -->
-    <script src="gsheets.js"></script>
-  </head>
-  <body>
-    <h1>Welcome to Falāh AI Bot</h1>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Falāh AI Bot</title>
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+  <h1>Welcome to Falāh AI Bot</h1>
 
-    <button onclick="sendTelegramMessage('✅ Test Falāh Telegram')">
-      Test Telegram
-    </button>
+  <button onclick="sendTelegramMessage('✅ Test Telegram')">
+    Test Telegram
+  </button>
+  <button onclick="logToSheet({ stock:'TCS',entry:3700,exit:3745,pl:45,reason:'Mock' })">
+    Test Google Sheets
+  </button>
 
-    <!-- this must be defined by gsheets.js -->
-    <button onclick="logToSheet({
-        stock:  'TCS',
-        entry:   3700,
-        exit:    3745,
-        pl:      45,
-        reason: 'Mock Test'
-      })">
-      Test Google Sheets
-    </button>
-
-    <script>
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('service-worker.js');
-      }
-    </script>
-  </body>
+  <!-- load scripts AFTER your buttons exist -->
+  <script src="telegram.js"></script>
+  <script src="gsheets.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('service-worker.js');
+    }
+  </script>
+</body>
 </html>

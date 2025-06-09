@@ -8,39 +8,50 @@
 </head>
 <body>
   <h1>Falāh AI Bot Settings</h1>
-  <form id="settings-form">
-    <fieldset>
-      <legend>Trading Configuration</legend>
-      <label>
-        Brokerage Capital (₹):<br />
-        <input type="number" id="capital-input" />
-      </label>
-      <br /><br />
-      <label>
-        Max Trades per Day:<br />
-        <input type="number" id="max-trades-input" />
-      </label>
-      <br /><br />
-      <label>
-        Select Broker:<br />
-        <select id="broker-select">
-          <option>AngelOne</option>
-          <option>Zerodha</option>
-          <option>Upstox</option>
-          <option>Groww</option>
-          <option>5Paisa</option>
-        </select>
-     <form id="settingsForm">
-  <!-- your fields here… -->
-  <button type="submit">Save Settings</button>
-      <script>
-  document
-    .getElementById('settingsForm')
-    .addEventListener('submit', e => {
-      e.preventDefault();   // stop the browser from reloading
-      saveSettings();       // your existing function
+  <!-- index.html -->
+<form id="settingsForm">
+  <fieldset>
+    <legend>Trading Configuration</legend>
+
+    <label>
+      Brokerage Capital (₹):
+      <input id="capitalInput" type="number">
+    </label><br>
+
+    <label>
+      Max Trades per Day:
+      <input id="maxTradesInput" type="number">
+    </label><br>
+
+    <label>
+      Select Broker:
+      <select id="brokerSelect">
+        <option>AngelOne</option>
+        <option>Zerodha</option>
+        <option>Upstox</option>
+        <option>Groww</option>
+        <option>5Paisa</option>
+      </select>
+    </label><br>
+
+    <!-- Now this is the only submit button in the form -->
+    <button type="submit">Save Settings</button>
+  </fieldset>
+</form>
+
+ <script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('settingsForm');
+    form.addEventListener('submit', function(e) {
+      e.preventDefault();           // STOP the real form submission
+      saveSettings();               // call your existing saveSettings()
+
+      // Optional: give the user feedback
+      alert('Settings saved!');
     });
+  });
 </script>
+
     </fieldset>
   </form>
 

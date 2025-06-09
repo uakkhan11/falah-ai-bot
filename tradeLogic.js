@@ -1,45 +1,62 @@
 // tradeLogic.js
 (function(){
-  // these vars are private and only declared once per page load
-  let todayTrades      = 0;
+  let todayTrades = 0;
   let todayUsedCapital = 0;
 
-  async function runTradingCycle() {
-    const cfg = loadConfig();
-    console.log(`Configured Capital: ₹${cfg.capital}, Max Trades: ${cfg.maxTrades}, Broker: ${cfg.brokerName}`);
-
-    // Example signal
-    const signal = { stock:'TCS', entry:3700, exit:3745, pl:45, reason:'Auto Trade' };
-
-    // Check limits
-    if (todayTrades >= cfg.maxTrades) {
-      console.warn('Max trades reached.');
-      return;
+  // Load settings from config.js
+  function loadConfig() {
+    try {
+      return JSON.parse(localStorage.getItem('falahConfig')) || {};
+    } catch {
+      return {};
     }
-    if (todayUsedCapital + signal.entry > cfg.capital) {
-      console.warn('Not enough capital.');
-      return;
-    }
-
-    // “Place” the order
-    const response = await placeOrder(cfg.brokerName, signal);
-    console.log('Order response:', response);
-
-    // Update counters
-    todayTrades++;
-    todayUsedCapital += signal.entry;
-
-    // Telegram
-    sendTelegramMessage(`✅ Traded ${signal.stock} @ ${signal.entry}`);
-
-    // CSV logging
-    logToCSV(signal);
   }
 
-  // Export globally
-  window.runTradingCycle = runTradingCycle;
-
   // Mock placeOrder
-  window.placeOrder = (broker, signal) =>
-    Promise.resolve({ broker, ...signal, orderId:Date.now() });
+  async function placeOrder(broker, signal) {
+    // Simulate network latency
+    await new Promise(r => setTimeout(r, 200));
+    return { broker, ...signal, orderId: Date.now() };
+  }
+
+  // The main entrypoint
+  async function runTradingCycle() {
+    const cfg = loadConfig();
+    console.log(`Config → capital:₹${cfg.capital}, maxTrades:${cfg.maxTrades}, broker:${cfg.brokerName}`);
+
+    // Dummy signal
+    const signal = { stock:'TCS', entry:3700, exit:3745, pl:45, reason:'Auto Trade' };
+
+    if (todayTrades >= cfg.maxTrades) {
+      console.warn('🍂 Max trades reached for today.');
+      return;
+    }
+    if ((todayUsedCapital + signal.entry) > cfg.capital) {
+      console.warn('🚫 Not enough capital.');
+      return;
+    }
+
+    try {
+      const res = await placeOrder(cfg.brokerName, signal);
+      console.log('🚀 Order placed:', res);
+      todayTrades++;
+      todayUsedCapital += signal.entry;
+
+      // Telegram
+      sendTelegramMessage(`✅ Traded ${signal.stock} @ ₹${signal.entry} via ${cfg.brokerName}`);
+
+      // CSV
+      if (typeof logToCSV === 'function') {
+        logToCSV(signal);
+        console.log('💾 Logged to CSV buffer:', signal);
+      } else {
+        console.warn('⚠️ logToCSV not defined');
+      }
+    } catch (err) {
+      console.error('❌ Trade failed:', err);
+      sendTelegramMessage(`❌ Trade failed: ${err.message}`);
+    }
+  }
+
+  window.runTradingCycle = runTradingCycle;
 })();

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Falāh AI Bot</title>
+  <title>Falāh AI Bot - Settings</title>
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
@@ -11,24 +11,33 @@
 
   <!-- Settings Form -->
   <form id="config-form">
-    <label>Brokerage Capital (₹):<br>
-      <input type="number" id="capital" />
-    </label><br><br>
-    <label>Max Trades per Day:<br>
-      <input type="number" id="maxTrades" />
-    </label><br><br>
-    <label>Broker Name:<br>
-      <input type="text" id="brokerName" placeholder="e.g. AngelOne" />
-    </label><br><br>
-    <button type="submit">Save Settings</button>
+    <fieldset>
+      <legend>Trading Configuration</legend>
+      <label>Brokerage Capital (₹):<br>
+        <input type="number" id="capital" required />
+      </label><br><br>
+      <label>Max Trades per Day:<br>
+        <input type="number" id="maxTrades" required />
+      </label><br><br>
+      <label>Select Broker:<br>
+        <select id="brokerName">
+          <option value="AngelOne">AngelOne</option>
+          <option value="Zerodha">Zerodha</option>
+          <option value="Upstox">Upstox</option>
+          <option value="Groww">Groww</option>
+          <option value="5Paisa">5Paisa</option>
+        </select>
+      </label><br><br>
+      <button type="submit">Save Settings</button>
+    </fieldset>
   </form>
 
   <hr>
   <h2>Quick Actions</h2>
-  <button onclick="sendTelegramMessage('Test Telegram')">Test Telegram</button>
+  <button onclick="sendTelegramMessage('✅ Test Telegram')">Test Telegram</button>
   <button onclick="logToSheet({ stock:'TCS', entry:3700, exit:3745, pl:45, reason:'Mock' })">Test Google Sheets</button>
 
-  <!-- Include scripts -->
+  <!-- Include scripts at end -->
   <script src="config.js"></script>
   <script src="telegram.js"></script>
   <script src="gsheets.js"></script>

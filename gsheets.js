@@ -1,7 +1,7 @@
 // gsheets.js
 
 (function(){
-  const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw…/exec';  // your published Apps Script URL
+  const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxklIImFWEAgFFLHLjFVBPI5mMP2cTUkkKAhX2FNj95CVCi716aLUmTN_kpInu0h1dAeg/exec';  // your published Apps Script URL
 
   function logToSheet(data) {
     // Build JSONP callback name

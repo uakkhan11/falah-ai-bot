@@ -25,19 +25,27 @@ function runTradingCycle() {
 
   // Place your order via the selected broker
   placeOrder(brokerName, signal)
-    .then(response => {
-      console.log('Order placed successfully:', response);
-      todayTrades++;
-      todayUsedCapital += signal.entry;
-      sendTelegramMessage(`✅ Trade executed on ${signal.stock} via ${brokerName}`);
-      logToSheet({
-        stock: signal.stock,
-        entry: signal.entry,
-        exit: signal.exit,
-        pl: signal.pl,
-        reason: 'Auto Trade'
-      });
-    })
+// after placeOrder().then(...)
+.then(response => {
+  console.log('Order placed successfully:', response);
+  todayTrades++;
+  todayUsedCapital += signal.entry;
+  sendTelegramMessage(`✅ Trade executed on ${signal.stock} via ${brokerName}`);
+
+  // Guarded sheet log
+  if (typeof logToSheet === 'function') {
+    logToSheet({
+      stock: signal.stock,
+      entry: signal.entry,
+      exit: signal.exit,
+      pl: signal.pl,
+      reason: 'Auto Trade'
+    });
+  } else {
+    console.warn('logToSheet is not defined—Google Sheets integration not loaded.');
+  }
+})
+
     .catch(err => {
       console.error('Order failed:', err);
       sendTelegramMessage(`❌ Trade failed on ${signal.stock}: ${err.message}`);

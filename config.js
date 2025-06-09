@@ -1,14 +1,20 @@
-const CONFIG_KEY = 'falahConfig';
-const DEFAULTS = { capital:20000, maxTrades:5, brokerName:'AngelOne' };
-window.loadConfig = () => JSON.parse(localStorage.getItem(CONFIG_KEY) || JSON.stringify(DEFAULTS));
+// config.js
 
-// Load config or fall back to defaults
-function loadConfig() {
-  const raw = localStorage.getItem(CONFIG_KEY);
-  return raw ? JSON.parse(raw) : DEFAULTS;
-}
+// A single global key for localStorage
+window.CONFIG_KEY = 'falahConfig';
 
-// Save config back to localStorage
-function saveConfig(cfg) {
-  localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
-}
+// Default settings
+window.DEFAULTS = {
+  capital:    20000,
+  maxTrades:  5,
+  brokerName: 'AngelOne'
+};
+
+// Expose this function globally
+window.loadConfig = function() {
+  try {
+    return JSON.parse(localStorage.getItem(window.CONFIG_KEY)) || window.DEFAULTS;
+  } catch {
+    return window.DEFAULTS;
+  }
+};

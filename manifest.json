@@ -1,0 +1,13 @@
+{
+  "name": "Falāh AI Bot",
+  "short_name": "Falāh",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "description": "Your AI-powered halal swing trading assistant",
+  "icons": [{
+    "src": "icon.png",
+    "sizes": "192x192",
+    "type": "image/png"
+  }]
+}

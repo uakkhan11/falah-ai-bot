@@ -1,112 +1,147 @@
-  <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Falāh AI Bot</title>
-
-  <!-- PWA manifest -->
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#205081"/>
-  <link rel="icon" href="icon-192.png" sizes="192x192" />
-
   <style>
-    body { font-family: sans-serif; padding: 1rem; max-width: 600px; margin: auto; }
-    fieldset { margin-bottom: 1.5rem; }
-    button { margin-right: .5rem; padding: .5rem 1rem; }
-    h1 { margin-bottom: 1rem; }
+    body { font-family:sans-serif; max-width:600px; margin:auto; padding:1em; }
+    fieldset { margin-bottom:1.5em; }
+    label { display:block; margin:0.5em 0; }
+    button { margin-right:.5em; }
+    .api-credentials { margin-left:1em; margin-top:.5em; padding:.5em; border:1px solid #ddd; }
+    .hidden { display:none; }
   </style>
 </head>
-
-  <!-- Inline form‐handler code -->
-
-  <!-- Load config first -->
-  <script src="config.js"></script>
-  <!-- Then load your core logic -->
-  <script src="tradeLogic.js"></script>
-  <!-- Then your CSV & Telegram scripts -->
-  <script src="telegram.js"></script>
-  <script src="csv.js"></script>
-
-  
 <body>
   <h1>Falāh AI Bot Settings</h1>
 
-  <!-- Settings Form -->
   <form id="settingsForm">
     <fieldset>
       <legend>Trading Configuration</legend>
 
-      <label>
-        Brokerage Capital (₹):
-        <input id="capitalInput" type="number" min="0"/>
-      </label>
-      <br/><br/>
+      <!-- Capital & Max Trades -->
+      <label>Brokerage Capital (₹):
+        <input id="capitalInput" type="number" min="0"/></label>
+      <label>Max Trades per Day:
+        <input id="maxTradesInput" type="number" min="1"/></label>
 
-      <label>
-        Max Trades per Day:
-        <input id="maxTradesInput" type="number" min="1"/>
-      </label>
-      <br/><br/>
-
-      <label>
-        Select Broker:
+      <!-- Broker selection -->
+      <label>Select Broker:
         <select id="brokerSelect">
-          <option>AngelOne</option>
-          <option>Zerodha</option>
-          <option>Upstox</option>
-          <option>Groww</option>
-          <option>5Paisa</option>
+          <option value="AngelOne">AngelOne</option>
+          <option value="Zerodha">Zerodha</option>
+          <option value="Upstox">Upstox</option>
+          <option value="Groww">Groww</option>
+          <option value="5Paisa">5Paisa</option>
         </select>
       </label>
-      <br/><br/>
+
+      <!-- API credential sections for each broker -->
+      <div id="creds-AngelOne" class="api-credentials hidden">
+        <label>API Key:
+          <input id="apiKey-AngelOne" type="text"/></label>
+        <label>API Secret:
+          <input id="apiSecret-AngelOne" type="text"/></label>
+      </div>
+      <div id="creds-Zerodha" class="api-credentials hidden">
+        <label>API Key:
+          <input id="apiKey-Zerodha" type="text"/></label>
+        <label>API Secret:
+          <input id="apiSecret-Zerodha" type="text"/></label>
+      </div>
+      <div id="creds-Upstox" class="api-credentials hidden">
+        <label>API Key:
+          <input id="apiKey-Upstox" type="text"/></label>
+        <label>API Secret:
+          <input id="apiSecret-Upstox" type="text"/></label>
+      </div>
+      <div id="creds-Groww" class="api-credentials hidden">
+        <label>API Key:
+          <input id="apiKey-Groww" type="text"/></label>
+        <label>API Secret:
+          <input id="apiSecret-Groww" type="text"/></label>
+      </div>
+      <div id="creds-5Paisa" class="api-credentials hidden">
+        <label>API Key:
+          <input id="apiKey-5Paisa" type="text"/></label>
+        <label>API Secret:
+          <input id="apiSecret-5Paisa" type="text"/></label>
+      </div>
 
       <button type="submit">Save Settings</button>
     </fieldset>
   </form>
 
-  <!-- Quick Actions -->
   <h2>Quick Actions</h2>
   <button onclick="runTradingCycle()">Run Trading Cycle</button>
   <button onclick="sendTelegramMessage('✅ Test Telegram from Falāh!')">Test Telegram</button>
   <button onclick="downloadCSV()">Download Trades CSV</button>
 
-  <!-- Inline Save & Load Settings Logic -->
+  <!-- Inline scripts: form handling & settings -->
   <script>
-    // Saves settings into localStorage
-    function saveSettings() {
-      const capital    = Number(document.getElementById('capitalInput').value) || 0;
-      const maxTrades  = Number(document.getElementById('maxTradesInput').value) || 0;
-      const brokerName = document.getElementById('brokerSelect').value;
-      const config = { capital, maxTrades, brokerName };
-      localStorage.setItem('falahConfig', JSON.stringify(config));
-      console.log('Saved config:', config);
-    }
-
-    // On load: populate form and wire up save
     document.addEventListener('DOMContentLoaded', () => {
-      // Populate from storage
+      // Elements
+      const form = document.getElementById('settingsForm');
+      const brokerSelect = document.getElementById('brokerSelect');
+
+      // Show/hide credential sections
+      function updateBrokerFields() {
+        ['AngelOne','Zerodha','Upstox','Groww','5Paisa']
+          .forEach(b => {
+            document.getElementById(`creds-${b}`)
+                    .classList.toggle('hidden', brokerSelect.value !== b);
+          });
+      }
+      brokerSelect.addEventListener('change', updateBrokerFields);
+
+      // Load saved config
       const saved = JSON.parse(localStorage.getItem('falahConfig') || '{}');
       if (saved.capital)    document.getElementById('capitalInput').value   = saved.capital;
       if (saved.maxTrades)  document.getElementById('maxTradesInput').value = saved.maxTrades;
-      if (saved.brokerName) document.getElementById('brokerSelect').value   = saved.brokerName;
-
-      // Intercept form submit
-      const form = document.getElementById('settingsForm');
-      form.addEventListener('submit', e => {
-        e.preventDefault();  // prevent page reload
-        saveSettings();
-        alert('Settings saved!');
+      if (saved.brokerName) {
+        brokerSelect.value = saved.brokerName;
+        updateBrokerFields();
+      }
+      // Load each broker’s creds
+      ['AngelOne','Zerodha','Upstox','Groww','5Paisa'].forEach(b => {
+        const keyInput = document.getElementById(`apiKey-${b}`);
+        const secInput = document.getElementById(`apiSecret-${b}`);
+        if (saved.credentials && saved.credentials[b]) {
+          keyInput.value = saved.credentials[b].apiKey || '';
+          secInput.value = saved.credentials[b].apiSecret || '';
+        }
       });
 
-      // Register service worker for PWA
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('service-worker.js');
-      }
+      // Intercept Save
+      form.addEventListener('submit', e => {
+        e.preventDefault();
+        // Gather settings
+        const config = {
+          capital:    Number(document.getElementById('capitalInput').value),
+          maxTrades:  Number(document.getElementById('maxTradesInput').value),
+          brokerName: brokerSelect.value,
+          credentials: {}
+        };
+        // Gather credentials for each broker
+        ['AngelOne','Zerodha','Upstox','Groww','5Paisa'].forEach(b => {
+          config.credentials[b] = {
+            apiKey:    document.getElementById(`apiKey-${b}`).value,
+            apiSecret: document.getElementById(`apiSecret-${b}`).value
+          };
+        });
+        localStorage.setItem('falahConfig', JSON.stringify(config));
+        alert('Settings saved!');
+      });
     });
+
+    // PWA install support
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('service-worker.js');
+    }
   </script>
 
-  <!-- External Scripts -->
+  <!-- External scripts -->
   <script src="config.js"></script>
   <script src="telegram.js"></script>
   <script src="csv.js"></script>

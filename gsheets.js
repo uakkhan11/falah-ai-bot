@@ -1,21 +1,29 @@
-// JSONP-based sheet logger
-function logToSheet(trade) {
-  const base = 'https://script.google.com/macros/s/AKfycbw-n4J-2WsGS9c5nwVckdcZ65XwhP2NMrbsNf0B28p9_Cu_MeHBD4fuTmMjRXDrDdWhKQ/exec'; 
-  const params = new URLSearchParams({
-    stock:    trade.stock,
-    entry:    trade.entry,
-    exit:     trade.exit,
-    pl:       trade.pl,
-    reason:   trade.reason,
-    callback: 'onSheetResponse'
-  });
-  const s = document.createElement('script');
-  s.src = `${base}?${params}`;
-  document.body.appendChild(s);
-}
+self.addEventListener('install', e => {
+  e.waitUntil(
+    caches.open('falah').then(cache =>
+      cache.addAll([
+        'index.html',
+        'telegram.js',
+        'gsheets.js',
+        'manifest.json',
+        'icon.png'
+      ])
+    )
+  );
+});
 
-// Called by the JSONP response
-function onSheetResponse(resp) {
-  console.log('Sheets JSONP:', resp);
-  alert('Logged to sheet: ' + resp.status);
-}
+self.addEventListener('fetch', e => {
+  const reqUrl = new URL(e.request.url);
+
+  // If it’s not from our origin, skip the worker and let the browser handle it.
+  if (reqUrl.origin !== location.origin) {
+    return;
+  }
+
+  // Otherwise serve from cache, fall back to network
+  e.respondWith(
+    caches.match(e.request).then(cached =>
+      cached || fetch(e.request)
+    )
+  );
+});

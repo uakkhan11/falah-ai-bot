@@ -15,3 +15,7 @@ function loadConfig() {
 function saveConfig(cfg) {
   localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
 }
+
+const CONFIG_KEY = 'falahConfig';
+const DEFAULTS = { capital:20000, maxTrades:5, brokerName:'AngelOne' };
+window.loadConfig = () => JSON.parse(localStorage.getItem(CONFIG_KEY) || JSON.stringify(DEFAULTS));

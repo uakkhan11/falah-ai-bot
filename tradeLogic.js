@@ -34,13 +34,14 @@ function runTradingCycle() {
 
   // Guarded sheet log
   if (typeof logToSheet === 'function') {
-    logToSheet({
-      stock: signal.stock,
-      entry: signal.entry,
-      exit: signal.exit,
-      pl: signal.pl,
-      reason: 'Auto Trade'
-    });
+    logToCSV({
+  stock: signal.stock,
+  entry: signal.entry,
+  exit: signal.exit,
+  pl: signal.pl,
+  reason: 'Auto Trade'
+});
+
   } else {
     console.warn('logToSheet is not defined—Google Sheets integration not loaded.');
   }

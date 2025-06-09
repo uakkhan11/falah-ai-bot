@@ -30,9 +30,17 @@
           <option>Groww</option>
           <option>5Paisa</option>
         </select>
-      </label>
-      <br /><br />
-      <button type="button" onclick="saveSettings()">Save Settings</button>
+     <form id="settingsForm">
+  <!-- your fields here… -->
+  <button type="submit">Save Settings</button>
+      <script>
+  document
+    .getElementById('settingsForm')
+    .addEventListener('submit', e => {
+      e.preventDefault();   // stop the browser from reloading
+      saveSettings();       // your existing function
+    });
+</script>
     </fieldset>
   </form>
 

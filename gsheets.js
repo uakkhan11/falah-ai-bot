@@ -1,4 +1,4 @@
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxibhA8nKQ50gtxPTjib_3MRUihb-_LZKM5BplA5Z2s43fqIfjBj3saDWNt9rkLuZaf1w/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwaFCbbNhf4VpLLVufLvCwTyprC45k26gBmr_A4C7c26lqq7-K4sQT5TUAiMTfiEVYHkg/exec';
 async function logToSheet(trade) {
   let res = await fetch(SCRIPT_URL, {
     method: 'POST',

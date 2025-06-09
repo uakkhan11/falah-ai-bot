@@ -1,28 +1,61 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Falāh AI Bot</title>
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
-  <h1>Welcome to Falāh AI Bot</h1>
+  <h1>Falāh AI Bot Settings</h1>
 
-  <button onclick="sendTelegramMessage('✅ Test Telegram')">
-    Test Telegram
-  </button>
-  <button onclick="logToSheet({ stock:'TCS',entry:3700,exit:3745,pl:45,reason:'Mock' })">
-    Test Google Sheets
-  </button>
+  <!-- Settings Form -->
+  <form id="config-form">
+    <label>Brokerage Capital (₹):<br>
+      <input type="number" id="capital" />
+    </label><br><br>
+    <label>Max Trades per Day:<br>
+      <input type="number" id="maxTrades" />
+    </label><br><br>
+    <label>Broker Name:<br>
+      <input type="text" id="brokerName" placeholder="e.g. AngelOne" />
+    </label><br><br>
+    <button type="submit">Save Settings</button>
+  </form>
 
-  <!-- load scripts AFTER your buttons exist -->
+  <hr>
+  <h2>Quick Actions</h2>
+  <button onclick="sendTelegramMessage('Test Telegram')">Test Telegram</button>
+  <button onclick="logToSheet({ stock:'TCS', entry:3700, exit:3745, pl:45, reason:'Mock' })">Test Google Sheets</button>
+
+  <!-- Include scripts -->
+  <script src="config.js"></script>
   <script src="telegram.js"></script>
   <script src="gsheets.js"></script>
+  <script src="tradeLogic.js"></script>
   <script>
+    // Register Service Worker
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('service-worker.js');
     }
+
+    // Load saved config into form
+    const form = document.getElementById('config-form');
+    const cfg = loadConfig();
+    document.getElementById('capital').value = cfg.capital;
+    document.getElementById('maxTrades').value = cfg.maxTrades;
+    document.getElementById('brokerName').value = cfg.brokerName;
+
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      const newCfg = {
+        capital: Number(document.getElementById('capital').value),
+        maxTrades: Number(document.getElementById('maxTrades').value),
+        brokerName: document.getElementById('brokerName').value
+      };
+      saveConfig(newCfg);
+      alert('Settings saved!');
+    });
   </script>
 </body>
 </html>

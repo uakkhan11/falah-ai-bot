@@ -1,71 +1,53 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Falāh AI Bot - Settings</title>
-  <link rel="manifest" href="manifest.json">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="manifest" href="manifest.json" />
+  <title>Falāh AI Bot Settings</title>
 </head>
 <body>
   <h1>Falāh AI Bot Settings</h1>
-
-  <!-- Settings Form -->
-  <form id="config-form">
+  <form id="settings-form">
     <fieldset>
       <legend>Trading Configuration</legend>
-      <label>Brokerage Capital (₹):<br>
-        <input type="number" id="capital" required />
-      </label><br><br>
-      <label>Max Trades per Day:<br>
-        <input type="number" id="maxTrades" required />
-      </label><br><br>
-      <label>Select Broker:<br>
-        <select id="brokerName">
-          <option value="AngelOne">AngelOne</option>
-          <option value="Zerodha">Zerodha</option>
-          <option value="Upstox">Upstox</option>
-          <option value="Groww">Groww</option>
-          <option value="5Paisa">5Paisa</option>
+      <label>
+        Brokerage Capital (₹):<br />
+        <input type="number" id="capital-input" />
+      </label>
+      <br /><br />
+      <label>
+        Max Trades per Day:<br />
+        <input type="number" id="max-trades-input" />
+      </label>
+      <br /><br />
+      <label>
+        Select Broker:<br />
+        <select id="broker-select">
+          <option>AngelOne</option>
+          <option>Zerodha</option>
+          <option>Upstox</option>
+          <option>Groww</option>
+          <option>5Paisa</option>
         </select>
-      </label><br><br>
-      <button type="submit">Save Settings</button>
+      </label>
+      <br /><br />
+      <button id="save-settings">Save Settings</button>
     </fieldset>
   </form>
 
-  <hr>
   <h2>Quick Actions</h2>
   <button onclick="runTradingCycle()">Run Trading Cycle</button>
-  <button onclick="sendTelegramMessage('✅ Test Telegram')">Test Telegram</button>
-  <button onclick="logToSheet({ stock:'TCS', entry:3700, exit:3745, pl:45, reason:'Mock' })">Test Google Sheets</button>
+  <button onclick="sendTelegramMessage('📨 Test message from Falāh')">Test Telegram</button>
+  <button onclick="downloadCSV()">Download Trades CSV</button>
 
-  <!-- Include scripts at end -->
+  <!-- Core scripts -->
   <script src="config.js"></script>
   <script src="telegram.js"></script>
-  <script src="gsheets.js"></script>
   <script src="tradeLogic.js"></script>
-  <script>
-    // Register Service Worker
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('service-worker.js');
-    }
+  <!-- CSV download implementation -->
+  <script src="csv.js"></script>
 
-    // Load saved config into form
-    const form = document.getElementById('config-form');
-    const cfg = loadConfig();
-    document.getElementById('capital').value = cfg.capital;
-    document.getElementById('maxTrades').value = cfg.maxTrades;
-    document.getElementById('brokerName').value = cfg.brokerName;
-
-    form.addEventListener('submit', e => {
-      e.preventDefault();
-      const newCfg = {
-        capital: Number(document.getElementById('capital').value),
-        maxTrades: Number(document.getElementById('maxTrades').value),
-        brokerName: document.getElementById('brokerName').value
-      };
-      saveConfig(newCfg);
-      alert('Settings saved!');
-    });
-  </script>
+  <script src="service-worker.js" async></script>
 </body>
 </html>

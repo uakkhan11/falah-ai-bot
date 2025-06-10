@@ -1,5 +1,5 @@
 // broker.js
-const PROXY_URL = 'https://script.google.com/macros/s/AKfycbyiWSQ1f2TvFeMcEPQxA8HWaJxcMVuZEOfmVGaAEbEo_qDn20pChrvD6mhB9tRWCgV1Og/exec';
+const PROXY_URL = 'https://falah-proxy.uakkhan11.workers.dev/';
 
 async function proxyRequest(body) {
   const res = await fetch(PROXY_URL, {

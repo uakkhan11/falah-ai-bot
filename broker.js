@@ -1,43 +1,30 @@
 // broker.js
-const PROXY_URL = 'https://script.google.com/macros/s/AKfycbwHcqFg5z1ICvrtjMXZpBuQ-t_6v91maQSJ4r92mH1-jix1mXqxnIvB_Kf5_poArsQaEA/exec';
+const PROXY_URL = 'https://script.google.com/macros/s/AKfycbyiWSQ1f2TvFeMcEPQxA8HWaJxcMVuZEOfmVGaAEbEo_qDn20pChrvD6mhB9tRWCgV1Og/exec';
 
 async function proxyRequest(body) {
   const res = await fetch(PROXY_URL, {
-    method:  'POST',
-    headers: { 'Content-Type':'application/json' },
-    body:    JSON.stringify(body)
+    method: 'POST',
+    headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify(body)
   });
+  if (!res.ok) throw new Error('Network error ' + res.status);
   return res.json();
 }
 
-// Exchange request_token for access_token
 async function exchangeToken(requestToken) {
-  const resp = await proxyRequest({ request_token: requestToken });
-  if (resp.status === 'error') throw new Error(resp.message);
-  return resp.data.access_token;
+  return proxyRequest({ request_token: requestToken });
 }
 
-// Place a real order
 async function placeOrder(broker, signal) {
-  const cfg = loadConfig();
-  if (broker === 'Zerodha') {
-    const token = cfg.accessToken || await exchangeToken(cfg.requestToken);
-    // Save it for reuse
-    localStorage.setItem('falahAccessToken', token);
+  const cfg = JSON.parse(localStorage.getItem('falahConfig')||'{}');
+  const token = cfg.accessToken || (await exchangeToken(cfg.requestToken)).data.access_token;
+  // Save access token
+  cfg.accessToken = token;
+  localStorage.setItem('falahConfig', JSON.stringify(cfg));
 
-    const resp = await proxyRequest({
-      broker,
-      stock: signal.stock,
-      entry: signal.entry,
-      access_token: token
-    });
-    if (!resp.status && resp.status !== 'success') {
-      throw new Error(resp.message || 'Order failed');
-    }
-    return resp.data || resp;
-  }
-  throw new Error('Unsupported broker: ' + broker);
+  // Place order
+  return proxyRequest({ broker, ...signal, access_token: token });
 }
 
-window.placeOrder     = placeOrder;
-window.exchangeToken  = exchangeToken;
+window.exchangeToken = exchangeToken;
+window.placeOrder    = placeOrder;

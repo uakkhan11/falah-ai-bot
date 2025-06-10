@@ -201,6 +201,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   </script>
 
+  // After reading all creds…
+const config = {
+  capital:    Number(document.getElementById('capitalInput').value),
+  maxTrades:  Number(document.getElementById('maxTradesInput').value),
+  brokerName: brokerSelect.value,
+  credentials: { /* your existing per‐broker creds */ },
++ requestToken: localStorage.getItem('falahRequestToken') || ''
+};
+localStorage.setItem('falahConfig', JSON.stringify(config));
+
+
   <!-- External scripts -->
   <script src="config.js"></script>
   <script src="telegram.js"></script>

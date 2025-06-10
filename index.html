@@ -13,6 +13,66 @@
     .hidden { display:none; }
   </style>
 </head>
+ <script>
+// SHA-256 helper for exchanging the Zerodha request_token
+async function sha256hex(message) {
+  const msgBuffer   = new TextEncoder().encode(message);
+  const hashBuffer  = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray   = Array.from(new Uint8Array(hashBuffer));
+  return hashArray
+    .map(b => b.toString(16).padStart(2,'0'))
+    .join('');
+}
+</script>
+  
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+  // If we already have an access token, skip this step
+  if (localStorage.getItem('falahAccessToken')) return;
+
+  const reqToken = localStorage.getItem('falahRequestToken');
+  if (!reqToken) return; // not in the redirect flow
+
+  const stored = JSON.parse(localStorage.getItem('falahConfig') || '{}');
+  const apiKey = stored.credentials?.Zerodha?.apiKey;
+  const apiSecret = stored.credentials?.Zerodha?.apiSecret;
+  if (!apiKey || !apiSecret) {
+    alert('Please save your Zerodha API Key & Secret first.');
+    return;
+  }
+
+  try {
+    // Compute checksum = sha256(apiKey + request_token + apiSecret)
+    const checksum = await sha256hex(apiKey + reqToken + apiSecret);
+
+    // POST form-encoded data to Kite session API
+    const form = new URLSearchParams({
+      api_key:       apiKey,
+      request_token: reqToken,
+      checksum
+    });
+
+    const res = await fetch('https://api.kite.trade/session/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form.toString()
+    });
+
+    const payload = await res.json();
+    if (payload.status === 'success') {
+      // Save your access token
+      localStorage.setItem('falahAccessToken', payload.data.access_token);
+      alert('🎉 Logged in! Access token saved for Zerodha trades.');
+    } else {
+      alert('❌ Token exchange failed: ' + payload.message);
+    }
+  } catch (err) {
+    console.error(err);
+    alert('Error exchanging token: ' + err.message);
+  }
+});
+</script>
+ 
 <body>
   <h1>Falāh AI Bot Settings</h1>
 

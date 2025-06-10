@@ -240,6 +240,50 @@ document.addEventListener('DOMContentLoaded', () => {
   <script src="telegram.js"></script>
   <script src="csv.js"></script>
   <script src="broker.js"></script>
+
+  <!-- Inline token‐exchange logic -->
+  <script>
+    // Your Apps Script proxy URL
+    const PROXY_URL = 'https://script.google.com/macros/s/AKfy.../exec';
+
+    async function exchangeToken(requestToken) {
+      try {
+        const response = await fetch(PROXY_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ request_token: requestToken })
+        });
+        const data = await response.json();
+        if (data.status === 'success' && data.data.access_token) {
+          const cfg = JSON.parse(localStorage.getItem('falahConfig') || '{}');
+          cfg.accessToken = data.data.access_token;
+          localStorage.setItem('falahConfig', JSON.stringify(cfg));
+          alert('🎉 Access token saved!');
+          return data.data.access_token;
+        } else {
+          console.error('Token exchange error:', data);
+          alert('❌ Token exchange failed: ' + (data.message || JSON.stringify(data)));
+          return null;
+        }
+      } catch (err) {
+        console.error('Proxy fetch failed:', err);
+        alert('❌ Proxy fetch failed: ' + err.message);
+        return null;
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const requestToken = localStorage.getItem('falahRequestToken');
+      const cfg = JSON.parse(localStorage.getItem('falahConfig') || '{}');
+      if (requestToken && !cfg.accessToken) {
+        exchangeToken(requestToken);
+      }
+    });
+  </script>
+
+  <!-- Finally, load your trading logic -->
+  
   <script src="tradeLogic.js"></script>
 </body>
 </html>
+

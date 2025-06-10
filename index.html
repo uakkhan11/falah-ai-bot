@@ -41,17 +41,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  try {
-    // Compute checksum = sha256(apiKey + request_token + apiSecret)
-    const checksum = await sha256hex(apiKey + reqToken + apiSecret);
-
-    // POST form-encoded data to Kite session API
-    const form = new URLSearchParams({
-      api_key:       apiKey,
-      request_token: reqToken,
-      checksum
-    });
-
     const res = await fetch('https://api.kite.trade/session/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -104,11 +93,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         <label>API Secret:
           <input id="apiSecret-AngelOne" type="text"/></label>
       </div>
-      <div id="creds-Zerodha" class="api-credentials hidden">
-        <label>API Key:
-          <input id="apiKey-Zerodha" type="text"/></label>
-        <label>API Secret:
-          <input id="apiSecret-Zerodha" type="text"/></label>
+      <div id="creds-Zerodha" class="api-credentials">
+      <label>API Key:
+      <input id="apiKey-Zerodha" type="text"/>
+      </label>
+      <label>API Secret:
+      <input id="apiSecret-Zerodha" type="text"/>
+      </label>
+      <label>Access Token:
+      <input id="accessToken-Zerodha" type="text" placeholder="Paste your access_token here"/>
+      </label>
       </div>
       <div id="creds-Upstox" class="api-credentials hidden">
         <label>API Key:

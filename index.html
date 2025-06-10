@@ -201,15 +201,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   </script>
 
-  // After reading all creds…
-const config = {
-  capital:    Number(document.getElementById('capitalInput').value),
-  maxTrades:  Number(document.getElementById('maxTradesInput').value),
-  brokerName: brokerSelect.value,
-  credentials: { /* your existing per‐broker creds */ },
-+ requestToken: localStorage.getItem('falahRequestToken') || ''
-};
-localStorage.setItem('falahConfig', JSON.stringify(config));
+  <script>
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.getElementById('settingsForm');
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+
+    // **Build your config object here—no comment markers or '+' needed:**
+    const config = {
+      capital:    Number(document.getElementById('capitalInput').value),
+      maxTrades:  Number(document.getElementById('maxTradesInput').value),
+      brokerName: document.getElementById('brokerSelect').value,
+      credentials: {
+        AngelOne: {
+          apiKey:    document.getElementById('apiKey-AngelOne').value,
+          apiSecret: document.getElementById('apiSecret-AngelOne').value
+        },
+        Zerodha: {
+          apiKey:    document.getElementById('apiKey-Zerodha').value,
+          apiSecret: document.getElementById('apiSecret-Zerodha').value
+        },
+        // …and so on for each broker…
+      },
+      requestToken: localStorage.getItem('falahRequestToken') || '',
+      accessToken:  localStorage.getItem('falahAccessToken')  || ''
+    };
+
+    // Store it
+    localStorage.setItem('falahConfig', JSON.stringify(config));
+    alert('Settings saved!');
+  });
+});
+</script>
 
 
   <!-- External scripts -->

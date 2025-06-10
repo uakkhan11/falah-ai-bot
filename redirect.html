@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Falāh Token Captured</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+</head>
+<body>
+  <h1>Falāh AI Bot</h1>
+  <p id="status">Capturing token…</p>
+
+  <script>
+    // Parse the request_token from the URL
+    const params = new URLSearchParams(window.location.search);
+    const token  = params.get('request_token');
+    if (token) {
+      // Save it to localStorage
+      localStorage.setItem('falahRequestToken', token);
+      document.getElementById('status').innerText =
+        '✅ Request token saved! You can now close this tab and return to the Falāh app.';
+    } else {
+      document.getElementById('status').innerText =
+        '❌ No token found. Please try authorizing again.';
+    }
+  </script>
+</body>
+</html>

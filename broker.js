@@ -16,15 +16,27 @@ async function exchangeToken(requestToken) {
 }
 
 async function placeOrder(broker, signal) {
-  const cfg = JSON.parse(localStorage.getItem('falahConfig')||'{}');
-  const token = cfg.accessToken || (await exchangeToken(cfg.requestToken)).data.access_token;
-  // Save access token
-  cfg.accessToken = token;
-  localStorage.setItem('falahConfig', JSON.stringify(cfg));
-
-  // Place order
-  return proxyRequest({ broker, ...signal, access_token: token });
+  const cfg = loadConfig().credentials[broker];
+  if (broker === 'Zerodha') {
+    const token = cfg.accessToken;    // use the pasted token
+    const res = await fetch('https://api.kite.trade/orders/regular', {
+      method: 'POST',
+      headers: {
+        'Content-Type':'application/json',
+        'X-Kite-Version':'3',
+        'Authorization': `token ${cfg.apiKey}:${token}`
+      },
+      body: JSON.stringify({
+        exchange: 'NSE',
+        tradingsymbol: signal.stock,
+        transaction_type: 'BUY',
+        quantity: 1,
+        product: 'CNC',
+        order_type: 'MARKET'
+      })
+    });
+    return res.json();
+  }
+  throw new Error('Unsupported broker');
 }
-
-window.exchangeToken = exchangeToken;
-window.placeOrder    = placeOrder;
+window.placeOrder = placeOrder;

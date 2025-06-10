@@ -1,62 +1,34 @@
 // tradeLogic.js
-(function(){
-  let todayTrades = 0;
-  let todayUsedCapital = 0;
+window.runTradingCycle = async function() {
+  const cfg = JSON.parse(localStorage.getItem('falahConfig') || '{}');
+  console.log('Config:', cfg);
 
-  // Load settings from config.js
-  function loadConfig() {
-    try {
-      return JSON.parse(localStorage.getItem('falahConfig')) || {};
-    } catch {
-      return {};
+  // 1) Ensure we have an access token
+  if (cfg.brokerName === 'Zerodha') {
+    if (!cfg.accessToken && cfg.requestToken) {
+      cfg.accessToken = (await exchangeToken(cfg.requestToken)).data.access_token;
+      // Persist back
+      localStorage.setItem('falahConfig', JSON.stringify(cfg));
     }
   }
 
-  // Mock placeOrder
-  async function placeOrder(broker, signal) {
-    // Simulate network latency
-    await new Promise(r => setTimeout(r, 200));
-    return { broker, ...signal, orderId: Date.now() };
+  // 2) Build your signal
+  const signal = { stock:'TCS', entry:3700, exit:3745, pl:45, reason:'Auto Trade' };
+
+  // 3) Place the order via proxy
+  try {
+    const orderResp = await placeOrder(cfg.brokerName, {
+      stock: signal.stock,
+      entry: signal.entry,
+      access_token: cfg.accessToken
+    });
+    console.log('Order response:', orderResp);
+
+    // 4) Notify & log
+    sendTelegramMessage(`✅ Traded ${signal.stock}@₹${signal.entry}`);
+    logToCSV(signal);
+  } catch (err) {
+    console.error('Trade failed:', err);
+    sendTelegramMessage(`❌ Trade failed: ${err.message}`);
   }
-
-  // The main entrypoint
-  async function runTradingCycle() {
-    const cfg = loadConfig();
-    console.log(`Config → capital:₹${cfg.capital}, maxTrades:${cfg.maxTrades}, broker:${cfg.brokerName}`);
-
-    // Dummy signal
-    const signal = { stock:'TCS', entry:3700, exit:3745, pl:45, reason:'Auto Trade' };
-
-    if (todayTrades >= cfg.maxTrades) {
-      console.warn('🍂 Max trades reached for today.');
-      return;
-    }
-    if ((todayUsedCapital + signal.entry) > cfg.capital) {
-      console.warn('🚫 Not enough capital.');
-      return;
-    }
-
-    try {
-      const res = await placeOrder(cfg.brokerName, signal);
-      console.log('🚀 Order placed:', res);
-      todayTrades++;
-      todayUsedCapital += signal.entry;
-
-      // Telegram
-      sendTelegramMessage(`✅ Traded ${signal.stock} @ ₹${signal.entry} via ${cfg.brokerName}`);
-
-      // CSV
-      if (typeof logToCSV === 'function') {
-        logToCSV(signal);
-        console.log('💾 Logged to CSV buffer:', signal);
-      } else {
-        console.warn('⚠️ logToCSV not defined');
-      }
-    } catch (err) {
-      console.error('❌ Trade failed:', err);
-      sendTelegramMessage(`❌ Trade failed: ${err.message}`);
-    }
-  }
-
-  window.runTradingCycle = runTradingCycle;
-})();
+};

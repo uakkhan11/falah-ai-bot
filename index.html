@@ -205,7 +205,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const config = {
       capital:    Number(document.getElementById('capitalInput').value),
       maxTrades:  Number(document.getElementById('maxTradesInput').value),
-      brokerName: document.getElementById('brokerSelect').value,
+      brokerName: brokerSelect.value,
       credentials: {
         AngelOne: {
           apiKey:    document.getElementById('apiKey-AngelOne').value,
@@ -214,6 +214,7 @@ document.addEventListener('DOMContentLoaded', () => {
         Zerodha: {
           apiKey:    document.getElementById('apiKey-Zerodha').value,
           apiSecret: document.getElementById('apiSecret-Zerodha').value
+          accessToken: document.getElementById('accessToken-Zerodha').value
         },
         // …and so on for each broker…
       },

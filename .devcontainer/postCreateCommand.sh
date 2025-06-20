@@ -1,3 +1,10 @@
 #!/bin/bash
-pip install -r requirements.txt
-streamlit run app.py --server.port 8501
+echo "Running post-create setup..."
+
+# Optional: Upgrade pip and install dependencies
+pip install --upgrade pip
+
+# Install Python packages (adjust as per your needs)
+pip install streamlit pandas gspread oauth2client kiteconnect requests
+
+echo "✅ Post-create setup complete."

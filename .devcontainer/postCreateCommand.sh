@@ -1,10 +1,5 @@
 #!/bin/bash
-echo "Running post-create setup..."
-
-# Optional: Upgrade pip and install dependencies
+echo "📦 Installing Python dependencies..."
 pip install --upgrade pip
-
-# Install Python packages (adjust as per your needs)
-pip install streamlit pandas gspread oauth2client kiteconnect requests
-
-echo "✅ Post-create setup complete."
+pip install streamlit pandas kiteconnect gspread oauth2client requests
+echo "✅ Dependencies installed successfully."

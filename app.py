@@ -2,11 +2,9 @@ import streamlit as st
 import pandas as pd
 import time
 import random
-import streamlit as st
 from kiteconnect import KiteConnect
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import pandas as pd
 
 # 🔐 Load credentials (replace with your actual values or use secrets)
 API_KEY = st.secrets["zerodha"]["api_key"]

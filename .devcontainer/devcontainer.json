@@ -1,1 +1,15 @@
-"postCreateCommand": "./.devcontainer/postCreateCommand.sh"
+{
+  "name": "Falah AI Bot",
+  "image": "mcr.microsoft.com/devcontainers/python:3.10",
+  "features": {},
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter"
+      ]
+    }
+  },
+  "forwardPorts": [8501],
+  "postCreateCommand": "./.devcontainer/postCreateCommand.sh"
+}

@@ -1,9 +1,13 @@
 {
   "name": "Falah AI Bot",
-  "image": "mcr.microsoft.com/devcontainers/python:3.10",
-  "features": {},
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "postCreateCommand": "./.devcontainer/postCreateCommand.sh",
   "customizations": {
     "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "terminal.integrated.defaultProfile.linux": "bash"
+      },
       "extensions": [
         "ms-python.python",
         "ms-toolsai.jupyter"
@@ -11,5 +15,10 @@
     }
   },
   "forwardPorts": [8501],
-  "postCreateCommand": "./.devcontainer/postCreateCommand.sh"
+  "portsAttributes": {
+    "8501": {
+      "label": "Falah Streamlit",
+      "onAutoForward": "openBrowser"
+    }
+  }
 }

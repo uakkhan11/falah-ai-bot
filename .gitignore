@@ -1,1 +1,6 @@
 falah-credentials.json
+# Ignore secrets and credentials
+*.json
+*.env
+__pycache__/
+*.pyc

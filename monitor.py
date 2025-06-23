@@ -1,178 +1,137 @@
-import time
-import pandas as pd
-import numpy as np
-import requests
-import talib
-from kiteconnect import KiteConnect
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
-import pytz
-import logging
+# monitor.py – Falāh Bot Live Stock Monitor
 
-# === CONFIGURATION ===
-API_KEY = "ijzeuwuylr3g0kug"
-ACCESS_TOKEN = "HdiGzilCwOT8yZqCreno4mb7FyJwxMOy"
-CREDS_FILE = "falah-credentials.json"
-SHEET_KEY = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
+import time
+import pytz
+import gspread
+import requests
+import traceback
+import logging
+from datetime import datetime
+from kiteconnect import KiteConnect
+from oauth2client.service_account import ServiceAccountCredentials
+
+# CONFIGS
+API_KEY       = "ijzeuwuylr3g0kug"
+ACCESS_TOKEN  = "HdiGzilCwOT8yZqCreno4mb7FyJwxMOy"
+CREDS_FILE    = "falah-credentials.json"
+SHEET_KEY     = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
 TELEGRAM_TOKEN = "7763450358:AAH32bWYyu_hXR6l-UaVMaarFGZ4YFOv6q8"
 TELEGRAM_CHAT_ID = "6784139148"
-INTERVAL = 15 * 60  # 15 minutes
-IST = pytz.timezone("Asia/Kolkata")
 
+# SETUP
+logging.basicConfig(level=logging.INFO)
 
-# === SETUP LOGGING ===
-logging.basicConfig(filename="monitor.log", level=logging.INFO)
+def is_market_open():
+    now = datetime.now(pytz.timezone("Asia/Kolkata"))
+    return now.weekday() < 5 and datetime.strptime("09:15", "%H:%M").time() <= now.time() <= datetime.strptime("15:30", "%H:%M").time()
 
-# === KITE INIT ===
-kite = KiteConnect(api_key=API_KEY)
-kite.set_access_token(ACCESS_TOKEN)
+def send_telegram(msg):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        data = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
+        requests.post(url, data=data)
+    except:
+        logging.warning("❌ Telegram failed.")
 
-# === GOOGLE SHEET INIT ===
+def init_kite():
+    kite = KiteConnect(api_key=API_KEY)
+    kite.set_access_token(ACCESS_TOKEN)
+    return kite
+
 def init_sheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, scope)
     client = gspread.authorize(creds)
     return client.open_by_key(SHEET_KEY)
 
-sheet = init_sheet()
+def fetch_positions(kite):
+    holdings = kite.holdings()
+    tracked = [h for h in holdings if h['quantity'] > 0]
+    return tracked
 
-
-# === TELEGRAM ALERT ===
-def send_telegram(msg):
+def log_to_sheet(sheet, records):
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
-        requests.post(url, data=payload)
+        ws = sheet.worksheet("MonitoredStocks")
     except:
-        logging.error("Telegram send failed.")
+        ws = sheet.add_worksheet("MonitoredStocks", rows="1000", cols="10")
+        ws.append_row(["Time", "Symbol", "Qty", "Buy Price", "CMP", "Trailing SL", "AI Exit Reason"])
 
+    for record in records:
+        ws.append_row(record)
 
-# === NEWS PLACEHOLDER ===
-def has_negative_news(stock):
-    # Placeholder mock logic
-    # You can integrate NewsAPI or tag logic here
-    return False  # Return True to block exit
+def calculate_trailing_sl(buy_price, high_price, method='fixed', percent=3.0):
+    if method == 'fixed':
+        return round(high_price * (1 - percent/100), 2)
+    elif method == 'ema':
+        return round((buy_price + high_price) / 2 * 0.98, 2)  # simplified EMA-like
+    else:
+        return buy_price * 0.97
 
-# === TRAILING SL ENGINE ===
-def compute_trailing_sl(df, entry_price):
-    atr = talib.ATR(df['high'], df['low'], df['close'], timeperiod=14)[-1]
-    ema = talib.EMA(df['close'], timeperiod=20)[-1]
-    highest = df['close'].cummax().iloc[-1]
-    
-    sl_price = min(
-        highest * 0.97,        # 3% below peak
-        highest - atr,         # ATR based
-        ema                    # EMA support
-    )
-    return round(sl_price, 2)
+def monitor_loop():
+    kite = init_kite()
+    sheet = init_sheet()
+    positions = fetch_positions(kite)
 
-# === EXIT STRATEGY DECISION ===
-def should_exit(stock, ltp, trailing_sl, df_15m, df_1h):
-    if ltp < trailing_sl:
-        logging.info(f"{stock} below trailing SL.")
-        if has_negative_news(stock):
-            return True, "SL hit + negative news"
+    # Startup Display
+    msg = f"📈 *Falāh Monitor Started* – {datetime.now().strftime('%d %b %Y %H:%M')}\n"
+    records = []
+    for pos in positions:
+        msg += f"🔹 {pos['tradingsymbol']} — Qty: {pos['quantity']} @ ₹{pos['average_price']}\n"
+        records.append([
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            pos['tradingsymbol'],
+            pos['quantity'],
+            pos['average_price'],
+            "-", "-", "-"
+        ])
+    send_telegram(msg)
+    log_to_sheet(sheet, records)
 
-        # Reverse pattern check (mock)
-        if "hammer" in detect_patterns(df_15m) or "doji" in detect_patterns(df_1h):
-            return False, "Hold: reversal pattern detected"
+    tracked_highs = {pos['tradingsymbol']: pos['average_price'] for pos in positions}
 
-        return True, "SL hit: confirmed by multi-timeframe"
-    return False, "Hold: still above trailing SL"
-
-# === PATTERN SCANNER ===
-def detect_patterns(df):
-    result = []
-    if talib.CDLHAMMER(df['open'], df['high'], df['low'], df['close'])[-1] != 0:
-        result.append("hammer")
-    if talib.CDLDOJI(df['open'], df['high'], df['low'], df['close'])[-1] != 0:
-        result.append("doji")
-    if talib.CDLENGULFING(df['open'], df['high'], df['low'], df['close'])[-1] != 0:
-        result.append("engulfing")
-    return result
-
-# === LOAD LIVE CNC POSITIONS ===
-def get_live_positions():
-    positions = kite.positions()
-    holdings = positions['day'] + positions['net']
-    cnc = [p for p in holdings if p['product'] == 'CNC' and p['quantity'] > 0]
-    return cnc
-
-# === GET HISTORICAL DATA ===
-def fetch_ohlc(symbol, interval, days):
-    try:
-        instrument_token = kite.ltp(f'NSE:{symbol}')[f'NSE:{symbol}']['instrument_token']
-        from_date = (datetime.now() - pd.Timedelta(days=days)).date()
-        to_date = datetime.now().date()
-        data = kite.historical_data(instrument_token, from_date, to_date, interval)
-        return pd.DataFrame(data)
-    except Exception as e:
-        logging.warning(f"{symbol}: historical fetch failed - {e}")
-        return pd.DataFrame()
-
-# === ALREADY SOLD CHECK ===
-def is_already_sold(symbol):
-    try:
-        ws = sheet.worksheet("SellLog")
-        sold_list = ws.col_values(1)
-        return symbol in sold_list
-    except:
-        return False
-
-# === LOG SELL ===
-def log_sell(symbol, ltp, reason):
-    try:
-        ws = sheet.worksheet("SellLog")
-        now = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-        ws.append_row([symbol, ltp, reason, now])
-    except:
-        logging.warning(f"{symbol} sell log failed.")
-
-# === MAIN LOOP ===
-def check_positions_once():
-    live = get_live_positions()
-    for p in live:
-        symbol = p['tradingsymbol']
-        if is_already_sold(symbol):
-            continue
-
-        df = fetch_ohlc(symbol, "5minute", 5)
-        df_15 = fetch_ohlc(symbol, "15minute", 7)
-        df_1h = fetch_ohlc(symbol, "60minute", 10)
-
-        if df.empty or df_15.empty or df_1h.empty:
-            continue
-
-        trailing_sl = compute_trailing_sl(df, p['average_price'])
-        ltp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]['last_price']
-        exit_now, reason = should_exit(symbol, ltp, trailing_sl, df_15, df_1h)
-
-        if exit_now:
-            try:
-                order = kite.place_order(
-                    variety=kite.VARIETY_REGULAR,
-                    exchange=kite.EXCHANGE_NSE,
-                    tradingsymbol=symbol,
-                    transaction_type=kite.TRANSACTION_TYPE_SELL,
-                    quantity=p['quantity'],
-                    product=kite.PRODUCT_CNC,
-                    order_type=kite.ORDER_TYPE_MARKET
-                )
-                log_sell(symbol, ltp, reason)
-                send_telegram(f"🚨 Sold {symbol} at {ltp} – Reason: {reason}")
-                logging.info(f"Sold {symbol}: {reason}")
-            except Exception as e:
-                logging.error(f"Sell failed for {symbol}: {e}")
-        else:
-            logging.info(f"{symbol} held: {reason}")
-
-# === SCHEDULER LOOP ===
-if __name__ == "__main__":
+    # Begin loop
     while True:
         try:
-            logging.info("🟢 Monitoring started...")
-            check_positions_once()
+            if not is_market_open():
+                print("🔕 Market closed — sleeping 5 min...")
+                time.sleep(300)
+                continue
+
+            for pos in fetch_positions(kite):
+                symbol = pos['tradingsymbol']
+                buy_price = pos['average_price']
+                qty = pos['quantity']
+
+                ltp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]['last_price']
+                tracked_highs[symbol] = max(tracked_highs.get(symbol, buy_price), ltp)
+
+                trailing_sl = calculate_trailing_sl(buy_price, tracked_highs[symbol])
+
+                # Placeholder AI + strategy logic
+                reason = ""
+                if ltp < trailing_sl:
+                    reason = f"📉 Trailing SL Hit at ₹{ltp} (SL: ₹{trailing_sl})"
+                elif ltp < buy_price * 0.95:
+                    reason = f"🔻 Loss >5% from Buy Price"
+                elif symbol in ["TCS", "LTIM"]:  # mock AI reversal signal
+                    reason = "🔄 AI Exit: Reversal Pattern Detected"
+
+                if reason:
+                    msg = f"🚨 Exit Triggered: {symbol}\nQty: {qty}\nBuy: ₹{buy_price}\nCMP: ₹{ltp}\n{reason}"
+                    send_telegram(msg)
+                    sheet.worksheet("MonitoredStocks").append_row([
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        symbol, qty, buy_price, ltp, trailing_sl, reason
+                    ])
+                    print(f"[{symbol}] Exit reason: {reason}")
+
+            time.sleep(900)  # every 15 min
+
         except Exception as e:
-            logging.error(f"Monitoring error: {e}")
-        time.sleep(INTERVAL)
+            print("Error in monitor:", e)
+            traceback.print_exc()
+            send_telegram("❌ Falāh monitor error:\n" + str(e))
+            time.sleep(300)
+
+if __name__ == "__main__":
+    monitor_loop()

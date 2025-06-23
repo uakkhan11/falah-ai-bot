@@ -6,7 +6,6 @@ import gspread
 import requests
 import traceback
 import logging
-import pandas as pd
 from datetime import datetime
 from kiteconnect import KiteConnect
 from oauth2client.service_account import ServiceAccountCredentials
@@ -64,25 +63,16 @@ def calculate_trailing_sl(buy_price, high_price, method='fixed', percent=3.0):
     if method == 'fixed':
         return round(high_price * (1 - percent/100), 2)
     elif method == 'ema':
-        return round((buy_price + high_price) / 2 * 0.98, 2)
+        return round((buy_price + high_price) / 2 * 0.98, 2)  # simplified EMA-like
     else:
         return buy_price * 0.97
-
-def mock_ai_exit_reason(symbol, cmp, sl, buy_price):
-    if cmp < sl:
-        return f"📉 Trailing SL Hit at ₹{cmp}"
-    elif cmp < buy_price * 0.95:
-        return f"🔻 Loss >5% from Buy Price"
-    elif symbol in ["TCS", "LTIM"]:
-        return "🔄 AI Exit: Reversal Pattern Detected"
-    else:
-        return ""
 
 def monitor_loop():
     kite = init_kite()
     sheet = init_sheet()
     positions = fetch_positions(kite)
 
+    # Startup Display
     msg = f"📈 *Falāh Monitor Started* – {datetime.now().strftime('%d %b %Y %H:%M')}\n"
     records = []
     for pos in positions:
@@ -99,6 +89,7 @@ def monitor_loop():
 
     tracked_highs = {pos['tradingsymbol']: pos['average_price'] for pos in positions}
 
+    # Begin loop
     while True:
         try:
             if not is_market_open():
@@ -113,9 +104,17 @@ def monitor_loop():
 
                 ltp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]['last_price']
                 tracked_highs[symbol] = max(tracked_highs.get(symbol, buy_price), ltp)
+
                 trailing_sl = calculate_trailing_sl(buy_price, tracked_highs[symbol])
 
-                reason = mock_ai_exit_reason(symbol, ltp, trailing_sl, buy_price)
+                # Placeholder AI + strategy logic
+                reason = ""
+                if ltp < trailing_sl:
+                    reason = f"📉 Trailing SL Hit at ₹{ltp} (SL: ₹{trailing_sl})"
+                elif ltp < buy_price * 0.95:
+                    reason = f"🔻 Loss >5% from Buy Price"
+                elif symbol in ["TCS", "LTIM"]:  # mock AI reversal signal
+                    reason = "🔄 AI Exit: Reversal Pattern Detected"
 
                 if reason:
                     msg = f"🚨 Exit Triggered: {symbol}\nQty: {qty}\nBuy: ₹{buy_price}\nCMP: ₹{ltp}\n{reason}"
@@ -126,7 +125,7 @@ def monitor_loop():
                     ])
                     print(f"[{symbol}] Exit reason: {reason}")
 
-            time.sleep(900)
+            time.sleep(900)  # every 15 min
 
         except Exception as e:
             print("Error in monitor:", e)

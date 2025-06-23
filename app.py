@@ -51,14 +51,18 @@ st.set_page_config(page_title="Falāh Bot UI", layout="wide")
 st.title("📈 Falāh AI Trading Bot (Demo UI)")
 st.caption("Built with 💡 by Usman on GitHub")
 
-# Dummy Halal stocks
-sample_stocks = [
-    {"Symbol": "TCS", "CMP": 3835.2, "AI Score": 82.5},
-    {"Symbol": "INFY", "CMP": 1453.8, "AI Score": 77.4},
-    {"Symbol": "LTIM", "CMP": 5450.0, "AI Score": 73.2},
-    {"Symbol": "HCLTECH", "CMP": 1289.4, "AI Score": 79.8},
-    {"Symbol": "WIPRO", "CMP": 432.1, "AI Score": 68.9}
-]
+@st.cache_data
+def get_live_data(symbols):
+    results = []
+    for sym in symbols[:10]:
+        try:
+            ltp_data = kite.ltp(f"NSE:{sym}")
+            cmp = ltp_data[f"NSE:{sym}"]["last_price"]
+            ai_score = round(random.uniform(60, 95), 2)  # Simulated AI Score
+            results.append({"Symbol": sym, "CMP": cmp, "AI Score": ai_score})
+        except Exception as e:
+            st.warning(f"Skipping {sym}: {e}")
+    return results
 
 # Simulate AI updates
 for stock in sample_stocks:

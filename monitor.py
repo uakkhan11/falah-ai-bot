@@ -1,4 +1,4 @@
-# monitor.py – Falāh Bot Live Stock Monitor (Final with AI Exit + GSheet + Unified Token)
+# monitor.py – Falāh Bot Live Stock Monitor (Final with AI Exit + GSheet + Unified Token + Live Check)
 
 import time
 import datetime
@@ -78,7 +78,12 @@ def monitor():
                 qty = int(stock['Quantity'])
                 buy_price = float(stock['Buy Price'])
 
-                ltp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]['last_price']
+                try:
+                    ltp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]['last_price']
+                except Exception as api_err:
+                    print(f"❌ LTP fetch error for {symbol}: {api_err}")
+                    continue
+
                 tracked_highs[symbol] = max(tracked_highs.get(symbol, buy_price), ltp)
                 tsl = round(tracked_highs[symbol] * 0.97, 2)
 
@@ -96,11 +101,13 @@ def monitor():
                     send_telegram(msg)
                     print(msg)
 
-                    # Optional: Log to sheet (if required)
-                    sheet.worksheet("MonitoredStocks").append_row([
-                        datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        symbol, qty, buy_price, ltp, tsl, reason
-                    ])
+                    try:
+                        sheet.worksheet("MonitoredStocks").append_row([
+                            datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            symbol, qty, buy_price, ltp, tsl, reason
+                        ])
+                    except:
+                        logging.warning("⚠️ Failed to log to MonitoredStocks.")
             except Exception as e:
                 print(f"⚠️ Error for {stock['Symbol']}: {e}")
 

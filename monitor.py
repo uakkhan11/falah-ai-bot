@@ -12,7 +12,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # CONFIGS
 API_KEY       = "ijzeuwuylr3g0kug"
-ACCESS_TOKEN  = "HdiGzilCwOT8yZqCreno4mb7FyJwxMOy"
+ACCESS_TOKEN  = "ljxIeWpYJ6Y7lpUh435mfk8o1jwLIVpC"
 CREDS_FILE    = "falah-credentials.json"
 SHEET_KEY     = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
 TELEGRAM_TOKEN = "7763450358:AAH32bWYyu_hXR6l-UaVMaarFGZ4YFOv6q8"

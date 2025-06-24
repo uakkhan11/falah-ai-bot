@@ -17,9 +17,9 @@ with open("/root/falah-ai-bot/.streamlit/secrets.toml", "r") as f:
 API_KEY = secrets["zerodha"]["api_key"]
 ACCESS_TOKEN = secrets["zerodha"]["access_token"]
 CREDS_JSON = "falah-credentials.json"
-SHEET_KEY = secrets.get("google_sheet_key", "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c")
-TELEGRAM_TOKEN = secrets.get("telegram_token")
-TELEGRAM_CHAT_ID = secrets.get("telegram_chat_id")
+SHEET_KEY = secrets.get("global", {}).get("google_sheet_key", "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c")
+TELEGRAM_TOKEN = secrets.get("telegram", {}).get("bot_token")
+TELEGRAM_CHAT_ID = secrets.get("telegram", {}).get("chat_id")
 
 logging.basicConfig(level=logging.INFO)
 

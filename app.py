@@ -9,13 +9,17 @@ import os
 from kiteconnect import KiteConnect
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import toml
 
 # 🔐 Load credentials
-API_KEY = st.secrets["zerodha"]["api_key"]
-API_SECRET = st.secrets["zerodha"]["api_secret"]
-ACCESS_TOKEN = st.secrets["zerodha"]["access_token"]
+with open("/root/falah-ai-bot/.streamlit/secrets.toml", "r") as f:
+    secrets = toml.load(f)
+
+API_KEY = secrets["zerodha"]["api_key"]
+API_SECRET = secrets["zerodha"]["api_secret"]
+ACCESS_TOKEN = secrets["zerodha"]["access_token"]
 CREDS_JSON = "falah-credentials.json"
-SHEET_KEY = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
+SHEET_KEY = secrets.get("global", {}).get("google_sheet_key", "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c")
 
 st.set_page_config(page_title="Falāh Bot UI", layout="wide")
 
@@ -112,11 +116,23 @@ st.dataframe(df, use_container_width=True)
 
 if not df.empty:
     top = df.sort_values(by="AI Score", ascending=False).iloc[0]
-    st.success(f"✅ *Top Trade Pick:* `{top['Symbol']}` with AI Score: {top['AI Score']}")
+    st.success(f"✅ *Top Trade Pick:* `{top['Symbol']}` with AI Score: {top['AI Score']}`)
 
 # ---------------------------
-# Footer
+# 📦 CNC Position Viewer
 # ---------------------------
 
 st.markdown("---")
-st.caption("This is a preview of Falāh Bot's frontend — live trades & AI engine coming soon.")
+st.subheader("📦 Live Position Tracker")
+try:
+    ws = sheet.worksheet("LivePositions")
+    records = ws.get_all_records()
+    if records:
+        df_live = pd.DataFrame(records)
+        st.dataframe(df_live, use_container_width=True)
+    else:
+        st.info("📭 No live positions currently being tracked.")
+except Exception as e:
+    st.warning(f"⚠️ Failed to fetch positions: {e}")
+
+st.caption("This dashboard auto-monitors Halal positions for SL/Target and includes Telegram alerts + smart exit logic.")

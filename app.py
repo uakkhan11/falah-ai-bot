@@ -11,6 +11,22 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import toml
 
+def ensure_required_sheets(sheet, required_sheets):
+    existing_sheets = [ws.title for ws in sheet.worksheets()]
+    for name in required_sheets:
+        if name not in existing_sheets:
+            ws = sheet.add_worksheet(title=name, rows="100", cols="10")
+            if name == "LivePositions":
+                ws.append_row(["Symbol", "Qty", "CMP", "Timestamp"])
+            elif name == "TradeLog":
+                ws.append_row(["Symbol", "Action", "Qty", "Price", "Timestamp", "Reason"])
+            elif name == "ExitLog":
+                ws.append_row(["Symbol", "Exit Price", "Exit Time", "Reason"])
+            elif name == "HalalList":
+                ws.append_row(["Symbol", "Stock Name", "Sector"])
+            elif name == "MonitoredStocks":
+                ws.append_row(["Symbol", "CMP", "Stoploss", "AI Score", "Entry Time"])    
+
 # 🔐 Load credentials
 with open("/root/falah-ai-bot/.streamlit/secrets.toml", "r") as f:
     secrets = toml.load(f)
@@ -80,6 +96,13 @@ st.title("📜 Falāh Halal Stock Scanner")
 
 kite = init_kite()
 sheet = load_sheet()
+ensure_required_sheets(sheet, [
+    "HalalList",
+    "LivePositions",
+    "TradeLog",
+    "ExitLog",
+    "MonitoredStocks"
+])
 symbols = get_halal_symbols(sheet)
 st.write("📋 Loaded symbols:", symbols[:10])
 

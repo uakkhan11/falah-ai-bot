@@ -38,23 +38,14 @@ def load_sheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_JSON, scope)
     client = gspread.authorize(creds)
-    return client.open_by_key(SHEET_KEY)
-
-def ensure_required_sheets(sheet, required_sheets):
-    existing_sheets = [ws.title for ws in sheet.worksheets()]
-    for name in required_sheets:
-        if name not in existing_sheets:
-            ws = sheet.add_worksheet(title=name, rows="100", cols="10")
-            if name == "LivePositions":
-                ws.append_row(["Symbol", "Qty", "CMP", "Timestamp"])
-            elif name == "TradeLog":
-                ws.append_row(["Symbol", "Action", "Qty", "Price", "Timestamp", "Reason"])
-            elif name == "ExitLog":
-                ws.append_row(["Symbol", "Exit Price", "Exit Time", "Reason"])
-            elif name == "HalalList":
-                ws.append_row(["Symbol", "Stock Name", "Sector"])
-            elif name == "MonitoredStocks":
-                ws.append_row(["Symbol", "CMP", "Stoploss", "AI Score", "Entry Time"])
+    sheet = client.open_by_key(SHEET_KEY)
+    # Ensure required worksheet exists
+    required_sheets = ["HalalList", "LivePositions"]
+    existing_titles = [ws.title for ws in sheet.worksheets()]
+    for title in required_sheets:
+        if title not in existing_titles:
+            sheet.add_worksheet(title=title, rows=1000, cols=20)
+    return sheet
 
 def get_halal_symbols(sheet):
     worksheet = sheet.worksheet("HalalList")
@@ -96,7 +87,6 @@ st.title("📜 Falāh Halal Stock Scanner")
 
 kite = init_kite()
 sheet = load_sheet()
-ensure_required_sheets(sheet, ["HalalList", "LivePositions", "TradeLog", "ExitLog", "MonitoredStocks"])
 symbols = get_halal_symbols(sheet)
 st.write("📋 Loaded symbols:", symbols[:10])
 
@@ -134,23 +124,23 @@ def get_live_data(symbols):
 st.info("⏳ Analyzing halal stocks...")
 analyzed = get_live_data(symbols)
 st.write("✅ Raw data from get_live_data():", analyzed)
-st.write("🔎 Debug – DF Columns:", df.columns.tolist())
-st.write("📄 Preview DF:", df.head())
+
 df = pd.DataFrame(analyzed)
 if not df.empty and "AI Score" in df.columns:
     df = df[df["AI Score"] >= min_ai_score]
 else:
+    df = pd.DataFrame()
     st.warning("⚠️ No stock data available. Check if Zerodha access token is valid or API is rate-limited.")
     st.write("🧾 Raw DataFrame:", df)
+
+st.subheader("📊 Filtered Trade Candidates")
+
 if not df.empty and "AI Score" in df.columns:
     candidates = df.sort_values(by="AI Score", ascending=False).head(max_trades)
 else:
-    candidates = pd.DataFrame()  # or []
-    
-st.subheader("📊 Filtered Trade Candidates")
+    candidates = pd.DataFrame()
+    st.warning("⚠️ No valid trade candidates available due to missing or invalid data.")
 
-# Prioritize top N picks only if enough pass filters
-candidates = df.sort_values(by="AI Score", ascending=False).head(max_trades)
 if not candidates.empty:
     total_score = candidates["AI Score"].sum()
     candidates["Weight"] = candidates["AI Score"] / total_score

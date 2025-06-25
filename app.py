@@ -134,7 +134,8 @@ def get_live_data(symbols):
 st.info("⏳ Analyzing halal stocks...")
 analyzed = get_live_data(symbols)
 st.write("✅ Raw data from get_live_data():", analyzed)
-
+st.write("🔎 Debug – DF Columns:", df.columns.tolist())
+st.write("📄 Preview DF:", df.head())
 df = pd.DataFrame(analyzed)
 if not df.empty and "AI Score" in df.columns:
     df = df[df["AI Score"] >= min_ai_score]

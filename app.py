@@ -116,7 +116,12 @@ def get_live_data(symbols):
 st.info("⏳ Analyzing halal stocks...")
 analyzed = get_live_data(symbols)
 df = pd.DataFrame(analyzed)
-df = df[df["AI Score"] >= min_ai_score]
+
+if not df.empty and "AI Score" in df.columns:
+    df = df[df["AI Score"] >= min_ai_score]
+else:
+    st.warning("⚠️ No stock data available. Check if Zerodha access token is valid or API is rate-limited.")
+    df = pd.DataFrame()]
 
 st.subheader("📊 Filtered Trade Candidates")
 

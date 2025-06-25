@@ -125,7 +125,13 @@ if not df.empty and "AI Score" in df.columns:
     df = df[df["AI Score"] >= min_ai_score]
 else:
     st.warning("⚠️ No stock data available. Check if Zerodha access token is valid or API is rate-limited.")
-    df = pd.DataFrame()]
+    st.dataframe(df)
+
+analyzed = get_live_data(symbols)
+st.write("📊 Raw Analyzed Data", analyzed)  # ADD THIS
+df = pd.DataFrame(analyzed)
+st.write("🧾 Created DataFrame", df.head())  # ADD THIS
+
 
 st.subheader("📊 Filtered Trade Candidates")
 

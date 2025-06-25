@@ -18,6 +18,7 @@ with open("/root/falah-ai-bot/.streamlit/secrets.toml", "r") as f:
 API_KEY = secrets["zerodha"]["api_key"]
 API_SECRET = secrets["zerodha"]["api_secret"]
 ACCESS_TOKEN = secrets["zerodha"]["access_token"]
+print("🔐 Loaded ACCESS_TOKEN:", ACCESS_TOKEN)
 CREDS_JSON = "falah-credentials.json"
 SHEET_KEY = secrets.get("global", {}).get("google_sheet_key", "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c")
 
@@ -31,6 +32,11 @@ st.set_page_config(page_title="Falāh Bot UI", layout="wide")
 def init_kite():
     kite = KiteConnect(api_key=API_KEY)
     kite.set_access_token(ACCESS_TOKEN)
+    try:
+    profile = kite.profile()
+    st.success(f"🧑‍💼 Logged in as: {profile['user_name']}")
+except Exception as e:
+    st.error(f"❌ Invalid token or session: {e}")
     return kite
 
 @st.cache_resource

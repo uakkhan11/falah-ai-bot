@@ -104,16 +104,14 @@ min_ai_score = st.sidebar.slider("🎯 Min AI Score to Consider", 0, 100, 70)
 @st.cache_data
 def get_live_data(symbols):
     results = []
-    for sym in symbols[:10]:  # limit for testing
+    for sym in symbols[:10]:  # limit for debug
         try:
             ltp_data = kite.ltp(f"NSE:{sym}")
             cmp = ltp_data[f"NSE:{sym}"]["last_price"]
             ai_score = round(random.uniform(60, 95), 2)
             results.append({"Symbol": sym, "CMP": cmp, "AI Score": ai_score})
         except Exception as e:
-            st.warning(f"❌ Skipped {sym}: {e}")
-    if not results:
-        st.error("🚫 No valid stock data fetched from Zerodha. Check access token or NSE symbols.")
+            st.warning(f"❌ Skipping {sym}: {e}")
     return results
 
 st.info("⏳ Analyzing halal stocks...")

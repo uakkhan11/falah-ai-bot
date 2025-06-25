@@ -1,4 +1,4 @@
-# app.py – Falāh Bot Main UI with Monitor Integration
+# app.py – Falāh Bot Main UI with Monitor Integration (Improved with Smart Fund Management + Auto Buy)
 
 import streamlit as st
 import pandas as pd
@@ -88,35 +88,74 @@ if st.checkbox("🔍 Show Halal Symbols"):
     st.write(symbols)
 
 # ---------------------------
-# 📈 AI Trade Preview
+# 📈 AI Trade Preview & Fund Management
 # ---------------------------
 
-st.title("📈 Falāh AI Trading Bot (Demo UI)")
-st.caption("Built with 💡 by Usman on GitHub")
+st.title("📈 Falāh AI Trading Bot")
+st.caption("Built with 💡 by Usman")
+
+# Fund and risk controls
+st.sidebar.header("⚙️ Fund Management")
+total_capital = st.sidebar.number_input("💰 Total Capital (₹)", min_value=1000, value=100000, step=1000)
+max_trades = st.sidebar.number_input("📈 Max Trades Per Day", min_value=1, value=5, step=1)
+min_ai_score = st.sidebar.slider("🎯 Min AI Score to Consider", 0, 100, 70)
 
 @st.cache_data
 def get_live_data(symbols):
     results = []
-    for sym in symbols[:10]:
+    for sym in symbols:
         try:
             ltp_data = kite.ltp(f"NSE:{sym}")
             cmp = ltp_data[f"NSE:{sym}"]["last_price"]
             ai_score = round(random.uniform(60, 95), 2)
             results.append({"Symbol": sym, "CMP": cmp, "AI Score": ai_score})
-        except Exception as e:
-            st.warning(f"Skipping {sym}: {e}")
+        except:
+            continue
     return results
 
 st.info("⏳ Analyzing halal stocks...")
 analyzed = get_live_data(symbols)
 df = pd.DataFrame(analyzed)
+df = df[df["AI Score"] >= min_ai_score]
 
-st.subheader("📊 Today's Halal Trade Candidates")
-st.dataframe(df, use_container_width=True)
+st.subheader("📊 Filtered Trade Candidates")
 
-if not df.empty:
-    top = df.sort_values(by="AI Score", ascending=False).iloc[0]
-    st.success(f"✅ *Top Trade Pick:* `{top['Symbol']}` with AI Score: {top['AI Score']}`)
+# Prioritize top N picks only if enough pass filters
+candidates = df.sort_values(by="AI Score", ascending=False).head(max_trades)
+if not candidates.empty:
+    total_score = candidates["AI Score"].sum()
+    candidates["Weight"] = candidates["AI Score"] / total_score
+    candidates["Allocation"] = (candidates["Weight"] * total_capital).round(2)
+    candidates["Est. Qty"] = (candidates["Allocation"] / candidates["CMP"]).astype(int)
+    st.dataframe(candidates, use_container_width=True)
+    top = candidates.iloc[0]
+    st.success(f"✅ *Top Pick:* `{top['Symbol']}` – Score: {top['AI Score']}, Capital: ₹{top['Allocation']}")
+
+    if st.button("🛒 Execute Trades Now"):
+        for _, row in candidates.iterrows():
+            try:
+                if row["Est. Qty"] <= 0:
+                    continue
+                kite.place_order(
+                    variety=kite.VARIETY_REGULAR,
+                    exchange=kite.EXCHANGE_NSE,
+                    tradingsymbol=row["Symbol"],
+                    transaction_type=kite.TRANSACTION_TYPE_BUY,
+                    quantity=int(row["Est. Qty"]),
+                    order_type=kite.ORDER_TYPE_MARKET,
+                    product=kite.PRODUCT_CNC
+                )
+                sheet.worksheet("LivePositions").append_row([
+                    row["Symbol"],
+                    int(row["Est. Qty"]),
+                    float(row["CMP"]),
+                    time.strftime("%Y-%m-%d %H:%M:%S")
+                ])
+                st.success(f"✅ Order placed for {row['Symbol']} – Qty: {int(row['Est. Qty'])}")
+            except Exception as e:
+                st.warning(f"⚠️ Failed to place order for {row['Symbol']}: {e}")
+else:
+    st.warning("⚠️ No trade candidates met the minimum AI score threshold.")
 
 # ---------------------------
 # 📦 CNC Position Viewer

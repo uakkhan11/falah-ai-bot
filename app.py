@@ -104,6 +104,7 @@ st.caption("Built with 💡 by Usman")
 
 # Fund and risk controls
 st.sidebar.header("⚙️ Fund Management")
+enable_dummy = st.sidebar.checkbox("🧪 Enable Dummy Data Mode", value=False)
 total_capital = st.sidebar.number_input("💰 Total Capital (₹)", min_value=1000, value=100000, step=1000)
 max_trades = st.sidebar.number_input("📈 Max Trades Per Day", min_value=1, value=5, step=1)
 min_ai_score = st.sidebar.slider("🎯 Min AI Score to Consider", 0, 100, 70)
@@ -124,10 +125,27 @@ def get_live_data(symbols):
 st.info("⏳ Analyzing halal stocks...")
 analyzed = get_live_data(symbols)
 st.write("✅ Raw data from get_live_data():", analyzed)
+@st.cache_data
+def get_live_data(symbols):
+    results = []
+    for sym in symbols[:10]:  # limit for debug
+        try:
+            if enable_dummy:
+                cmp = round(random.uniform(200, 1500), 2)
+            else:
+                ltp_data = kite.ltp(f"NSE:{sym}")
+                cmp = ltp_data[f"NSE:{sym}"]["last_price"]
 
+            ai_score = round(random.uniform(60, 95), 2)
+            results.append({"Symbol": sym, "CMP": cmp, "AI Score": ai_score})
+        except Exception as e:
+            st.warning(f"❌ Skipping {sym}: {e}")
+    return results
+    
 df = pd.DataFrame(analyzed)
-if not df.empty and "AI Score" in df.columns:
-    df = df[df["AI Score"] >= min_ai_score]
+if df.empty or "AI Score" not in df.columns:
+    st.error("❌ No valid stock data fetched. Please verify your Zerodha API credentials or enable dummy mode.")
+    st.stop()
 else:
     df = pd.DataFrame()
     st.warning("⚠️ No stock data available. Check if Zerodha access token is valid or API is rate-limited.")

@@ -116,14 +116,28 @@ def get_live_data(symbols):
 
 st.info("⏳ Analyzing halal stocks...")
 analyzed = get_live_data(symbols)
-st.write("🔎 Raw analyzed data:", analyzed)
+st.write("✅ Raw data from get_live_data():", analyzed)
+st.write("📄 DataFrame Columns:", df.columns.tolist())
+st.write("🔍 First few rows:", df.head())
+def get_live_data(symbols):
+    results = []
+    for sym in symbols[:10]:  # only test top 10
+        try:
+            ltp_data = kite.ltp(f"NSE:{sym}")
+            cmp = ltp_data[f"NSE:{sym}"]["last_price"]
+            ai_score = round(random.uniform(60, 95), 2)
+            results.append({"Symbol": sym, "CMP": cmp, "AI Score": ai_score})
+        except Exception as e:
+            st.warning(f"❌ {sym} skipped: {e}")
+    return results
+    
 df = pd.DataFrame(analyzed)
 
 if not df.empty and "AI Score" in df.columns:
     df = df[df["AI Score"] >= min_ai_score]
 else:
     st.warning("⚠️ No stock data available. Check if Zerodha access token is valid or API is rate-limited.")
-    st.dataframe(df)
+    st.write("🧾 Raw DataFrame:", df)
 
 analyzed = get_live_data(symbols)
 st.write("📊 Raw Analyzed Data", analyzed)  # ADD THIS

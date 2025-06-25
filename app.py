@@ -81,6 +81,7 @@ st.title("📜 Falāh Halal Stock Scanner")
 kite = init_kite()
 sheet = load_sheet()
 symbols = get_halal_symbols(sheet)
+st.write("📋 Loaded symbols:", symbols[:10])
 
 st.success(f"✅ {len(symbols)} Halal stocks loaded")
 
@@ -103,18 +104,21 @@ min_ai_score = st.sidebar.slider("🎯 Min AI Score to Consider", 0, 100, 70)
 @st.cache_data
 def get_live_data(symbols):
     results = []
-    for sym in symbols:
+    for sym in symbols[:10]:  # limit for testing
         try:
             ltp_data = kite.ltp(f"NSE:{sym}")
             cmp = ltp_data[f"NSE:{sym}"]["last_price"]
             ai_score = round(random.uniform(60, 95), 2)
             results.append({"Symbol": sym, "CMP": cmp, "AI Score": ai_score})
-        except:
-            continue
+        except Exception as e:
+            st.warning(f"❌ Skipped {sym}: {e}")
+    if not results:
+        st.error("🚫 No valid stock data fetched from Zerodha. Check access token or NSE symbols.")
     return results
 
 st.info("⏳ Analyzing halal stocks...")
 analyzed = get_live_data(symbols)
+st.write("🔎 Raw analyzed data:", analyzed)
 df = pd.DataFrame(analyzed)
 
 if not df.empty and "AI Score" in df.columns:

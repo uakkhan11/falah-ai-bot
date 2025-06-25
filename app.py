@@ -141,7 +141,11 @@ if not df.empty and "AI Score" in df.columns:
 else:
     st.warning("⚠️ No stock data available. Check if Zerodha access token is valid or API is rate-limited.")
     st.write("🧾 Raw DataFrame:", df)
-
+if not df.empty and "AI Score" in df.columns:
+    candidates = df.sort_values(by="AI Score", ascending=False).head(max_trades)
+else:
+    candidates = pd.DataFrame()  # or []
+    
 st.subheader("📊 Filtered Trade Candidates")
 
 # Prioritize top N picks only if enough pass filters

@@ -11,14 +11,16 @@ from sheets import log_exit_to_sheet
 from holdings_state import load_previous_exits, update_exit_log
 
 # Initialize
-creds = load_credentials()
-kite = KiteConnect(api_key=creds["zerodha"]["api_key"])
-kite.set_access_token(creds["zerodha"]["access_token"])
+secrets = load_credentials()
+creds = secrets["zerodha"]
+kite = KiteConnect(api_key=creds["api_key"])
+kite.set_access_token(creds["access_token"])
 IST = pytz.timezone('Asia/Kolkata')
 
 # Monitor config
-SHEET_NAME = creds["google"]["sheet_name"]
-TELEGRAM_CHAT_ID = creds["telegram"]["chat_id"]
+SHEET_NAME = secrets["google"]["sheet_name"]
+TELEGRAM_CHAT_ID = secrets["telegram"]["chat_id"]
+SPREADSHEET_KEY = secrets["sheets"]["SPREADSHEET_KEY"]
 DAILY_MONITOR_TAB = "MonitoredStocks"
 EXIT_LOG_FILE = "/root/falah-ai-bot/exited_stocks.json"
 
@@ -40,24 +42,30 @@ def monitor_positions():
     # Step 2: Load exited list
     exited = load_previous_exits(EXIT_LOG_FILE)
 
-    # Step 3: Loop through holdings
+    # Step 3: Log all holdings with date to sheet
+    today_str = now.strftime("%Y-%m-%d")
+    gc = gspread.service_account(filename="/root/falah-credentials.json")
+    sheet = gc.open_by_key(SPREADSHEET_KEY)
+    monitor_tab = sheet.worksheet(DAILY_MONITOR_TAB)
+
     for stock in holdings:
         symbol = stock["tradingsymbol"]
         quantity = stock["quantity"]
         avg_price = stock["average_price"]
+
+        # Write holding info to sheet even if not exiting
+        row = [today_str, symbol, quantity, avg_price, "--", "HOLD"]
+        monitor_tab.append_row(row)
+
+        if symbol in exited:
+            print(f"🔁 {symbol} already exited. Skipping.")
+            continue
 
         # Step 4: Get current price
         try:
             cmp = get_live_price(kite, symbol)
         except:
             print(f"⚠️ Failed to get CMP for {symbol}")
-            continue
-
-        # Always log for tracking
-        log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, ["Holding"], date=now.strftime('%Y-%m-%d'))
-
-        if symbol in exited:
-            print(f"🔁 {symbol} already exited. Skipping exit check.")
             continue
 
         # Step 5: Analyze exit logic
@@ -79,11 +87,10 @@ def monitor_positions():
             reason.append("AI exit signal")
 
         if decision == "EXIT":
-            # Step 6: Execute exit (placeholder for manual or broker call)
             print(f"🚨 Exiting {symbol} @ {cmp} due to: {', '.join(reason)}")
             update_exit_log(EXIT_LOG_FILE, symbol)
             send_telegram(f"🚨 Auto Exit: {symbol} at ₹{cmp}\nReason: {', '.join(reason)}")
-            log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, reason, date=now.strftime('%Y-%m-%d'))
+            log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, reason)
 
     print("✅ Monitoring complete.")
 

@@ -35,7 +35,7 @@ def init_kite():
 
     try:
         profile = kite.profile()
-        st.success(f"🧑‍💼 Logged in as: {profile['user_name']}")
+        st.success(f" Logged in as: {profile['user_name']}")
     except Exception as e:
         st.error(f"❌ Failed to fetch profile: {e}")
 

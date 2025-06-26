@@ -66,3 +66,22 @@ def send_telegram(message: str):
     except Exception as e:
         print(f"❌ Failed to send Telegram message: {e}")
 
+def get_cnc_holdings(kite):
+    try:
+        holdings = kite.holdings()
+        cnc_holdings = []
+        for item in holdings:
+            if item["product"] == "CNC" and item["quantity"] > 0:
+                cnc_holdings.append({
+                    "symbol": item["tradingsymbol"],
+                    "quantity": item["quantity"],
+                    "average_price": item["average_price"],
+                    "last_price": item["last_price"],
+                    "pnl": item["pnl"]
+                })
+        return cnc_holdings
+    except Exception as e:
+        print(f"❌ Error fetching CNC holdings: {e}")
+        return []
+
+

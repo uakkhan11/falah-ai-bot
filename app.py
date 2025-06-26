@@ -107,10 +107,22 @@ def get_halal_symbols(sheet):
     worksheet = sheet.worksheet("HalalList")
     all_symbols = worksheet.col_values(1)
     return [s.strip() for s in all_symbols[1:] if s.strip()]
-st.write("📋 Loaded symbols:", symbols)
-st.success(f"✅ {len(symbols)} Halal stocks loaded")
+st.title("📜 Falāh Halal Stock Scanner")
 
-if st.checkbox("🔍 Show Halal Symbols"):
+kite = init_kite()
+sheet = load_sheet()
+
+# 🔄 Safely load Halal symbols
+try:
+    symbols = get_halal_symbols(sheet)
+    st.success(f"✅ {len(symbols)} Halal stocks loaded")
+    st.write("📋 Loaded symbols:", symbols[:10])  # Print only top 10 for quick view
+except Exception as e:
+    st.error(f"❌ Failed to load Halal symbols: {e}")
+    symbols = []
+
+# Optional view full list
+if st.checkbox("🔍 Show All Halal Symbols"):
     st.write(symbols)
 
 # ---------------------------

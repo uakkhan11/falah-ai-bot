@@ -1,4 +1,4 @@
-# app.py – Falāh Bot Main UI with Monitor Integration (Improved with Smart Fund Management + Auto Buy)
+# app.py – Falāh Bot Main UI with Monitor Integration (Final Fix)
 
 import streamlit as st
 import pandas as pd
@@ -18,7 +18,6 @@ with open("/root/falah-ai-bot/.streamlit/secrets.toml", "r") as f:
 API_KEY = secrets["zerodha"]["api_key"]
 API_SECRET = secrets["zerodha"]["api_secret"]
 ACCESS_TOKEN = secrets["zerodha"]["access_token"]
-print("🔐 Loaded ACCESS_TOKEN:", ACCESS_TOKEN)
 CREDS_JSON = "falah-credentials.json"
 SHEET_KEY = secrets.get("global", {}).get("google_sheet_key", "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c")
 
@@ -32,13 +31,11 @@ st.set_page_config(page_title="Falāh Bot UI", layout="wide")
 def init_kite():
     kite = KiteConnect(api_key=API_KEY)
     kite.set_access_token(ACCESS_TOKEN)
-
     try:
         profile = kite.profile()
-        st.success(f" Logged in as: {profile['user_name']}")
+        st.success(f"🧑‍💼 Logged in as: {profile['user_name']}")
     except Exception as e:
         st.error(f"❌ Failed to fetch profile: {e}")
-
     return kite
 
 @st.cache_resource
@@ -47,7 +44,6 @@ def load_sheet():
     creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_JSON, scope)
     client = gspread.authorize(creds)
     sheet = client.open_by_key(SHEET_KEY)
-    # Ensure required worksheet exists
     required_sheets = ["HalalList", "LivePositions"]
     existing_titles = [ws.title for ws in sheet.worksheets()]
     for title in required_sheets:
@@ -97,7 +93,6 @@ kite = init_kite()
 sheet = load_sheet()
 symbols = get_halal_symbols(sheet)
 st.write("📋 Loaded symbols:", symbols[:10])
-
 st.success(f"✅ {len(symbols)} Halal stocks loaded")
 
 if st.checkbox("🔍 Show Halal Symbols"):
@@ -110,7 +105,6 @@ if st.checkbox("🔍 Show Halal Symbols"):
 st.title("📈 Falāh AI Trading Bot")
 st.caption("Built with 💡 by Usman")
 
-# Fund and risk controls
 st.sidebar.header("⚙️ Fund Management")
 enable_dummy = st.sidebar.checkbox("🧪 Enable Dummy Data Mode", value=False)
 total_capital = st.sidebar.number_input("💰 Total Capital (₹)", min_value=1000, value=100000, step=1000)
@@ -120,10 +114,9 @@ min_ai_score = st.sidebar.slider("🎯 Min AI Score to Consider", 0, 100, 70)
 @st.cache_data
 def get_live_data(symbols):
     results = []
-    for sym in symbols[:10]:  # limit for debug
+    for sym in symbols[:10]:
         try:
-            ltp_data = kite.ltp(f"NSE:{sym}")
-            cmp = ltp_data[f"NSE:{sym}"]["last_price"]
+            cmp = round(random.uniform(200, 1500), 2) if enable_dummy else kite.ltp(f"NSE:{sym}")["NSE:"+sym]["last_price"]
             ai_score = round(random.uniform(60, 95), 2)
             results.append({"Symbol": sym, "CMP": cmp, "AI Score": ai_score})
         except Exception as e:
@@ -132,40 +125,19 @@ def get_live_data(symbols):
 
 st.info("⏳ Analyzing halal stocks...")
 analyzed = get_live_data(symbols)
-st.write("✅ Raw data from get_live_data():", analyzed)
-@st.cache_data
-def get_live_data(symbols):
-    results = []
-    for sym in symbols[:10]:  # limit for debug
-        try:
-            if enable_dummy:
-                cmp = round(random.uniform(200, 1500), 2)
-            else:
-                ltp_data = kite.ltp(f"NSE:{sym}")
-                cmp = ltp_data[f"NSE:{sym}"]["last_price"]
-
-            ai_score = round(random.uniform(60, 95), 2)
-            results.append({"Symbol": sym, "CMP": cmp, "AI Score": ai_score})
-        except Exception as e:
-            st.warning(f"❌ Skipping {sym}: {e}")
-    return results
-    
 df = pd.DataFrame(analyzed)
+
 if df.empty or "AI Score" not in df.columns:
-    st.error("❌ No valid stock data fetched. Please verify your Zerodha API credentials or enable dummy mode.")
+    st.error("❌ No valid stock data fetched. Please verify Zerodha token or enable dummy mode.")
     st.stop()
 else:
-    df = pd.DataFrame()
-    st.warning("⚠️ No stock data available. Check if Zerodha access token is valid or API is rate-limited.")
-    st.write("🧾 Raw DataFrame:", df)
+    st.success("✅ Stock data fetched successfully")
+    st.write("🧾 Raw DataFrame:", df.head())
 
 st.subheader("📊 Filtered Trade Candidates")
 
-if not df.empty and "AI Score" in df.columns:
-    candidates = df.sort_values(by="AI Score", ascending=False).head(max_trades)
-else:
-    candidates = pd.DataFrame()
-    st.warning("⚠️ No valid trade candidates available due to missing or invalid data.")
+candidates = df[df["AI Score"] >= min_ai_score]
+candidates = candidates.sort_values(by="AI Score", ascending=False).head(max_trades)
 
 if not candidates.empty:
     total_score = candidates["AI Score"].sum()

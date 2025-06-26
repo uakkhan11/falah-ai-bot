@@ -1,7 +1,7 @@
 from kiteconnect import KiteConnect
 
-api_key = "PUT_API_KEY_HERE"
-access_token = "PUT_ACCESS_TOKEN_HERE"
+api_key = "ijzeuwuylr3g0kug"
+access_token = "93LcDo84vecCgDsQzra6XGO29Fcx83wL"
 
 kite = KiteConnect(api_key=api_key)
 kite.set_access_token(access_token)

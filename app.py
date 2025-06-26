@@ -1,4 +1,4 @@
-# app.py – Falāh Bot Main UI with Monitor Integration (Final Fix)
+# app.py – Falāh Bot Main UI with Monitor Integration (Final)
 
 import streamlit as st
 import pandas as pd
@@ -44,7 +44,7 @@ def load_sheet():
     creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_JSON, scope)
     client = gspread.authorize(creds)
     sheet = client.open_by_key(SHEET_KEY)
-    required_sheets = ["HalalList", "LivePositions"]
+    required_sheets = ["HalalList", "LivePositions", "MonitoredStocks"]
     existing_titles = [ws.title for ws in sheet.worksheets()]
     for title in required_sheets:
         if title not in existing_titles:
@@ -55,10 +55,6 @@ def get_halal_symbols(sheet):
     worksheet = sheet.worksheet("HalalList")
     return worksheet.col_values(1)[1:]
 
-# ---------------------------
-# 🖥️ Monitor Controls
-# ---------------------------
-
 def is_monitor_running():
     try:
         status = subprocess.check_output(["systemctl", "is-active", "monitor.service"]).decode().strip()
@@ -66,9 +62,13 @@ def is_monitor_running():
     except:
         return False
 
+# ---------------------------
+# 🖥️ Monitor Controls
+# ---------------------------
+
 st.markdown("## 🔍 Falāh Live Monitor")
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 with col1:
     if st.button("🚀 Start Monitoring"):
         subprocess.run(["sudo", "systemctl", "start", "monitor.service"])
@@ -77,9 +77,21 @@ with col2:
     if st.button("🛑 Stop Monitoring"):
         subprocess.run(["sudo", "systemctl", "stop", "monitor.service"])
         st.warning("🛑 Monitor stopped")
+with col3:
+    if st.button("🧪 Run Monitor Once Now"):
+        subprocess.run(["python3", "/root/falah-ai-bot/monitor.py"])
+        st.success("✅ Monitor executed manually")
 
 if is_monitor_running():
     st.info("📡 *Monitor is running* and tracking CNC holdings.")
+    try:
+        with open("/var/log/falah-monitor.log", "r") as f:
+            lines = f.readlines()
+            last_run = next((line for line in reversed(lines) if "Monitoring started at" in line), None)
+            if last_run:
+                st.caption(f"🕒 Last Run: `{last_run.strip()}`")
+    except:
+        st.caption("🕒 Last run not recorded.")
 else:
     st.error("⚠️ Monitor is not active.")
 
@@ -190,5 +202,21 @@ try:
         st.info("📭 No live positions currently being tracked.")
 except Exception as e:
     st.warning(f"⚠️ Failed to fetch positions: {e}")
+
+# ---------------------------
+# 🧾 MonitoredStocks Log Viewer
+# ---------------------------
+
+st.subheader("🧾 Monitored CNC Holdings (Today)")
+try:
+    ws_monitor = sheet.worksheet("MonitoredStocks")
+    records_monitor = ws_monitor.get_all_records()
+    if records_monitor:
+        df_monitor = pd.DataFrame(records_monitor)
+        st.dataframe(df_monitor, use_container_width=True)
+    else:
+        st.info("📭 No CNC holdings logged yet today.")
+except Exception as e:
+    st.warning(f"⚠️ Could not load MonitoredStocks: {e}")
 
 st.caption("This dashboard auto-monitors Halal positions for SL/Target and includes Telegram alerts + smart exit logic.")

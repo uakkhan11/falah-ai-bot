@@ -1,5 +1,10 @@
 # utils.py
+import toml
 
+def load_credentials():
+    secrets = toml.load("/root/falah-ai-bot/.streamlit/secrets.toml")
+    return secrets["zerodha"]
+    
 import json
 import os
 import datetime

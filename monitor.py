@@ -59,9 +59,11 @@ def monitor_positions():
         print(f"📝 Logging {symbol}: Qty={quantity}, Avg={avg_price}")
         row = [today_str, symbol, quantity, avg_price, "--", "HOLD"]
         try:
-            monitor_tab.append_row(row)
-        except Exception as e:
-            print(f"❌ Failed to log {symbol}: {e}")
+    if (today_str, symbol) in already_logged:
+        continue
+    monitor_tab.append_row(row)
+except Exception as e:
+    print(f"❌ Failed to log {symbol}: {e}")
 
         if symbol in exited:
             print(f"🔁 {symbol} already exited. Skipping.")

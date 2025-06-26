@@ -103,8 +103,11 @@ st.title("📜 Falāh Halal Stock Scanner")
 
 kite = init_kite()
 sheet = load_sheet()
-symbols = get_halal_symbols(sheet)
-st.write("📋 Loaded symbols:", symbols[:10])
+def get_halal_symbols(sheet):
+    worksheet = sheet.worksheet("HalalList")
+    all_symbols = worksheet.col_values(1)
+    return [s.strip() for s in all_symbols[1:] if s.strip()]
+st.write("📋 Loaded symbols:", symbols)
 st.success(f"✅ {len(symbols)} Halal stocks loaded")
 
 if st.checkbox("🔍 Show Halal Symbols"):
@@ -126,7 +129,7 @@ min_ai_score = st.sidebar.slider("🎯 Min AI Score to Consider", 0, 100, 70)
 @st.cache_data
 def get_live_data(symbols):
     results = []
-    for sym in symbols[:10]:
+    for sym in symbols
         try:
             cmp = round(random.uniform(200, 1500), 2) if enable_dummy else kite.ltp(f"NSE:{sym}")["NSE:"+sym]["last_price"]
             ai_score = round(random.uniform(60, 95), 2)

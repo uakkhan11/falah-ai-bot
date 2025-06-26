@@ -2,8 +2,7 @@
 import toml
 
 def load_credentials():
-    secrets = toml.load("/root/falah-ai-bot/.streamlit/secrets.toml")
-    return secrets["zerodha"]
+    return toml.load("/root/falah-ai-bot/.streamlit/secrets.toml")
     
 import json
 import os

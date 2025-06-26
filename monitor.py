@@ -55,7 +55,11 @@ def monitor_positions():
 
         # Write holding info to sheet even if not exiting
         row = [today_str, symbol, quantity, avg_price, "--", "HOLD"]
-        monitor_tab.append_row(row)
+        try:
+            monitor_tab.append_row(row)
+        except Exception as e:
+            print(f"❌ Failed to log {symbol}: {e}")
+            monitor_tab.append_row(row)
 
         if symbol in exited:
             print(f"🔁 {symbol} already exited. Skipping.")

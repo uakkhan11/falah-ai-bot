@@ -98,3 +98,14 @@ if __name__ == "__main__":
             print(f"❌ Monitor error: {e}")
             send_telegram(f"❌ Monitor crashed: {e}")
         time.sleep(900)  # 15 minutes
+
+# ✅ Continuous loop – keeps script alive
+if __name__ == "__main__":
+    while True:
+        try:
+            monitor_positions()
+        except Exception as e:
+            print(f"❌ Monitor error: {e}")
+            send_telegram(f"❌ Monitor crashed: {e}")
+        time.sleep(900)  # Run every 15 minutes
+

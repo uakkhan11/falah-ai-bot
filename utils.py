@@ -84,4 +84,20 @@ def get_cnc_holdings(kite):
         print(f"❌ Error fetching CNC holdings: {e}")
         return []
 
+def analyze_exit_signals(symbol, current_price, buy_price):
+    try:
+        trailing_sl = buy_price * 0.97  # 3% below buy price
+        target_price = buy_price * 1.05  # 5% profit target
+
+        if current_price <= trailing_sl:
+            return "stoploss_hit"
+        elif current_price >= target_price:
+            return "target_hit"
+        else:
+            return "hold"
+    except Exception as e:
+        print(f"❌ Error analyzing signals for {symbol}: {e}")
+        return "hold"
+
+
 

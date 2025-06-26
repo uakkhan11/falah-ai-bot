@@ -2,10 +2,7 @@ from kiteconnect import KiteConnect
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-import pyotp
-import time
-import toml
-import tempfile
+import pyotp, time, toml, tempfile
 
 # Load secrets
 secrets = toml.load("/root/falah-ai-bot/.streamlit/secrets.toml")
@@ -15,20 +12,22 @@ totp_secret = secrets["zerodha"]["totp"]
 user_id = secrets["zerodha"]["user_id"]
 password = secrets["zerodha"]["password"]
 
-# Kite setup
 kite = KiteConnect(api_key=api_key)
 totp = pyotp.TOTP(totp_secret).now()
 
-# Chrome options
 options = Options()
 options.add_argument("--headless")
 options.add_argument("--no-sandbox")
 options.add_argument("--disable-dev-shm-usage")
-tmp_profile = tempfile.mkdtemp()
-options.add_argument(f"--user-data-dir={tmp_profile}")
+
+# ✅ Fix: Remove --user-data-dir to avoid lock issue
+# tmp_profile = tempfile.mkdtemp()
+# options.add_argument(f"--user-data-dir={tmp_profile}")
+
+driver = None  # ✅ Prevent NameError in finally block
 
 try:
-    driver = webdriver.Chrome(options=options)  # ✅ MISSING LINE FIXED
+    driver = webdriver.Chrome(options=options)  # Chrome starts here
     login_url = kite.login_url()
     driver.get(login_url)
 
@@ -44,17 +43,23 @@ try:
     current_url = driver.current_url
     if "request_token=" not in current_url:
         raise Exception("❌ Failed to retrieve request_token.")
+    
     request_token = current_url.split("request_token=")[1].split("&")[0]
     print("✅ request_token:", request_token)
 
-finally:
-    driver.quit()
+except Exception as e:
+    print(f"❌ Error during login flow: {e}")
 
-# Generate session and update token
+finally:
+    if driver:
+        driver.quit()
+
+# ✅ Generate access token from request token
 data = kite.generate_session(request_token, api_secret=api_secret)
 access_token = data["access_token"]
 print("✅ access_token:", access_token)
 
+# ✅ Save to secrets
 secrets["zerodha"]["access_token"] = access_token
 with open("/root/falah-ai-bot/.streamlit/secrets.toml", "w") as f:
     toml.dump(secrets, f)

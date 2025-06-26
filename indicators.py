@@ -46,6 +46,31 @@ def check_supertrend_flip(df):
     For now, returns True if last candle close is below open (i.e., red candle).
     """
     if df.empty or len(df) < 2:
+
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import datetime
+import toml
+
+def log_exit_to_sheet(stock, reason, score):
+    try:
+        secrets = toml.load("/root/falah-ai-bot/.streamlit/secrets.toml")
+        SPREADSHEET_KEY = secrets["google"]["sheet_id"]
+        CREDS_FILE = "/root/falah-ai-bot/falah-credentials.json"
+
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, scope)
+        gc = gspread.authorize(creds)
+        sheet = gc.open_by_key(SPREADSHEET_KEY)
+        worksheet = sheet.worksheet("ExitLog")  # Make sure this tab exists
+
+        row = [datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), stock, reason, score]
+        worksheet.append_row(row, value_input_option='USER_ENTERED')
+        print(f"✅ Logged exit for {stock} to sheet.")
+
+    except Exception as e:
+        print(f"❌ Error logging to sheet: {e}")
+
         return False
 
     return df['close'].iloc[-1] < df['open'].iloc[-1]

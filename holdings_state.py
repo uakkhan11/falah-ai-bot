@@ -8,7 +8,3 @@ def load_previous_exits(exit_log_file="/root/falah-ai-bot/exited_stocks.json"):
         return []
     with open(exit_log_file, "r") as f:
         return json.load(f)
-
-def update_exit_log(exits_dict):
-    with open(EXIT_LOG_FILE, "w") as f:
-        json.dump(exits_dict, f, indent=2)

@@ -30,6 +30,13 @@ def monitor_positions():
     if now.weekday() >= 5 or now.hour < 9 or (now.hour == 9 and now.minute < 15) or now.hour >= 15 and now.minute >= 30:
         print(f"⏸ Market closed: {now.strftime('%H:%M')}. Retrying later.")
         return
+    print(f"✅ CNC holdings received: {len(holdings)} stocks")
+
+    # After getting the sheet:
+    print("✅ Google Sheet connected. Ready to log.")
+
+    # Before appending each row:
+    print(f"📝 Logging {symbol}: Qty={quantity}, Avg={avg_price}")
 
     print(f"📡 Monitoring started at {now.strftime('%Y-%m-%d %H:%M:%S')}")
 

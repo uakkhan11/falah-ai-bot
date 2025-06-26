@@ -105,6 +105,12 @@ if __name__ == "__main__":
     while True:
         try:
             monitor_positions()
+            existing_rows = monitor_tab.get_all_records()
+            already_logged = set((row["Date"], row["Symbol"]) for row in existing_rows)
+
+        if (today_str, symbol) in already_logged:
+            print(f"🔁 Already logged today: {symbol}. Skipping.")
+            continue
         except Exception as e:
             print(f"❌ Monitor error: {e}")
             send_telegram(f"❌ Monitor crashed: {e}")

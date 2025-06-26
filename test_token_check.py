@@ -1,4 +1,3 @@
-# test_token_check.py
 from kiteconnect import KiteConnect
 
 api_key = "ijzeuwuylr3g0kug"
@@ -11,4 +10,4 @@ try:
     profile = kite.profile()
     print("✅ Logged in as:", profile["user_name"])
 except Exception as e:
-    print("❌ Token failed:", str(e))
+    print("❌ Token error:", str(e))

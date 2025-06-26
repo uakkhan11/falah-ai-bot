@@ -1,8 +1,6 @@
 import time
 import pytz
 import gspread
-import pandas as pd
-import requests
 from datetime import datetime
 from kiteconnect import KiteConnect
 from utils import load_credentials, send_telegram, get_cnc_holdings, analyze_exit_signals, get_live_price
@@ -19,57 +17,62 @@ IST = pytz.timezone('Asia/Kolkata')
 
 # Monitor config
 SHEET_NAME = secrets["google"]["sheet_name"]
-TELEGRAM_CHAT_ID = secrets["telegram"]["chat_id"]
 SPREADSHEET_KEY = secrets["sheets"]["SPREADSHEET_KEY"]
+TELEGRAM_CHAT_ID = secrets["telegram"]["chat_id"]
 DAILY_MONITOR_TAB = "MonitoredStocks"
 EXIT_LOG_FILE = "/root/falah-ai-bot/exited_stocks.json"
 
-# Monitoring loop
 def monitor_positions():
     now = datetime.now(IST)
     market_open = now.weekday() < 5 and ((now.hour > 9 or (now.hour == 9 and now.minute >= 15)) and (now.hour < 15 or (now.hour == 15 and now.minute < 30)))
+    today_str = now.strftime("%Y-%m-%d")
+    print(f"📡 Monitoring started at {now.strftime('%Y-%m-%d %H:%M:%S')} | Market open: {market_open}")
 
-    print(f"\U0001F4E1 Monitoring started at {now.strftime('%Y-%m-%d %H:%M:%S')} | Market open: {market_open}")
-
-    # Step 1: Get CNC holdings
+    # Step 1: CNC Holdings
     holdings = get_cnc_holdings(kite)
-    print("🔍 Holdings raw output:", holdings) 
+    print("🔍 Holdings raw output:", holdings)
     if not holdings:
         print("❌ No CNC holdings found.")
         return
-
     print(f"✅ CNC holdings received: {len(holdings)} stocks")
 
     # Step 2: Load exited list
     exited = load_previous_exits(EXIT_LOG_FILE)
 
-    # Step 3: Log all holdings with date to sheet
-    today_str = now.strftime("%Y-%m-%d")
+    # Step 3: Google Sheet setup
     gc = gspread.service_account(filename="/root/falah-credentials.json")
     sheet = gc.open_by_key(SPREADSHEET_KEY)
     monitor_tab = sheet.worksheet(DAILY_MONITOR_TAB)
     print("✅ Google Sheet connected. Ready to log.")
 
+    # Step 4: Fetch existing rows for deduplication
+    existing_rows = monitor_tab.get_all_records()
+    already_logged = set((row["Date"], row["Symbol"]) for row in existing_rows if "Date" in row and "Symbol" in row)
+
+    # Step 5: Loop through each holding
     for stock in holdings:
-        symbol = stock["symbol"]
+        symbol = stock.get("tradingsymbol") or stock.get("symbol")
         quantity = stock["quantity"]
         avg_price = stock["average_price"]
 
-        # Write holding info to sheet even if not exiting
-        print(f"📝 Logging {symbol}: Qty={quantity}, Avg={avg_price}")
+        # Check if already logged today
+        if (today_str, symbol) in already_logged:
+            print(f"🔁 Already logged today: {symbol}. Skipping.")
+            continue
+
+        # Log to Google Sheet
         row = [today_str, symbol, quantity, avg_price, "--", "HOLD"]
         try:
-    if (today_str, symbol) in already_logged:
-        continue
-    monitor_tab.append_row(row)
-except Exception as e:
-    print(f"❌ Failed to log {symbol}: {e}")
+            monitor_tab.append_row(row)
+            print(f"📝 Logged {symbol}: Qty={quantity}, Avg={avg_price}")
+        except Exception as e:
+            print(f"❌ Failed to log {symbol}: {e}")
 
         if symbol in exited:
             print(f"🔁 {symbol} already exited. Skipping.")
             continue
 
-        # Step 4 & 5: Analyze exit logic only if market open
+        # Step 6: Analyze exit logic only during market hours
         if market_open:
             try:
                 cmp = get_live_price(kite, symbol)
@@ -102,18 +105,12 @@ except Exception as e:
 
     print("✅ Monitoring complete.")
 
-# Run every 15 minutes
+# Main loop
 if __name__ == "__main__":
     while True:
         try:
             monitor_positions()
-            existing_rows = monitor_tab.get_all_records()
-            already_logged = set((row["Date"], row["Symbol"]) for row in existing_rows)
-
-        if (today_str, symbol) in already_logged:
-            print(f"🔁 Already logged today: {symbol}. Skipping.")
-            continue
         except Exception as e:
             print(f"❌ Monitor error: {e}")
             send_telegram(f"❌ Monitor crashed: {e}")
-        time.sleep(900)  # 15 minutes
+        time.sleep(900)  # Run every 15 min

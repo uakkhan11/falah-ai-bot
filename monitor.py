@@ -5,32 +5,27 @@ import pandas as pd
 import requests
 from datetime import datetime
 from kiteconnect import KiteConnect
-import toml
-
 from utils import load_credentials, send_telegram, get_cnc_holdings, analyze_exit_signals, get_live_price
 from indicators import calculate_trailing_sl, check_supertrend_flip
 from sheets import log_exit_to_sheet
 from holdings_state import load_previous_exits, update_exit_log
 
-# ✅ Load secrets from .streamlit/secrets.toml
-secrets = toml.load("/root/falah-ai-bot/.streamlit/secrets.toml")
-
-# ✅ Initialize KiteConnect
-kite = KiteConnect(api_key=secrets["zerodha"]["api_key"])
-kite.set_access_token(secrets["zerodha"]["access_token"])
+# Initialize
+creds = load_credentials()
+kite = KiteConnect(api_key=creds["api_key"])
+kite.set_access_token(creds["access_token"])
 IST = pytz.timezone('Asia/Kolkata')
 
-# ✅ Monitoring config
-SHEET_NAME = secrets["google"]["sheet_name"]
-TELEGRAM_CHAT_ID = secrets["telegram"]["chat_id"]
+# Monitor config
+SHEET_NAME = creds["google"]["sheet_name"]
+TELEGRAM_CHAT_ID = creds["telegram"]["chat_id"]
 DAILY_MONITOR_TAB = "MonitoredStocks"
 EXIT_LOG_FILE = "/root/falah-ai-bot/exited_stocks.json"
 
-# 🚨 Monitoring loop
-
+# Monitoring loop
 def monitor_positions():
     now = datetime.now(IST)
-    if now.weekday() >= 5 or now.hour < 9 or (now.hour == 9 and now.minute < 15) or (now.hour == 15 and now.minute >= 30) or now.hour > 15:
+    if now.weekday() >= 5 or now.hour < 9 or (now.hour == 9 and now.minute < 15) or now.hour >= 15 and now.minute >= 30:
         print(f"⏸ Market closed: {now.strftime('%H:%M')}. Retrying later.")
         return
 
@@ -51,15 +46,18 @@ def monitor_positions():
         quantity = stock["quantity"]
         avg_price = stock["average_price"]
 
-        if symbol in exited:
-            print(f"🔁 {symbol} already exited. Skipping.")
-            continue
-
         # Step 4: Get current price
         try:
             cmp = get_live_price(kite, symbol)
         except:
             print(f"⚠️ Failed to get CMP for {symbol}")
+            continue
+
+        # Always log for tracking
+        log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, ["Holding"], date=now.strftime('%Y-%m-%d'))
+
+        if symbol in exited:
+            print(f"🔁 {symbol} already exited. Skipping exit check.")
             continue
 
         # Step 5: Analyze exit logic
@@ -82,14 +80,14 @@ def monitor_positions():
 
         if decision == "EXIT":
             # Step 6: Execute exit (placeholder for manual or broker call)
-            print(f"🚨 Exiting {symbol} @ ₹{cmp} due to: {', '.join(reason)}")
+            print(f"🚨 Exiting {symbol} @ {cmp} due to: {', '.join(reason)}")
             update_exit_log(EXIT_LOG_FILE, symbol)
             send_telegram(f"🚨 Auto Exit: {symbol} at ₹{cmp}\nReason: {', '.join(reason)}")
-            log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, reason)
+            log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, reason, date=now.strftime('%Y-%m-%d'))
 
     print("✅ Monitoring complete.")
 
-# ⏱ Run every 15 minutes
+# Run every 15 minutes
 if __name__ == "__main__":
     while True:
         try:
@@ -98,14 +96,3 @@ if __name__ == "__main__":
             print(f"❌ Monitor error: {e}")
             send_telegram(f"❌ Monitor crashed: {e}")
         time.sleep(900)  # 15 minutes
-
-# ✅ Continuous loop – keeps script alive
-if __name__ == "__main__":
-    while True:
-        try:
-            monitor_positions()
-        except Exception as e:
-            print(f"❌ Monitor error: {e}")
-            send_telegram(f"❌ Monitor crashed: {e}")
-        time.sleep(900)  # Run every 15 minutes
-

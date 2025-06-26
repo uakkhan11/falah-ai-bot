@@ -12,8 +12,8 @@ from holdings_state import load_previous_exits, update_exit_log
 
 # Initialize
 creds = load_credentials()
-kite = KiteConnect(api_key=creds["api_key"])
-kite.set_access_token(creds["access_token"])
+kite = KiteConnect(api_key=creds["zerodha"]["api_key"])
+kite.set_access_token(creds["zerodha"]["access_token"])
 IST = pytz.timezone('Asia/Kolkata')
 
 # Monitor config

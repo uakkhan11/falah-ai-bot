@@ -51,7 +51,7 @@ def monitor_positions():
     print("✅ Google Sheet connected. Ready to log.")
 
     for stock in holdings:
-        symbol = stock["tradingsymbol"]
+        symbol = stock["symbol"]
         quantity = stock["quantity"]
         avg_price = stock["average_price"]
 

@@ -16,11 +16,15 @@ password = secrets["zerodha"]["password"]
 kite = KiteConnect(api_key=api_key)
 totp = pyotp.TOTP(totp_secret).now()
 
+from selenium.webdriver.chrome.options import Options
+import tempfile
+
 options = Options()
 options.add_argument("--headless")
 options.add_argument("--no-sandbox")
 options.add_argument("--disable-dev-shm-usage")
-driver = webdriver.Chrome(options=options)
+tmp_profile = tempfile.mkdtemp()
+options.add_argument(f"--user-data-dir={tmp_profile}")
 
 try:
     login_url = kite.login_url()

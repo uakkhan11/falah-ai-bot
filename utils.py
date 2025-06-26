@@ -97,6 +97,17 @@ def analyze_exit_signals(symbol, current_price, buy_price):
             return "hold"
     except Exception as e:
         print(f"❌ Error analyzing signals for {symbol}: {e}")
+
+def get_live_price(kite, symbol):
+    try:
+        instrument_token = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
+        ltp_data = kite.ltp([f"NSE:{symbol}"])
+        return ltp_data[f"NSE:{symbol}"]["last_price"]
+    except Exception as e:
+        print(f"❌ Failed to fetch live price for {symbol}: {e}")
+        return None
+
+        
         return "hold"
 
 

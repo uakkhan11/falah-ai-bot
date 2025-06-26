@@ -33,7 +33,7 @@ def init_kite():
     kite = KiteConnect(api_key=API_KEY)
     kite.set_access_token(ACCESS_TOKEN)
     try:
-    profile = kite.profile()
+        profile = kite.profile()
     st.success(f"🧑‍💼 Logged in as: {profile['user_name']}")
 except Exception as e:
     st.error(f"❌ Invalid token or session: {e}")

@@ -129,7 +129,7 @@ min_ai_score = st.sidebar.slider("🎯 Min AI Score to Consider", 0, 100, 70)
 @st.cache_data
 def get_live_data(symbols):
     results = []
-    for sym in symbols
+    for sym in symbols:
         try:
             cmp = round(random.uniform(200, 1500), 2) if enable_dummy else kite.ltp(f"NSE:{sym}")["NSE:"+sym]["last_price"]
             ai_score = round(random.uniform(60, 95), 2)

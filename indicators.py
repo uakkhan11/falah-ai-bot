@@ -25,3 +25,28 @@ def calculate_supertrend(df, period=10, multiplier=2):
 
     df.drop(['TR', 'ATR', 'Upper Basic', 'Lower Basic', 'Upper Band', 'Lower Band'], axis=1, inplace=True)
     return df
+
+def calculate_trailing_sl(prices, atr=1.5):
+    """
+    Calculate trailing stoploss based on highest price minus ATR multiplier.
+    'prices' should be a list or Series of historical prices.
+    """
+    if len(prices) < 2:
+        return None
+
+    high_price = max(prices)
+    low_price = min(prices)
+    atr_value = (high_price - low_price) / len(prices)  # Simple ATR proxy
+    trailing_sl = high_price - (atr * atr_value)
+    return round(trailing_sl, 2)
+
+def check_supertrend_flip(df):
+    """
+    Dummy Supertrend Flip Detector – Replace with real logic later.
+    For now, returns True if last candle close is below open (i.e., red candle).
+    """
+    if df.empty or len(df) < 2:
+        return False
+
+    return df['close'].iloc[-1] < df['open'].iloc[-1]
+

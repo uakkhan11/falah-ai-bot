@@ -33,6 +33,7 @@ def monitor_positions():
 
     # Step 1: Get CNC holdings
     holdings = get_cnc_holdings(kite)
+    print("🔍 Holdings raw output:", holdings) 
     if not holdings:
         print("❌ No CNC holdings found.")
         return

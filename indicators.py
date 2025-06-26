@@ -45,8 +45,6 @@ def check_supertrend_flip(df):
     Dummy Supertrend Flip Detector – Replace with real logic later.
     For now, returns True if last candle close is below open (i.e., red candle).
     """
-    if df.empty or len(df) < 2:
-
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import datetime

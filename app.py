@@ -29,6 +29,8 @@ st.set_page_config(page_title="Falāh Bot UI", layout="wide")
 
 @st.cache_resource
 def init_kite():
+    print("✅ Zerodha API Key:", API_KEY)
+    print("✅ Zerodha Access Token:", ACCESS_TOKEN)
     kite = KiteConnect(api_key=API_KEY)
     kite.set_access_token(ACCESS_TOKEN)
     try:
@@ -37,10 +39,6 @@ def init_kite():
     except Exception as e:
         st.error(f"❌ Failed to fetch profile: {e}")
     return kite
-
-    print("✅ Zerodha API Key:", API_KEY)
-    print("✅ Zerodha Access Token:", ACCESS_TOKEN)
-
 
 @st.cache_resource
 def load_sheet():

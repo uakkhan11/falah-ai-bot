@@ -11,11 +11,9 @@ def log_exit_to_sheet(stock_name, exit_price, reason, score, timestamp=None):
     if timestamp is None:
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Convert reason and score to string if needed
+    # If reason is a list, join into a string
     if isinstance(reason, list):
         reason = ", ".join(reason)
-    if isinstance(score, list):
-        score = ", ".join(str(s) for s in score)
 
     scope = [
         "https://spreadsheets.google.com/feeds",
@@ -29,6 +27,5 @@ def log_exit_to_sheet(stock_name, exit_price, reason, score, timestamp=None):
     worksheet = sheet.worksheet("MonitoredStocks")
 
     data = [timestamp, stock_name, exit_price, reason, score]
-    worksheet.append_row(data, value_input_option='USER_ENTERED')
-
-    print(f"✅ Exit logged for {stock_name}")
+    worksheet.append_row(data, value_input_option="USER_ENTERED")
+    print(f"✅ Logged exit for {stock_name} to sheet.")

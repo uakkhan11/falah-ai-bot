@@ -24,7 +24,10 @@ EXIT_LOG_FILE = "/root/falah-ai-bot/exited_stocks.json"
 
 def monitor_positions():
     now = datetime.now(IST)
-    market_open = now.weekday() < 5 and ((now.hour > 9 or (now.hour == 9 and now.minute >= 15)) and (now.hour < 15 or (now.hour == 15 and now.minute < 30)))
+    market_open = now.weekday() < 5 and (
+        (now.hour > 9 or (now.hour == 9 and now.minute >= 15)) and
+        (now.hour < 15 or (now.hour == 15 and now.minute < 30))
+    )
     today_str = now.strftime("%Y-%m-%d")
     print(f"📡 Monitoring started at {now.strftime('%Y-%m-%d %H:%M:%S')} | Market open: {market_open}")
 
@@ -47,7 +50,11 @@ def monitor_positions():
 
     # Step 4: Fetch existing rows for deduplication
     existing_rows = monitor_tab.get_all_records()
-    already_logged = set((row["Date"], row["Symbol"]) for row in existing_rows if "Date" in row and "Symbol" in row)
+    already_logged = set(
+        (row.get("Date"), row.get("Symbol"))
+        for row in existing_rows
+        if "Date" in row and "Symbol" in row
+    )
 
     # Step 5: Loop through each holding
     for stock in holdings:
@@ -55,7 +62,6 @@ def monitor_positions():
         quantity = stock["quantity"]
         avg_price = stock["average_price"]
 
-        # Check if already logged today
         if (today_str, symbol) in already_logged:
             print(f"🔁 Already logged today: {symbol}. Skipping.")
             continue
@@ -76,16 +82,13 @@ def monitor_positions():
         if market_open:
             try:
                 cmp = get_live_price(kite, symbol)
-            except:
+            except Exception:
                 print(f"⚠️ Failed to get CMP for {symbol}")
                 continue
 
             sl_price = calculate_trailing_sl([avg_price, cmp])
-            if sl_price and cmp <= sl_price:
-                sl_hit = True
-            else:
-                sl_hit = False
-                
+            sl_hit = sl_price and cmp <= sl_price
+
             st_flip = check_supertrend_flip(symbol)
             ai_exit = analyze_exit_signals(symbol, avg_price, cmp)
 
@@ -103,10 +106,11 @@ def monitor_positions():
                 reason.append("AI exit signal")
 
             if decision == "EXIT":
-                print(f"🚨 Exiting {symbol} @ {cmp} due to: {', '.join(reason)}")
+                reason_str = ", ".join(reason)  # Convert list to string
+                print(f"🚨 Exiting {symbol} @ {cmp} due to: {reason_str}")
                 update_exit_log(EXIT_LOG_FILE, symbol)
-                send_telegram(f"🚨 Auto Exit: {symbol} at ₹{cmp}\nReason: {', '.join(reason)}")
-                log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, reason)
+                send_telegram(f"🚨 Auto Exit: {symbol} at ₹{cmp}\nReason: {reason_str}")
+                log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, reason_str)
 
     print("✅ Monitoring complete.")
 

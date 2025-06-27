@@ -80,7 +80,12 @@ def monitor_positions():
                 print(f"⚠️ Failed to get CMP for {symbol}")
                 continue
 
-            sl_hit = calculate_trailing_sl(symbol, avg_price, cmp)
+            sl_price = calculate_trailing_sl([avg_price, cmp])
+            if sl_price and cmp <= sl_price:
+                sl_hit = True
+            else:
+                sl_hit = False
+                
             st_flip = check_supertrend_flip(symbol)
             ai_exit = analyze_exit_signals(symbol, avg_price, cmp)
 

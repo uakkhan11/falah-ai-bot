@@ -31,6 +31,9 @@ st.set_page_config(page_title="Falāh Bot UI", layout="wide")
 def init_kite():
     kite = KiteConnect(api_key=API_KEY)
     kite.set_access_token(ACCESS_TOKEN)
+        print("✅ Zerodha API Key:", API_KEY)
+        print("✅ Zerodha Access Token:", ACCESS_TOKEN)
+
     try:
         profile = kite.profile()
         st.success(f"🧑‍💼 Logged in as: {profile['user_name']}")

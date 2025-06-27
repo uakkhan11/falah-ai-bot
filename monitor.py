@@ -25,8 +25,8 @@ EXIT_LOG_FILE = "/root/falah-ai-bot/exited_stocks.json"
 def monitor_positions():
     now = datetime.now(IST)
     market_open = now.weekday() < 5 and (
-        (now.hour > 9 or (now.hour == 9 and now.minute >= 15)) and
-        (now.hour < 15 or (now.hour == 15 and now.minute < 30))
+        (now.hour > 9 or (now.hour == 9 and now.minute >= 15))
+        and (now.hour < 15 or (now.hour == 15 and now.minute < 30))
     )
     today_str = now.strftime("%Y-%m-%d")
     print(f"📡 Monitoring started at {now.strftime('%Y-%m-%d %H:%M:%S')} | Market open: {market_open}")
@@ -53,14 +53,14 @@ def monitor_positions():
     already_logged = set(
         (row.get("Date"), row.get("Symbol"))
         for row in existing_rows
-        if "Date" in row and "Symbol" in row
+        if row.get("Date") and row.get("Symbol")
     )
 
     # Step 5: Loop through each holding
     for stock in holdings:
         symbol = stock.get("tradingsymbol") or stock.get("symbol")
-        quantity = stock["quantity"]
-        avg_price = stock["average_price"]
+        quantity = stock.get("quantity")
+        avg_price = stock.get("average_price")
 
         if (today_str, symbol) in already_logged:
             print(f"🔁 Already logged today: {symbol}. Skipping.")
@@ -86,6 +86,7 @@ def monitor_positions():
                 print(f"⚠️ Failed to get CMP for {symbol}")
                 continue
 
+            # Trailing SL logic
             sl_price = calculate_trailing_sl([avg_price, cmp])
             sl_hit = sl_price and cmp <= sl_price
 
@@ -106,7 +107,7 @@ def monitor_positions():
                 reason.append("AI exit signal")
 
             if decision == "EXIT":
-                reason_str = ", ".join(reason)  # Convert list to string
+                reason_str = ", ".join(reason)  # convert list to string
                 print(f"🚨 Exiting {symbol} @ {cmp} due to: {reason_str}")
                 update_exit_log(EXIT_LOG_FILE, symbol)
                 send_telegram(f"🚨 Auto Exit: {symbol} at ₹{cmp}\nReason: {reason_str}")

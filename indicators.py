@@ -92,3 +92,29 @@ def detect_macd_cross(df):
     if macd_line.iloc[-2] < signal_line.iloc[-2] and macd_line.iloc[-1] > signal_line.iloc[-1]:
         return True
     return False
+
+def calculate_atr_trailing_sl(kite, symbol, cmp, atr_multiplier=1.5):
+    """
+    Computes ATR-based trailing stoploss price.
+    """
+    try:
+        instrument_token = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
+        hist = kite.historical_data(
+            instrument_token=instrument_token,
+            from_date=pd.Timestamp.today() - pd.Timedelta(days=30),
+            to_date=pd.Timestamp.today(),
+            interval="day"
+        )
+        df = pd.DataFrame(hist)
+        atr = AverageTrueRange(
+            high=df["High"],
+            low=df["Low"],
+            close=df["Close"],
+            window=14
+        ).average_true_range().iloc[-1]
+        trailing_sl = round(cmp - atr * atr_multiplier, 2)
+        return trailing_sl
+    except Exception as e:
+        print(f"⚠️ ATR trailing SL error for {symbol}: {e}")
+        return None
+

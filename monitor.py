@@ -28,10 +28,17 @@ secrets = load_credentials()
 print("✅ load_credentials() done")
 
 print("Starting monitor.py...")
+
+creds = secrets["zerodha"]
+print("✅ creds loaded")
 secrets = load_credentials()
 creds = secrets["zerodha"]
 kite = KiteConnect(api_key=creds["api_key"])
+print("✅ KiteConnect initialized")
+
 kite.set_access_token(creds["access_token"])
+print("✅ Access token set")
+
 IST = pytz.timezone("Asia/Kolkata")
 
 SHEET_NAME = secrets["google"]["sheet_name"]

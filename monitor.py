@@ -94,10 +94,11 @@ def monitor_positions():
             except Exception as e:
                 print(f"❌ Failed to log {symbol}: {e}")
 
+        # 🟢 THIS CHECK MUST BE INSIDE THE LOOP:
         last_exit_date = exited.get(symbol)
-    if last_exit_date == today_str:
-        print(f"🔁 {symbol} already exited today. Skipping.")
-        continue
+        if last_exit_date == today_str:
+            print(f"🔁 {symbol} already exited today. Skipping.")
+            continue
 
         sl_price = calculate_atr_trailing_sl(kite, symbol, cmp)
         sl_hit = sl_price and cmp <= sl_price
@@ -123,30 +124,4 @@ def monitor_positions():
             reasons.append("AI exit signal")
 
         if reasons:
-            reason_str = ", ".join(reasons)
-            print(f"🚨 Exit triggered for {symbol} @ ₹{cmp}: {reason_str}")
-            update_exit_log(EXIT_LOG_FILE, symbol)
-            send_telegram(
-                f"🚨 Auto Exit Triggered\n"
-                f"Symbol: {symbol}\n"
-                f"Price: ₹{cmp}\n"
-                f"Reasons: {reason_str}"
-            )
-            try:
-                log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, reason_str)
-            except Exception as e:
-                print(f"⚠️ Failed to log exit to sheet: {e}")
-        else:
-            print(f"✅ {symbol}: No exit criteria met. Holding position.")
-
-    print("✅ Monitoring complete.\n")
-
-if __name__ == "__main__":
-    while True:
-        try:
-            monitor_positions()
-        except Exception as e:
-            error_text = f"❌ Monitor crashed:\n{e}\n\n{traceback.format_exc()}"
-            print(error_text)
-            send_telegram(error_text)
-        time.sleep(900)
+            reason_str = ",_

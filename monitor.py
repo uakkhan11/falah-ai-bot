@@ -1,6 +1,3 @@
-def monitor_positions():
-    print("🚀 Monitor started running")
-
 import time
 import pytz
 import gspread
@@ -128,3 +125,23 @@ def monitor_positions():
 
         if reasons:
             reason_str = ", ".join(reasons)
+                        print(f"🚨 Exit triggered for {symbol} @ ₹{cmp}: {reason_str}")
+            update_exit_log(EXIT_LOG_FILE, symbol)
+            send_telegram(
+                f"🚨 Auto Exit Triggered\n"
+                f"Symbol: {symbol}\n"
+                f"Price: ₹{cmp}\n"
+                f"Reasons: {reason_str}"
+            )
+            try:
+                log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, reason_str)
+            except Exception as e:
+                print(f"⚠️ Failed to log exit to sheet: {e}")
+        else:
+            print(f"✅ {symbol}: No exit criteria met. Holding position.")
+
+    print("✅ Monitoring complete.\n")
+
+if __name__ == "__main__":
+    try:
+        monitor_positions()

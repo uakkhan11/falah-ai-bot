@@ -71,7 +71,7 @@ def monitor_positions():
         symbol = stock.get("tradingsymbol") or stock.get("symbol")
         quantity = stock.get("quantity")
         avg_price = stock.get("average_price")
-        print("✅ Monitoring complete.\n")
+
         if not market_open:
             print(f"⏸️ Market closed. Skipping exit checks for {symbol}.")
             continue
@@ -94,7 +94,6 @@ def monitor_positions():
             except Exception as e:
                 print(f"❌ Failed to log {symbol}: {e}")
 
-        # 🟢 THIS CHECK MUST BE INSIDE THE LOOP:
         last_exit_date = exited.get(symbol)
         if last_exit_date == today_str:
             print(f"🔁 {symbol} already exited today. Skipping.")
@@ -145,3 +144,7 @@ def monitor_positions():
 if __name__ == "__main__":
     try:
         monitor_positions()
+    except Exception as e:
+        error_text = f"❌ Monitor crashed:\n{e}\n\n{traceback.format_exc()}"
+        print(error_text)
+        send_telegram(error_text)

@@ -124,4 +124,4 @@ def monitor_positions():
             reasons.append("AI exit signal")
 
         if reasons:
-            reason_str = ",_
+            reason_str = ", ".join(reasons)

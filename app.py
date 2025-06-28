@@ -1,4 +1,4 @@
-# app.py – Falāh Bot Main UI with Monitor Integration + Smart Scanner + WebSocket Live Data
+# app.py – Falāh Bot Main UI with AI Predictions
 
 import streamlit as st
 import pandas as pd
@@ -10,22 +10,27 @@ from kiteconnect import KiteConnect, KiteTicker
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import toml
+import pickle
+from ta.momentum import RSIIndicator
+from ta.trend import EMAIndicator, MACD
+import numpy as np
 
-# 🔐 Load credentials
+# ---------------------------
+# Load credentials
+# ---------------------------
 with open("/root/falah-ai-bot/.streamlit/secrets.toml", "r") as f:
     secrets = toml.load(f)
 
 API_KEY = secrets["zerodha"]["api_key"]
-API_SECRET = secrets["zerodha"]["api_secret"]
 ACCESS_TOKEN = secrets["zerodha"]["access_token"]
 CREDS_JSON = "falah-credentials.json"
 SHEET_KEY = secrets.get("global", {}).get("google_sheet_key", "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c")
 
 st.set_page_config(page_title="Falāh Bot UI", layout="wide")
 
-# --------------------
-# Kite + Sheet Init
-# --------------------
+# ---------------------------
+# Init Kite + Sheets
+# ---------------------------
 @st.cache_resource
 def init_kite():
     kite = KiteConnect(api_key=API_KEY)
@@ -43,190 +48,190 @@ def load_sheet():
     creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_JSON, scope)
     client = gspread.authorize(creds)
     sheet = client.open_by_key(SHEET_KEY)
-    required_sheets = ["HalalList", "LivePositions", "MonitoredStocks"]
-    existing_titles = [ws.title for ws in sheet.worksheets()]
-    for title in required_sheets:
-        if title not in existing_titles:
-            sheet.add_worksheet(title=title, rows=1000, cols=20)
     return sheet
 
+@st.cache_resource
+def load_model():
+    with open("/root/falah-ai-bot/model.pkl", "rb") as f:
+        model = pickle.load(f)
+    return model
+
+model = load_model()
+
+# ---------------------------
+# Halal symbols
+# ---------------------------
 def get_halal_symbols(sheet):
     worksheet = sheet.worksheet("HalalList")
-    all_symbols = worksheet.col_values(1)
-    return [s.strip() for s in all_symbols[1:] if s.strip()]
+    symbols = worksheet.col_values(1)[1:]
+    return [s.strip() for s in symbols if s.strip()]
 
-def is_monitor_running():
-    try:
-        status = subprocess.check_output(["systemctl", "is-active", "monitor.service"]).decode().strip()
-        return status == "active"
-    except:
-        return False
+# ---------------------------
+# WebSocket LTP Data
+# ---------------------------
+import threading
 
-# --------------------
-# 📡 WebSocket Live Data
-# --------------------
 live_ltps = {}
+MAX_BATCH_SIZE = 300
 
-def start_websocket(tokens):
-    kws = KiteTicker(API_KEY, ACCESS_TOKEN)
+def start_websocket(symbols):
+    instrument_tokens = []
+    try:
+        ltp_data = kite.ltp([f"NSE:{s}" for s in symbols])
+        for s in symbols:
+            key = f"NSE:{s}"
+            if key in ltp_data:
+                instrument_tokens.append(ltp_data[key]["instrument_token"])
+            else:
+                print(f"⚠️ Skipping {s}: No LTP data.")
+    except Exception as e:
+        st.error(f"❌ Failed to get tokens: {e}")
+        return
 
-    def on_connect(ws, response):
-        st.write("✅ WebSocket connected.")
-        ws.subscribe(tokens)
-        ws.set_mode(ws.MODE_FULL, tokens)
+    batches = [instrument_tokens[i:i+MAX_BATCH_SIZE] for i in range(0, len(instrument_tokens), MAX_BATCH_SIZE)]
 
-    def on_ticks(ws, ticks):
-        for tick in ticks:
-            instrument_token = tick["instrument_token"]
-            ltp = tick.get("last_price")
-            if ltp is not None:
-                live_ltps[instrument_token] = ltp
+    def run_batch(batch, idx):
+        kws = KiteTicker(API_KEY, ACCESS_TOKEN)
 
-    def on_error(ws, code, reason):
-        st.warning(f"⚠️ WebSocket error: {code} {reason}")
+        def on_connect(ws, resp):
+            print(f"✅ Batch {idx}: Connected")
+            ws.subscribe(batch)
+            ws.set_mode(ws.MODE_FULL, batch)
 
-    def on_close(ws, code, reason):
-        st.warning("🔌 WebSocket closed.")
+        def on_ticks(ws, ticks):
+            for tick in ticks:
+                token = tick["instrument_token"]
+                ltp = tick.get("last_price")
+                if ltp:
+                    live_ltps[token] = ltp
 
-    kws.on_connect = on_connect
-    kws.on_ticks = on_ticks
-    kws.on_error = on_error
-    kws.on_close = on_close
-    kws.connect(threaded=True)
+        def on_error(ws, code, reason):
+            print(f"⚠️ Batch {idx} error: {reason}")
 
-# ---------------------------
-# 🖥️ Monitor Controls
-# ---------------------------
-st.markdown("## 🔍 Falāh Live Monitor")
+        def on_close(ws, code, reason):
+            print(f"🔌 Batch {idx} closed.")
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    if st.button("🚀 Start Monitoring"):
-        subprocess.run(["sudo", "systemctl", "start", "monitor.service"])
-        st.success("✅ Monitor started")
-with col2:
-    if st.button("🛑 Stop Monitoring"):
-        subprocess.run(["sudo", "systemctl", "stop", "monitor.service"])
-        st.warning("🛑 Monitor stopped")
-with col3:
-    if st.button("🧪 Run Monitor Once Now"):
-        subprocess.run(["python3", "/root/falah-ai-bot/monitor.py"])
-        st.success("✅ Monitor executed manually")
+        kws.on_connect = on_connect
+        kws.on_ticks = on_ticks
+        kws.on_error = on_error
+        kws.on_close = on_close
+        kws.connect(threaded=True)
 
-if is_monitor_running():
-    st.info("📡 *Monitor is running* and tracking CNC holdings.")
-else:
-    st.error("⚠️ Monitor is not active.")
+    for idx, batch in enumerate(batches, 1):
+        threading.Thread(target=run_batch, args=(batch, idx), daemon=True).start()
 
 # ---------------------------
-# 📜 Halal Stock Scanner
+# Predict probability helper
 # ---------------------------
-st.title("📜 Falāh Halal Stock Scanner")
+def predict_probability(df):
+    try:
+        df = df.copy()
+        df["rsi"] = RSIIndicator(df["close"], window=14).rsi()
+        df["ema_10"] = EMAIndicator(df["close"], window=10).ema_indicator()
+        df["ema_50"] = EMAIndicator(df["close"], window=50).ema_indicator()
+        df["macd"] = MACD(df["close"]).macd_diff()
+        latest = df.iloc[-1][["rsi","ema_10","ema_50","macd"]]
+        if latest.isnull().any():
+            return 0.5
+        X = np.array(latest).reshape(1, -1)
+        proba = model.predict_proba(X)[0][1]
+        return round(proba,3)
+    except Exception as e:
+        st.warning(f"Prediction error: {e}")
+        return 0.5
 
+# ---------------------------
+# Fund Management Settings
+# ---------------------------
+st.sidebar.header("⚙️ Fund Management")
+enable_dummy = st.sidebar.checkbox("🧪 Dummy Mode", value=False)
+total_capital = st.sidebar.number_input("💰 Total Capital", 1000, 1_000_000, 100000)
+max_trades = st.sidebar.number_input("📈 Max Trades", 1, 20, 5)
+min_ai_score = st.sidebar.slider("🎯 Min Combined Score", 0, 100, 70)
+
+# ---------------------------
+# Main Execution
+# ---------------------------
 kite = init_kite()
 sheet = load_sheet()
+symbols = get_halal_symbols(sheet)
+st.success(f"✅ Loaded {len(symbols)} symbols.")
 
-try:
-    symbols = get_halal_symbols(sheet)
-    st.success(f"✅ {len(symbols)} Halal stocks loaded")
-except Exception as e:
-    st.error(f"❌ Failed to load symbols: {e}")
-    symbols = []
-
-if st.checkbox("🔍 Show All Halal Symbols"):
-    st.write(symbols)
-
-if st.button("⚡ Run Smart Scanner"):
-    with st.spinner("Running multi-timeframe scanner..."):
-        subprocess.run(["python3", "/root/falah-ai-bot/smart_scanner.py"])
-    st.success("✅ Scanner finished.")
-
-if os.path.exists("/root/falah-ai-bot/scan_results.csv"):
-    df_scan = pd.read_csv("/root/falah-ai-bot/scan_results.csv")
-    st.subheader("📊 Last Scan Results")
-    st.dataframe(df_scan)
-else:
-    st.info("📭 No scan results yet.")
-
-# ---------------------------
-# 📈 AI Trade Preview & Fund Management
-# ---------------------------
-st.title("📈 Falāh AI Trading Bot")
-
-st.sidebar.header("⚙️ Fund Management")
-enable_dummy = st.sidebar.checkbox("🧪 Enable Dummy Mode", value=False)
-total_capital = st.sidebar.number_input("💰 Total Capital", 1000, 1000000, 100000)
-max_trades = st.sidebar.number_input("📈 Max Trades", 1, 20, 5)
-min_ai_score = st.sidebar.slider("🎯 Min AI Score", 0, 100, 70)
-
-# 🚀 Start WebSocket subscription
 if not enable_dummy:
     start_websocket(symbols)
-    st.success("✅ WebSocket subscription started.")
-    # Get tokens of first 10 symbols for demonstration
-    try:
-        instruments = kite.ltp([f"NSE:{s}" for s in symbols[:10]])
-        tokens = [info["instrument_token"] for info in instruments.values()]
-        start_websocket(tokens)
-        st.success(f"✅ WebSocket started for tokens: {tokens}")
-    except Exception as e:
-        st.warning(f"⚠️ Could not start WebSocket: {e}")
 
-# 🔄 Live Data Fetch
+# ---------------------------
+# Get live data
+# ---------------------------
 @st.cache_data
 def get_live_data(symbols):
     results = []
     for sym in symbols:
         try:
             if enable_dummy:
-                cmp = round(random.uniform(200, 1500), 2)
+                cmp = round(random.uniform(200,1500),2)
+                proba = random.uniform(0.4,0.6)
             else:
-                # Get instrument token for this symbol
-                inst = kite.ltp(f"NSE:{sym}")
-                token = inst[f"NSE:{sym}"]["instrument_token"]
-                cmp = live_ltps.get(token)
-                if cmp is None:
-                    cmp = inst[f"NSE:{sym}"]["last_price"]
-            ai_score = round(random.uniform(60, 95), 2)
-            results.append({"Symbol": sym, "CMP": cmp, "AI Score": ai_score})
+                hist = kite.historical_data(
+                    instrument_token=kite.ltp(f"NSE:{sym}")[f"NSE:{sym}"]["instrument_token"],
+                    from_date=pd.Timestamp.today()-pd.Timedelta(days=50),
+                    to_date=pd.Timestamp.today(),
+                    interval="day"
+                )
+                df_hist = pd.DataFrame(hist)
+                cmp = df_hist.iloc[-1]["close"]
+                proba = predict_probability(df_hist)
+
+            ai_score = round(random.uniform(60,95),2)
+            results.append({
+                "Symbol": sym,
+                "CMP": cmp,
+                "AI Score": ai_score,
+                "Predict Proba": proba
+            })
+
         except Exception as e:
             st.warning(f"❌ Skipping {sym}: {e}")
     return results
 
-st.info("⏳ Analyzing...")
-analyzed = get_live_data(symbols)
-df = pd.DataFrame(analyzed)
+st.info("⏳ Analyzing stocks...")
+data = get_live_data(symbols)
+df = pd.DataFrame(data)
 
-if df.empty or "AI Score" not in df.columns:
-    st.error("❌ No valid data.")
+if df.empty:
+    st.error("No data available.")
     st.stop()
-else:
-    st.success("✅ Data fetched.")
-    st.write(df.head())
 
-candidates = df[df["AI Score"] >= min_ai_score].sort_values(by="AI Score", ascending=False).head(max_trades)
+df["Combined Score"] = df["AI Score"] * df["Predict Proba"]
+candidates = df[df["Combined Score"] >= min_ai_score]
+candidates = candidates.sort_values(by="Combined Score", ascending=False).head(max_trades)
+
+st.subheader("📊 Candidates")
+st.dataframe(candidates[["Symbol","CMP","AI Score","Predict Proba","Combined Score"]])
 
 if not candidates.empty:
-    total_score = candidates["AI Score"].sum()
-    candidates["Weight"] = candidates["AI Score"] / total_score
+    total_score = candidates["Combined Score"].sum()
+    candidates["Weight"] = candidates["Combined Score"] / total_score
     candidates["Allocation"] = (candidates["Weight"] * total_capital).round(2)
     candidates["Est. Qty"] = (candidates["Allocation"] / candidates["CMP"]).astype(int)
+
     st.dataframe(candidates)
 
     if st.button("🛒 Execute Trades Now"):
         for _, row in candidates.iterrows():
-            if row["Est. Qty"] <= 0:
+            if row["Est. Qty"] <=0:
                 continue
             try:
-                kite.place_order(
-                    variety=kite.VARIETY_REGULAR,
-                    exchange=kite.EXCHANGE_NSE,
-                    tradingsymbol=row["Symbol"],
-                    transaction_type=kite.TRANSACTION_TYPE_BUY,
-                    quantity=int(row["Est. Qty"]),
-                    order_type=kite.ORDER_TYPE_MARKET,
-                    product=kite.PRODUCT_CNC
-                )
+                if not enable_dummy:
+                    kite.place_order(
+                        variety=kite.VARIETY_REGULAR,
+                        exchange=kite.EXCHANGE_NSE,
+                        tradingsymbol=row["Symbol"],
+                        transaction_type=kite.TRANSACTION_TYPE_BUY,
+                        quantity=int(row["Est. Qty"]),
+                        order_type=kite.ORDER_TYPE_MARKET,
+                        product=kite.PRODUCT_CNC
+                    )
                 sheet.worksheet("LivePositions").append_row([
                     row["Symbol"],
                     int(row["Est. Qty"]),
@@ -237,50 +242,4 @@ if not candidates.empty:
             except Exception as e:
                 st.warning(f"⚠️ Order failed for {row['Symbol']}: {e}")
 else:
-    st.warning("⚠️ No candidates met the threshold.")
-
-# ---------------------------
-# 📦 Live Position Viewer
-# ---------------------------
-st.markdown("---")
-st.subheader("📦 Live Positions")
-try:
-    ws = sheet.worksheet("LivePositions")
-    records = ws.get_all_records()
-    if records:
-        df_live = pd.DataFrame(records)
-        st.dataframe(df_live)
-    else:
-        st.info("📭 No positions.")
-except Exception as e:
-    st.warning(f"⚠️ Could not load positions: {e}")
-
-# ---------------------------
-# 🧾 Monitored Stocks Viewer
-# ---------------------------
-st.subheader("🧾 Monitored CNC Holdings")
-try:
-    ws_monitor = sheet.worksheet("MonitoredStocks")
-    records = ws_monitor.get_all_records()
-    if records:
-        df_monitor = pd.DataFrame(records)
-        st.dataframe(df_monitor)
-    else:
-        st.info("📭 No monitored stocks.")
-except Exception as e:
-    st.warning(f"⚠️ Could not load monitored stocks: {e}")
-
-st.caption("Built with 💡 by Usman")
-
-st.markdown("---")
-st.subheader("🟢 Live WebSocket LTP Monitor")
-
-if st.button("🔄 Refresh Live LTPs"):
-    if live_ltps:
-        df_ltp = pd.DataFrame([
-            {"Token": k, "LTP": v} for k, v in list(live_ltps.items())[:20]
-        ])
-        st.dataframe(df_ltp)
-    else:
-        st.warning("⚠️ No live LTP data received yet.")
-
+    st.warning("⚠️ No candidates met the minimum score.")

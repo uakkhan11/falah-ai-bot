@@ -9,7 +9,7 @@ from sklearn.metrics import classification_report
 import pickle
 
 # Folder where your CSVs are stored
-DATA_FOLDER = "/root/falah-ai-bot/historical_data"
+DATA_FOLDER = "/root/falah-ai-bot/data"
 
 # Gather all CSV files
 csv_files = glob.glob(os.path.join(DATA_FOLDER, "*.csv"))

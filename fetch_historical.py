@@ -43,8 +43,13 @@ print(f"Loaded {len(symbols)} symbols from HalalList.")
 # ✅ Fetch instrument tokens
 tokens = {}
 ltp_data = kite.ltp([f"NSE:{s}" for s in symbols])
+
 for s in symbols:
-    tokens[s] = ltp_data[f"NSE:{s}"]["instrument_token"]
+    key = f"NSE:{s}"
+    if key in ltp_data:
+        tokens[s] = ltp_data[key]["instrument_token"]
+    else:
+        print(f"⚠️ Skipping {s}: No LTP data available.")
 
 # ✅ Download and save historical data
 for symbol in symbols:

@@ -90,33 +90,7 @@ def monitor_positions():
                 break
 
         if row_idx:
-            # Update CMP and Exposure
             try:
                 monitor_tab.update(f"E{row_idx}", [[cmp]])
                 monitor_tab.update(f"F{row_idx}", [[exposure]])
-                print(f"🔄 Updated CMP/Exposure in sheet: CMP={cmp}, Exposure={exposure}")
-            except Exception as e:
-                print(f"⚠️ Failed to update CMP/Exposure: {e}")
-        else:
-            # Append new row
-            row = [today_str, symbol, quantity, avg_price, cmp, exposure, "HOLD"]
-            try:
-                monitor_tab.append_row(row)
-                print(f"📝 Added new row for {symbol}.")
-            except Exception as e:
-                print(f"❌ Failed to log {symbol}: {e}")
-
-        if not market_open:
-            print(f"⏸️ Market closed. Skipping exit checks for {symbol}.")
-            continue
-
-        last_exit_date = exited.get(symbol)
-        if last_exit_date == today_str:
-            print(f"🔁 {symbol} already exited today. Skipping.")
-            continue
-
-        sl_price = calculate_atr_trailing_sl(kite, symbol, cmp)
-        sl_hit = sl_price and cmp <= sl_price
-
-        st_flip_daily = check_supertrend_flip(symbol, interval="day")
-        st_flip_15m = check_supertrend_flip(symbol
+                print(f"�

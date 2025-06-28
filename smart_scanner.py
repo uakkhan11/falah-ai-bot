@@ -1,4 +1,5 @@
 # smart_scanner.py – Multi-Timeframe, Multi-Threaded Halal Scanner
+from utils import get_halal_list
 
 import threading
 import pandas as pd

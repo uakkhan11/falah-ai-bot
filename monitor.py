@@ -61,14 +61,8 @@ def monitor_positions():
         return
 
     existing_rows = monitor_tab.get_all_records()
-    already_logged = {
-        (row.get("Date"), row.get("Symbol"))
-        for row in existing_rows
-        if row.get("Date") and row.get("Symbol")
-    }
 
     for stock in holdings:
-            for stock in holdings:
         symbol = stock.get("tradingsymbol") or stock.get("symbol")
         quantity = stock.get("quantity")
         avg_price = stock.get("average_price")
@@ -86,7 +80,7 @@ def monitor_positions():
 
         # Search for existing row
         row_idx = None
-        for idx, row in enumerate(existing_rows, start=2):  # +2 because Gspread rows start at 1 and first row is headers
+        for idx, row in enumerate(existing_rows, start=2):
             if row.get("Date") == today_str and row.get("Symbol") == symbol:
                 row_idx = idx
                 break
@@ -112,7 +106,6 @@ def monitor_positions():
             print(f"⏸️ Market closed. Skipping exit checks for {symbol}.")
             continue
 
-        # Exit logic here (unchanged)
         last_exit_date = exited.get(symbol)
         if last_exit_date == today_str:
             print(f"🔁 {symbol} already exited today. Skipping.")
@@ -133,38 +126,4 @@ def monitor_positions():
         if sl_hit:
             reasons.append(f"ATR SL hit (SL: ₹{sl_price})")
         if st_flip_daily and st_flip_15m:
-            reasons.append("Supertrend flipped (daily+15m)")
-        if rsi_div:
-            reasons.append("RSI bearish divergence")
-        if vwap_cross:
-            reasons.append("VWAP cross-down")
-        if ai_exit:
-            reasons.append("AI exit signal")
-
-        if reasons:
-            reason_str = ", ".join(reasons)
-            print(f"🚨 Exit triggered for {symbol} @ ₹{cmp}: {reason_str}")
-            update_exit_log(EXIT_LOG_FILE, symbol)
-            send_telegram(
-                f"🚨 Auto Exit Triggered\n"
-                f"Symbol: {symbol}\n"
-                f"Price: ₹{cmp}\n"
-                f"Reasons: {reason_str}"
-            )
-            try:
-                log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, reason_str)
-            except Exception as e:
-                print(f"⚠️ Failed to log exit to sheet: {e}")
-        else:
-            print(f"✅ {symbol}: No exit criteria met. Holding position.")
-
-
-    print("✅ Monitoring complete.\n")
-
-if __name__ == "__main__":
-    try:
-        monitor_positions()
-    except Exception as e:
-        error_text = f"❌ Monitor crashed:\n{e}\n\n{traceback.format_exc()}"
-        print(error_text)
-        send_telegram(error_text)
+            reasons.append("Supertrend flipped

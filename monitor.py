@@ -10,34 +10,26 @@ from utils import (
     analyze_exit_signals,
     get_live_price,
 )
-print("✅ Imports done 3")
-
 from indicators import (
     calculate_atr_trailing_sl,
     check_supertrend_flip,
     check_rsi_bearish_divergence,
     check_vwap_cross,
 )
-print("✅ Imports done 4")
-
 from sheets import log_exit_to_sheet
 from holdings_state import load_previous_exits, update_exit_log
+
 print("✅ All imports finished")
 
-secrets = load_credentials()
-print("✅ load_credentials() done")
-
-print("Starting monitor.py...")
-
-creds = secrets["zerodha"]
-print("✅ creds loaded")
+# Load credentials
 secrets = load_credentials()
 creds = secrets["zerodha"]
+print("✅ Credentials loaded")
+
+# Initialize Kite
 kite = KiteConnect(api_key=creds["api_key"])
-print("✅ KiteConnect initialized")
-
 kite.set_access_token(creds["access_token"])
-print("✅ Access token set")
+print("✅ KiteConnect initialized")
 
 IST = pytz.timezone("Asia/Kolkata")
 
@@ -59,7 +51,7 @@ def monitor_positions():
     print(f"[{timestamp}] Market open: {market_open}")
 
     holdings = get_cnc_holdings(kite)
-    print("get_cnc_holdings() returned:", holdings)
+    print("Holdings returned:", holdings)
 
     if not holdings:
         print("No CNC holdings found.")
@@ -132,3 +124,40 @@ def monitor_positions():
         st_flip_15m = check_supertrend_flip(symbol, interval="15minute")
 
         rsi_div = check_rsi_bearish_divergence(kite, symbol)
+        vwap_cross = check_vwap_cross(kite, symbol)
+
+        ai_exit = analyze_exit_signals(symbol, avg_price, cmp)
+
+        reasons = []
+        if sl_hit:
+            reasons.append(f"ATR SL hit (SL: {sl_price})")
+        if st_flip_daily and st_flip_15m:
+            reasons.append("Supertrend flipped (daily+15m)")
+        if rsi_div:
+            reasons.append("RSI bearish divergence")
+        if vwap_cross:
+            reasons.append("VWAP cross-down")
+        if ai_exit:
+            reasons.append("AI exit signal")
+
+        if reasons:
+            reason_str = ", ".join(reasons)
+            print(f"Exit triggered for {symbol} at {cmp}: {reason_str}")
+            update_exit_log(EXIT_LOG_FILE, symbol)
+            send_telegram(
+                f"Auto Exit Triggered\n"
+                f"Symbol: {symbol}\n"
+                f"Price: {cmp}\n"
+                f"Reasons: {reason_str}"
+            )
+            try:
+                log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, reason_str)
+            except Exception as e:
+                print(f"Failed to log exit to sheet: {e}")
+        else:
+            print(f"{symbol}: No exit criteria met. Holding position.")
+
+    print("Monitoring complete.")
+
+if __name__ == "__main__":
+    monitor_positions()

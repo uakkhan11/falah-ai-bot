@@ -1,4 +1,4 @@
-# app.py – Falāh Bot Main UI with Monitor Integration (Final)
+# app.py – Falāh Bot Main UI with Monitor Integration + Smart Scanner
 
 import streamlit as st
 import pandas as pd
@@ -29,8 +29,6 @@ st.set_page_config(page_title="Falāh Bot UI", layout="wide")
 
 @st.cache_resource
 def init_kite():
-    print("✅ Zerodha API Key:", API_KEY)
-    print("✅ Zerodha Access Token:", ACCESS_TOKEN)
     kite = KiteConnect(api_key=API_KEY)
     kite.set_access_token(ACCESS_TOKEN)
     try:
@@ -55,7 +53,8 @@ def load_sheet():
 
 def get_halal_symbols(sheet):
     worksheet = sheet.worksheet("HalalList")
-    return worksheet.col_values(1)[1:]
+    all_symbols = worksheet.col_values(1)
+    return [s.strip() for s in all_symbols[1:] if s.strip()]
 
 def is_monitor_running():
     try:
@@ -105,27 +104,32 @@ st.title("📜 Falāh Halal Stock Scanner")
 
 kite = init_kite()
 sheet = load_sheet()
-def get_halal_symbols(sheet):
-    worksheet = sheet.worksheet("HalalList")
-    all_symbols = worksheet.col_values(1)
-    return [s.strip() for s in all_symbols[1:] if s.strip()]
-st.title("📜 Falāh Halal Stock Scanner")
 
-kite = init_kite()
-sheet = load_sheet()
-
-# 🔄 Safely load Halal symbols
+# 🔄 Load Halal symbols
 try:
     symbols = get_halal_symbols(sheet)
     st.success(f"✅ {len(symbols)} Halal stocks loaded")
-    st.write("📋 Loaded symbols:", symbols[:10])  # Print only top 10 for quick view
+    st.write("📋 Loaded symbols:", symbols[:10])
 except Exception as e:
     st.error(f"❌ Failed to load Halal symbols: {e}")
     symbols = []
 
-# Optional view full list
 if st.checkbox("🔍 Show All Halal Symbols"):
     st.write(symbols)
+
+# 🧠 Smart Scanner
+if st.button("⚡ Run Smart Scanner"):
+    with st.spinner("Running multi-timeframe scanner..."):
+        subprocess.run(["python3", "/root/falah-ai-bot/smart_scanner.py"])
+    st.success("✅ Scanner finished. Results saved to scan_results.csv.")
+
+# Show scan results if available
+if os.path.exists("/root/falah-ai-bot/scan_results.csv"):
+    df_scan = pd.read_csv("/root/falah-ai-bot/scan_results.csv")
+    st.subheader("📊 Last Scan Results")
+    st.dataframe(df_scan, use_container_width=True)
+else:
+    st.info("📭 No scan results yet. Run the scanner to populate.")
 
 # ---------------------------
 # 📈 AI Trade Preview & Fund Management

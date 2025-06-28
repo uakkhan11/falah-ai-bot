@@ -10,14 +10,22 @@ from utils import (
     analyze_exit_signals,
     get_live_price,
 )
+print("✅ Imports done 3")
+
 from indicators import (
     calculate_atr_trailing_sl,
     check_supertrend_flip,
     check_rsi_bearish_divergence,
     check_vwap_cross,
 )
+print("✅ Imports done 4")
+
 from sheets import log_exit_to_sheet
 from holdings_state import load_previous_exits, update_exit_log
+print("✅ All imports finished")
+
+secrets = load_credentials()
+print("✅ load_credentials() done")
 
 print("Starting monitor.py...")
 secrets = load_credentials()

@@ -1,4 +1,4 @@
-# app.py – Falāh Bot Main UI with AI Predictions
+# app.py – Falāh Bot Main UI with AI Predictions + Dynamic Risk Management
 
 import streamlit as st
 import pandas as pd
@@ -6,14 +6,16 @@ import time
 import random
 import subprocess
 import os
+import threading
+import toml
+import pickle
+import numpy as np
 from kiteconnect import KiteConnect, KiteTicker
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import toml
-import pickle
 from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator, MACD
-import numpy as np
+from risk import calculate_position_size, calculate_atr_trailing_sl
 
 # ---------------------------
 # Load credentials
@@ -69,8 +71,6 @@ def get_halal_symbols(sheet):
 # ---------------------------
 # WebSocket LTP Data
 # ---------------------------
-import threading
-
 live_ltps = {}
 MAX_BATCH_SIZE = 300
 
@@ -105,16 +105,11 @@ def start_websocket(symbols):
                 if ltp:
                     live_ltps[token] = ltp
 
-        def on_error(ws, code, reason):
-            print(f"⚠️ Batch {idx} error: {reason}")
-
-        def on_close(ws, code, reason):
-            print(f"🔌 Batch {idx} closed.")
-
         kws.on_connect = on_connect
         kws.on_ticks = on_ticks
-        kws.on_error = on_error
-        kws.on_close = on_close
+        kws.on_error = lambda ws, code, reason: print(f"⚠️ Batch {idx} error: {reason}")
+        kws.on_close = lambda ws, code, reason: print(f"🔌 Batch {idx} closed.")
+
         kws.connect(threaded=True)
 
     for idx, batch in enumerate(batches, 1):
@@ -147,7 +142,7 @@ st.sidebar.header("⚙️ Fund Management")
 enable_dummy = st.sidebar.checkbox("🧪 Dummy Mode", value=False)
 total_capital = st.sidebar.number_input("💰 Total Capital", 1000, 1_000_000, 100000)
 max_trades = st.sidebar.number_input("📈 Max Trades", 1, 20, 5)
-min_ai_score = st.sidebar.slider("🎯 Min Combined Score", 0, 100, 70)
+min_ai_score = st.sidebar.slider("🎯 Min Combined Score", 0, 200, 100)
 
 # ---------------------------
 # Main Execution
@@ -210,32 +205,49 @@ st.subheader("📊 Candidates")
 st.dataframe(candidates[["Symbol","CMP","AI Score","Predict Proba","Combined Score"]])
 
 if not candidates.empty:
-    total_score = candidates["Combined Score"].sum()
-    candidates["Weight"] = candidates["Combined Score"] / total_score
-    candidates["Allocation"] = (candidates["Weight"] * total_capital).round(2)
-    candidates["Est. Qty"] = (candidates["Allocation"] / candidates["CMP"]).astype(int)
-
-    st.dataframe(candidates)
-
     if st.button("🛒 Execute Trades Now"):
         for _, row in candidates.iterrows():
-            if row["Est. Qty"] <=0:
-                continue
             try:
+                # Compute dynamic position sizing
+                qty, cmp = calculate_position_size(kite, row["Symbol"], total_capital)
+                if qty <=0:
+                    continue
+
                 if not enable_dummy:
+                    # Place buy order
                     kite.place_order(
                         variety=kite.VARIETY_REGULAR,
                         exchange=kite.EXCHANGE_NSE,
                         tradingsymbol=row["Symbol"],
                         transaction_type=kite.TRANSACTION_TYPE_BUY,
-                        quantity=int(row["Est. Qty"]),
+                        quantity=qty,
                         order_type=kite.ORDER_TYPE_MARKET,
                         product=kite.PRODUCT_CNC
                     )
+                    # Place GTT stoploss
+                    sl_price = calculate_atr_trailing_sl(kite, row["Symbol"], cmp)
+                    kite.place_gtt(
+                        trigger_type=kite.GTT_TYPE_SINGLE,
+                        tradingsymbol=row["Symbol"],
+                        exchange=kite.EXCHANGE_NSE,
+                        trigger_values=[sl_price],
+                        last_price=cmp,
+                        orders=[
+                            {
+                                "transaction_type": kite.TRANSACTION_TYPE_SELL,
+                                "quantity": qty,
+                                "order_type": kite.ORDER_TYPE_LIMIT,
+                                "price": sl_price,
+                                "product": kite.PRODUCT_CNC
+                            }
+                        ]
+                    )
+                    st.success(f"✅ GTT Stoploss set at ₹{sl_price}")
+
                 sheet.worksheet("LivePositions").append_row([
                     row["Symbol"],
-                    int(row["Est. Qty"]),
-                    float(row["CMP"]),
+                    qty,
+                    float(cmp),
                     time.strftime("%Y-%m-%d %H:%M:%S")
                 ])
                 st.success(f"✅ Order placed for {row['Symbol']}")

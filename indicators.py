@@ -147,5 +147,30 @@ def check_rsi_bearish_divergence(kite, symbol, lookback=5):
     except Exception as e:
         print(f"⚠️ RSI divergence check failed for {symbol}: {e}")
         return False
+def check_vwap_cross(kite, symbol):
+    """
+    Returns True if CMP < VWAP of last 10 days.
+    """
+    try:
+        instrument_token = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
+        hist = kite.historical_data(
+            instrument_token=instrument_token,
+            from_date=pd.Timestamp.today() - pd.Timedelta(days=15),
+            to_date=pd.Timestamp.today(),
+            interval="day"
+        )
+        df = pd.DataFrame(hist)
+        # VWAP = cumulative typical price * volume / cumulative volume
+        df["typical_price"] = (df["High"] + df["Low"] + df["Close"]) / 3
+        df["cum_tp_vol"] = (df["typical_price"] * df["Volume"]).cumsum()
+        df["cum_vol"] = df["Volume"].cumsum()
+        df["vwap"] = df["cum_tp_vol"] / df["cum_vol"]
+        last_vwap = df["vwap"].iloc[-1]
+        cmp = df["Close"].iloc[-1]
+
+        return cmp < last_vwap
+    except Exception as e:
+        print(f"⚠️ VWAP cross check failed for {symbol}: {e}")
+        return False
 
 

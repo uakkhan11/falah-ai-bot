@@ -71,7 +71,7 @@ def monitor_positions():
         symbol = stock.get("tradingsymbol") or stock.get("symbol")
         quantity = stock.get("quantity")
         avg_price = stock.get("average_price")
-
+        print("✅ Monitoring complete.\n")
         if not market_open:
             print(f"⏸️ Market closed. Skipping exit checks for {symbol}.")
             continue
@@ -125,7 +125,7 @@ def monitor_positions():
 
         if reasons:
             reason_str = ", ".join(reasons)
-                        print(f"🚨 Exit triggered for {symbol} @ ₹{cmp}: {reason_str}")
+            print(f"🚨 Exit triggered for {symbol} @ ₹{cmp}: {reason_str}")
             update_exit_log(EXIT_LOG_FILE, symbol)
             send_telegram(
                 f"🚨 Auto Exit Triggered\n"

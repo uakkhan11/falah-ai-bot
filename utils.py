@@ -1,12 +1,14 @@
 # utils.py
 import toml
-
-def load_credentials():
-    return toml.load("/root/falah-ai-bot/.streamlit/secrets.toml")
-    
 import json
 import os
 import datetime
+import requests
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+
+def load_credentials():
+    return toml.load("/root/falah-ai-bot/.streamlit/secrets.toml")
 
 def load_previous_holdings(filepath='holding_state.json'):
     if os.path.exists(filepath):
@@ -31,24 +33,6 @@ def log_exit_to_sheet(sheet, row_data):
 
 def now_time():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-import requests
-
-def send_telegram(message: str):
-    secrets = toml.load("/root/falah-ai-bot/.streamlit/secrets.toml")
-    bot_token = secrets["telegram"]["bot_token"]
-    chat_id = secrets["telegram"]["chat_id"]
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "HTML"
-    }
-    try:
-        requests.post(url, data=payload)
-    except Exception as e:
-        print(f"❌ Failed to send Telegram message: {e}")
-import requests
 
 def send_telegram(message: str):
     secrets = toml.load("/root/falah-ai-bot/.streamlit/secrets.toml")
@@ -99,15 +83,22 @@ def analyze_exit_signals(symbol, current_price, buy_price):
 
 def get_live_price(kite, symbol):
     try:
-        instrument_token = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
         ltp_data = kite.ltp([f"NSE:{symbol}"])
         return ltp_data[f"NSE:{symbol}"]["last_price"]
     except Exception as e:
         print(f"❌ Failed to fetch live price for {symbol}: {e}")
         return None
 
-        
-        return "hold"
+def get_halal_list(sheet_key, creds_file="/root/falah-ai-bot/falah-credentials.json"):
+    """
+    Fetch halal symbols from Google Sheet.
+    """
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name(creds_file, scope)
+    client = gspread.authorize(creds)
 
-
-
+    sheet = client.open_by_key(sheet_key)
+    ws = sheet.worksheet("HalalList")
+    symbols = ws.col_values(1)
+    symbols = [s.strip().upper() for s in symbols if s and s.lower() != "symbol"]
+    return symbols

@@ -1,3 +1,6 @@
+def monitor_positions():
+    print("🚀 Monitor started running")
+
 import time
 import pytz
 import gspread

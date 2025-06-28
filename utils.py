@@ -102,3 +102,13 @@ def get_halal_list(sheet_key, creds_file="/root/falah-ai-bot/falah-credentials.j
     symbols = ws.col_values(1)
     symbols = [s.strip().upper() for s in symbols if s and s.lower() != "symbol"]
     return symbols
+
+def get_halal_list(sheet_key, worksheet_name="HalalList"):
+    import gspread
+    creds = gspread.service_account(filename="/root/falah-ai-bot/falah-credentials.json")
+    client = gspread.authorize(creds)
+    sheet = client.open_by_key(sheet_key)
+    worksheet = sheet.worksheet(worksheet_name)
+    symbols = worksheet.col_values(1)
+    return [s for s in symbols if s.strip()]
+

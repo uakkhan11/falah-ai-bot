@@ -116,4 +116,4 @@ def monitor_positions():
         st_flip_daily = check_supertrend_flip(symbol, interval="day")
         st_flip_15m = check_supertrend_flip(symbol, interval="15minute")
 
-        rsi_div = check_rsi_bearish_divergence(kite, symb
+        rsi_div = check_rsi_bearish_divergence(kite, symbol)

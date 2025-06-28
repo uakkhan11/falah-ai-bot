@@ -105,8 +105,7 @@ def get_halal_list(sheet_key, creds_file="/root/falah-ai-bot/falah-credentials.j
 
 def get_halal_list(sheet_key, worksheet_name="HalalList"):
     import gspread
-    creds = gspread.service_account(filename="/root/falah-ai-bot/falah-credentials.json")
-    client = gspread.authorize(creds)
+    client = gspread.service_account(filename="/root/falah-ai-bot/falah-credentials.json")
     sheet = client.open_by_key(sheet_key)
     worksheet = sheet.worksheet(worksheet_name)
     symbols = worksheet.col_values(1)

@@ -21,6 +21,7 @@ from sheets import log_exit_to_sheet
 from holdings_state import load_previous_exits, update_exit_log
 
 # Initialize
+print("✅ Starting monitor.py...")
 secrets = load_credentials()
 creds = secrets["zerodha"]
 kite = KiteConnect(api_key=creds["api_key"])
@@ -33,6 +34,8 @@ DAILY_MONITOR_TAB = "MonitoredStocks"
 EXIT_LOG_FILE = "/root/falah-ai-bot/exited_stocks.json"
 
 def monitor_positions():
+    print("🚀 monitor_positions() started")
+
     now = datetime.now(IST)
     market_open = now.weekday() < 5 and (
         (now.hour > 9 or (now.hour == 9 and now.minute >= 15))
@@ -40,31 +43,38 @@ def monitor_positions():
     )
     today_str = now.strftime("%Y-%m-%d")
     timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"📡 [{timestamp}] Monitoring started | Market open: {market_open}")
+    print(f"📡 [{timestamp}] Market open: {market_open}")
 
     holdings = get_cnc_holdings(kite)
+    print("✅ get_cnc_holdings() returned:", holdings)
+
     if not holdings:
         print("❌ No CNC holdings found.")
         return
     print(f"✅ CNC holdings received: {len(holdings)}")
 
     exited = load_previous_exits(EXIT_LOG_FILE)
+    print("✅ Loaded exited stocks log.")
 
-    try:
-        gc = gspread.service_account(filename="/root/falah-credentials.json")
-        sheet = gc.open_by_key(SPREADSHEET_KEY)
-        monitor_tab = sheet.worksheet(DAILY_MONITOR_TAB)
-        print("✅ Connected to Google Sheet.")
-    except Exception as e:
-        print(f"❌ Google Sheets error: {e}")
-        send_telegram(f"❌ Monitor error connecting to Sheets:\n{e}")
-        return
+    gc = gspread.service_account(filename="/root/falah-credentials.json")
+    sheet = gc.open_by_key(SPREADSHEET_KEY)
+    monitor_tab = sheet.worksheet(DAILY_MONITOR_TAB)
+    print("✅ Connected to Google Sheet.")
 
     existing_rows = monitor_tab.get_all_records()
+    print(f"✅ Loaded {len(existing_rows)} existing rows from sheet.")
 
     for stock in holdings:
         symbol = stock.get("tradingsymbol") or stock.get("symbol")
         quantity = stock.get("quantity")
         avg_price = stock.get("average_price")
 
-        # Always get CMP (even if market closed) for
+        print(f"\n🔍 Processing {symbol} (Qty={quantity}, Avg={avg_price})")
+
+        # Always get CMP for logging
+        try:
+            cmp = get_live_price(kite, symbol)
+            if not cmp:
+                raise ValueError("CMP unavailable")
+            print(f"✅ Live CMP for {symbol}: {cmp}")
+        except Exception

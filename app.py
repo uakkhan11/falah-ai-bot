@@ -161,6 +161,8 @@ min_ai_score = st.sidebar.slider("🎯 Min AI Score", 0, 100, 70)
 
 # 🚀 Start WebSocket subscription
 if not enable_dummy:
+    start_websocket(symbols)
+    st.success("✅ WebSocket subscription started.")
     # Get tokens of first 10 symbols for demonstration
     try:
         instruments = kite.ltp([f"NSE:{s}" for s in symbols[:10]])

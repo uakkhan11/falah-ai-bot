@@ -118,3 +118,34 @@ def calculate_atr_trailing_sl(kite, symbol, cmp, atr_multiplier=1.5):
         print(f"⚠️ ATR trailing SL error for {symbol}: {e}")
         return None
 
+def check_rsi_bearish_divergence(kite, symbol, lookback=5):
+    """
+    Returns True if bearish RSI divergence is detected.
+    """
+    try:
+        instrument_token = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
+        hist = kite.historical_data(
+            instrument_token=instrument_token,
+            from_date=pd.Timestamp.today() - pd.Timedelta(days=30),
+            to_date=pd.Timestamp.today(),
+            interval="day"
+        )
+        df = pd.DataFrame(hist)
+        df["rsi"] = RSIIndicator(df["Close"], window=14).rsi()
+
+        if len(df) < lookback + 1:
+            return False
+
+        price_highs = df["Close"].iloc[-lookback:]
+        rsi_values = df["rsi"].iloc[-lookback:]
+
+        # Check for higher highs in price and lower highs in RSI
+        if price_highs.is_monotonic_increasing and rsi_values.is_monotonic_decreasing:
+            return True
+
+        return False
+    except Exception as e:
+        print(f"⚠️ RSI divergence check failed for {symbol}: {e}")
+        return False
+
+

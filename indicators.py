@@ -4,7 +4,7 @@ from ta.trend import EMAIndicator
 from ta.trend import MACD
 from ta.volatility import AverageTrueRange
 from ta.trend import PSARIndicator
-from ta.trend import SuperTrend
+import pandas_ta as pta
 
 def detect_breakout(df, threshold=1.02):
     """
@@ -64,17 +64,21 @@ def calculate_trailing_sl(prices, atr_multiplier=1.5):
 
 def check_supertrend_flip(df, period=10, multiplier=3):
     """
-    Checks if Supertrend has flipped to bearish.
-    Returns True if last candle is bearish.
+    Returns True if Supertrend has flipped to bearish.
     """
     if len(df) < period + 1:
         return False
-    st = SuperTrend(df['High'], df['Low'], df['Close'], period=period, multiplier=multiplier)
-    supertrend = st.super_trend()
-    direction = st.super_trend_direction()
-    # -1 means bearish, 1 means bullish
-    last_dir = direction.iloc[-1]
-    return last_dir == -1
+
+    supertrend = pta.supertrend(
+        high=df["High"],
+        low=df["Low"],
+        close=df["Close"],
+        length=period,
+        multiplier=multiplier
+    )
+    last_trend = supertrend["SUPERTd_{}_{}".format(period, multiplier)].iloc[-1]
+    # -1 = bearish, 1 = bullish
+    return last_trend == -1
 
 def detect_macd_cross(df):
     """

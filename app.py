@@ -202,7 +202,7 @@ if df.empty:
     st.error("No data available.")
     st.stop()
 
-df["Combined Score"] = df["AI Score"] * df["Predict Proba"]
+df["Combined Score"] = df["AI Score"] + (df["Predict Proba"] * 100)
 candidates = df[df["Combined Score"] >= min_ai_score]
 candidates = candidates.sort_values(by="Combined Score", ascending=False).head(max_trades)
 

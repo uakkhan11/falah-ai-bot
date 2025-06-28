@@ -77,4 +77,29 @@ def monitor_positions():
             if not cmp:
                 raise ValueError("CMP unavailable")
             print(f"✅ Live CMP for {symbol}: {cmp}")
-        except Exception
+        except Exception as e:
+            print(f"⚠️ Could not get CMP for {symbol}: {e}")
+            cmp = "--"
+
+        exposure = round(cmp * quantity, 2) if cmp != "--" else "--"
+
+        # Search for existing row
+        row_idx = None
+        for idx, row in enumerate(existing_rows, start=2):
+            if row.get("Date") == today_str and row.get("Symbol") == symbol:
+                row_idx = idx
+                break
+
+        if row_idx:
+            # Update CMP and Exposure
+            try:
+                monitor_tab.update(f"E{row_idx}", [[cmp]])
+                monitor_tab.update(f"F{row_idx}", [[exposure]])
+                print(f"🔄 Updated CMP/Exposure in sheet: CMP={cmp}, Exposure={exposure}")
+            except Exception as e:
+                print(f"⚠️ Failed to update CMP/Exposure: {e}")
+        else:
+            # Append new row
+            row = [today_str, symbol, quantity, avg_price, cmp, exposure, "HOLD"]
+            try:
+                monitor_tab_

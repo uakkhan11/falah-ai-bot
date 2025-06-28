@@ -269,3 +269,16 @@ except Exception as e:
     st.warning(f"⚠️ Could not load monitored stocks: {e}")
 
 st.caption("Built with 💡 by Usman")
+
+st.markdown("---")
+st.subheader("🟢 Live WebSocket LTP Monitor")
+
+if st.button("🔄 Refresh Live LTPs"):
+    if live_ltps:
+        df_ltp = pd.DataFrame([
+            {"Token": k, "LTP": v} for k, v in list(live_ltps.items())[:20]
+        ])
+        st.dataframe(df_ltp)
+    else:
+        st.warning("⚠️ No live LTP data received yet.")
+

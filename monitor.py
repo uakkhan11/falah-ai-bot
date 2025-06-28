@@ -68,25 +68,39 @@ def monitor_positions():
     }
 
     for stock in holdings:
+            for stock in holdings:
         symbol = stock.get("tradingsymbol") or stock.get("symbol")
         quantity = stock.get("quantity")
         avg_price = stock.get("average_price")
 
-        if not market_open:
-            print(f"⏸️ Market closed. Skipping exit checks for {symbol}.")
-            continue
-
+        # Always get CMP (even if market closed) for logging
         try:
             cmp = get_live_price(kite, symbol)
             if not cmp:
                 raise ValueError("CMP unavailable")
         except Exception as e:
             print(f"⚠️ Could not get CMP for {symbol}: {e}")
-            continue
+            cmp = "--"
 
-        exposure = round(cmp * quantity, 2)
+        exposure = round(cmp * quantity, 2) if cmp != "--" else "--"
 
-        if (today_str, symbol) not in already_logged:
+        # Search for existing row
+        row_idx = None
+        for idx, row in enumerate(existing_rows, start=2):  # +2 because Gspread rows start at 1 and first row is headers
+            if row.get("Date") == today_str and row.get("Symbol") == symbol:
+                row_idx = idx
+                break
+
+        if row_idx:
+            # Update CMP and Exposure
+            try:
+                monitor_tab.update(f"E{row_idx}", [[cmp]])
+                monitor_tab.update(f"F{row_idx}", [[exposure]])
+                print(f"🔄 Updated CMP and Exposure for {symbol}: CMP={cmp}, Exposure={exposure}")
+            except Exception as e:
+                print(f"⚠️ Failed to update CMP/Exposure for {symbol}: {e}")
+        else:
+            # Append new row
             row = [today_str, symbol, quantity, avg_price, cmp, exposure, "HOLD"]
             try:
                 monitor_tab.append_row(row)
@@ -94,6 +108,11 @@ def monitor_positions():
             except Exception as e:
                 print(f"❌ Failed to log {symbol}: {e}")
 
+        if not market_open:
+            print(f"⏸️ Market closed. Skipping exit checks for {symbol}.")
+            continue
+
+        # Exit logic here (unchanged)
         last_exit_date = exited.get(symbol)
         if last_exit_date == today_str:
             print(f"🔁 {symbol} already exited today. Skipping.")
@@ -138,6 +157,7 @@ def monitor_positions():
                 print(f"⚠️ Failed to log exit to sheet: {e}")
         else:
             print(f"✅ {symbol}: No exit criteria met. Holding position.")
+
 
     print("✅ Monitoring complete.\n")
 

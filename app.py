@@ -200,8 +200,15 @@ st.info("⏳ Analyzing stocks...")
 data = get_live_data(symbols)
 df = pd.DataFrame(data)
 
-if df.empty or "AI Score" not in df.columns or "Predict Proba" not in df.columns:
+if df.empty:
     st.error("No data available.")
+    st.stop()
+
+required_columns = ["AI Score", "Predict Proba", "Symbol", "CMP"]
+missing_cols = [col for col in required_columns if col not in df.columns]
+if missing_cols:
+    st.error(f"Missing expected data columns: {missing_cols}")
+    st.write("Raw DataFrame:", df)
     st.stop()
 
 df["Combined Score"] = df["AI Score"] + (df["Predict Proba"] * 100)

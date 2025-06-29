@@ -200,7 +200,7 @@ st.info("⏳ Analyzing stocks...")
 data = get_live_data(symbols)
 df = pd.DataFrame(data)
 
-if df.empty:
+if df.empty or "AI Score" not in df.columns or "Predict Proba" not in df.columns:
     st.error("No data available.")
     st.stop()
 

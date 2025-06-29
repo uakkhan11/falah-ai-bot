@@ -191,6 +191,7 @@ def get_live_data(symbols):
                 "AI Score": ai_score,
                 "Predict Proba": proba
             })
+            print(f"✅ Added {sym}: CMP={cmp}, AI={ai_score}, Proba={proba}")
 
         except Exception as e:
             st.warning(f"❌ Skipping {sym}: {e}")

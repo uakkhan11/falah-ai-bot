@@ -44,8 +44,8 @@ print(f"Loaded {len(symbols)} symbols from HalalList.")
 tokens = {}
 with open("/root/falah-ai-bot/tokens.json", "r") as f:
     tokens = json.load(f)
-    else:
-        print(f"⚠️ Skipping {s}: No LTP data available.")
+else:
+     print(f"⚠️ Skipping {s}: No LTP data available.")
 
 # ✅ Download and save historical data
 for symbol in symbols:

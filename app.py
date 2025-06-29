@@ -72,32 +72,11 @@ token_map = {}
 
 MAX_BATCH_SIZE = 300
 
-def start_websocket(symbols):
+def start_websocket(tokens):
     """
-    Starts WebSocket connections in batches and fetches instrument tokens in smaller chunks.
+    Starts WebSocket connections in batches.
     """
-    instrument_tokens = []
-    batch_size = 200
-    all_symbols = [f"NSE:{s}" for s in symbols]
-
-    for i in range(0, len(all_symbols), batch_size):
-        batch = all_symbols[i:i+batch_size]
-        try:
-            ltp_data_batch = kite.ltp(batch)
-            for s in batch:
-                if s in ltp_data_batch:
-                    token = ltp_data_batch[s]["instrument_token"]
-                    instrument_tokens.append(token)
-                else:
-                    print(f"⚠️ Skipping {s}: No LTP data.")
-        except Exception as e:
-            st.warning(f"❌ Failed fetching batch {i//batch_size+1}: {e}")
-
-    if not instrument_tokens:
-        st.error("❌ No instrument tokens could be loaded.")
-        return
-
-    batches = [instrument_tokens[i:i+MAX_BATCH_SIZE] for i in range(0, len(instrument_tokens), MAX_BATCH_SIZE)]
+    batches = [tokens[i:i+MAX_BATCH_SIZE] for i in range(0, len(tokens), MAX_BATCH_SIZE)]
 
     def run_batch(batch, idx):
         kws = KiteTicker(API_KEY, ACCESS_TOKEN)
@@ -123,7 +102,6 @@ def start_websocket(symbols):
 
     for idx, batch in enumerate(batches, 1):
         threading.Thread(target=run_batch, args=(batch, idx), daemon=True).start()
-
 
 # ---------------------------
 # Predict probability helper
@@ -162,16 +140,25 @@ sheet = load_sheet()
 symbols = get_halal_symbols(sheet)
 
 # ---------------------------
-# Instrument tokens upfront
+# Fetch instrument tokens safely in batches
 # ---------------------------
-try:
-    ltp_data = kite.ltp([f"NSE:{s}" for s in symbols])
-    for s in symbols:
-        key = f"NSE:{s}"
-        token_map[s] = ltp_data[key]["instrument_token"]
-    st.success(f"✅ Loaded {len(token_map)} instrument tokens.")
-except Exception as e:
-    st.error(f"❌ Failed to fetch instrument tokens: {e}")
+token_map = {}
+for i in range(0, len(symbols), 200):
+    batch = [f"NSE:{s}" for s in symbols[i:i+200]]
+    try:
+        ltp_data = kite.ltp(batch)
+        for s in symbols[i:i+200]:
+            key = f"NSE:{s}"
+            if key in ltp_data:
+                token_map[s] = ltp_data[key]["instrument_token"]
+    except Exception as e:
+        st.warning(f"❌ Failed fetching batch {i//200+1}: {e}")
+
+if not token_map:
+    st.error("❌ No instrument tokens could be loaded.")
+    st.stop()
+
+st.success(f"✅ Loaded {len(token_map)} instrument tokens.")
 
 if not enable_dummy:
     start_websocket(list(token_map.values()))
@@ -217,7 +204,6 @@ def get_live_data(symbols):
                 "AI Score": ai_score,
                 "Predict Proba": proba
             })
-            print(f"✅ Added {sym}: CMP={cmp}, AI={ai_score}, Proba={proba}")
 
         except Exception as e:
             st.warning(f"❌ Skipping {sym}: {e}")
@@ -229,13 +215,6 @@ df = pd.DataFrame(data)
 
 if df.empty:
     st.error("No data available.")
-    st.stop()
-
-required_columns = ["AI Score", "Predict Proba", "Symbol", "CMP"]
-missing_cols = [col for col in required_columns if col not in df.columns]
-if missing_cols:
-    st.error(f"Missing expected data columns: {missing_cols}")
-    st.write("Raw DataFrame:", df)
     st.stop()
 
 df["Combined Score"] = df["AI Score"] + (df["Predict Proba"] * 100)
@@ -265,29 +244,23 @@ if not candidates.empty:
                     )
 
                     sl_price = calculate_atr_trailing_sl(kite, row["Symbol"], cmp)
-                    try:
-                        kite.place_gtt(
-                            trigger_type=kite.GTT_TYPE_SINGLE,
-                            tradingsymbol=row["Symbol"],
-                            exchange=kite.EXCHANGE_NSE,
-                            trigger_values=[sl_price],
-                            last_price=cmp,
-                            orders=[
-                                {
-                                    "transaction_type": kite.TRANSACTION_TYPE_SELL,
-                                    "quantity": qty,
-                                    "order_type": kite.ORDER_TYPE_LIMIT,
-                                    "price": sl_price,
-                                    "product": kite.PRODUCT_CNC
-                                }
-                            ]
-                        )
-                        st.success(f"✅ GTT Stoploss set at ₹{sl_price}")
-                    except Exception as e:
-                        if "already exists" in str(e).lower():
-                            st.warning("⚠️ GTT already exists for this symbol.")
-                        else:
-                            raise
+                    kite.place_gtt(
+                        trigger_type=kite.GTT_TYPE_SINGLE,
+                        tradingsymbol=row["Symbol"],
+                        exchange=kite.EXCHANGE_NSE,
+                        trigger_values=[sl_price],
+                        last_price=cmp,
+                        orders=[
+                            {
+                                "transaction_type": kite.TRANSACTION_TYPE_SELL,
+                                "quantity": qty,
+                                "order_type": kite.ORDER_TYPE_LIMIT,
+                                "price": sl_price,
+                                "product": kite.PRODUCT_CNC
+                            }
+                        ]
+                    )
+                    st.success(f"✅ GTT Stoploss set at ₹{sl_price}")
 
                 sheet.worksheet("LivePositions").append_row([
                     row["Symbol"],

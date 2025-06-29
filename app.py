@@ -72,13 +72,38 @@ token_map = {}
 
 MAX_BATCH_SIZE = 300
 
-def start_websocket(instrument_tokens):
+def start_websocket(symbols):
+    """
+    Starts WebSocket connections in batches and fetches instrument tokens in smaller chunks.
+    """
+    instrument_tokens = []
+    batch_size = 200
+    all_symbols = [f"NSE:{s}" for s in symbols]
+
+    for i in range(0, len(all_symbols), batch_size):
+        batch = all_symbols[i:i+batch_size]
+        try:
+            ltp_data_batch = kite.ltp(batch)
+            for s in batch:
+                if s in ltp_data_batch:
+                    token = ltp_data_batch[s]["instrument_token"]
+                    instrument_tokens.append(token)
+                else:
+                    print(f"⚠️ Skipping {s}: No LTP data.")
+        except Exception as e:
+            st.warning(f"❌ Failed fetching batch {i//batch_size+1}: {e}")
+
+    if not instrument_tokens:
+        st.error("❌ No instrument tokens could be loaded.")
+        return
+
     batches = [instrument_tokens[i:i+MAX_BATCH_SIZE] for i in range(0, len(instrument_tokens), MAX_BATCH_SIZE)]
 
     def run_batch(batch, idx):
         kws = KiteTicker(API_KEY, ACCESS_TOKEN)
 
         def on_connect(ws, resp):
+            print(f"✅ Batch {idx}: Connected")
             ws.subscribe(batch)
             ws.set_mode(ws.MODE_FULL, batch)
 
@@ -98,6 +123,7 @@ def start_websocket(instrument_tokens):
 
     for idx, batch in enumerate(batches, 1):
         threading.Thread(target=run_batch, args=(batch, idx), daemon=True).start()
+
 
 # ---------------------------
 # Predict probability helper

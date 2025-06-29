@@ -1,4 +1,4 @@
-# app.py – Falāh Bot Main UI with AI Predictions + Dynamic Risk Management
+# app.py – Falāh Bot Main UI with AI Predictions + Dynamic Risk Management + Multi-Timeframe Confluence
 
 import streamlit as st
 import pandas as pd
@@ -15,6 +15,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator, MACD
+
 from risk import calculate_position_size, calculate_atr_trailing_sl
 
 # ---------------------------
@@ -37,11 +38,6 @@ st.set_page_config(page_title="Falāh Bot UI", layout="wide")
 def init_kite():
     kite = KiteConnect(api_key=API_KEY)
     kite.set_access_token(ACCESS_TOKEN)
-    try:
-        profile = kite.profile()
-        st.success(f"🧑‍💼 Logged in as: {profile['user_name']}")
-    except Exception as e:
-        st.error(f"❌ Failed to fetch profile: {e}")
     return kite
 
 @st.cache_resource
@@ -72,29 +68,17 @@ def get_halal_symbols(sheet):
 # WebSocket LTP Data
 # ---------------------------
 live_ltps = {}
+token_map = {}
+
 MAX_BATCH_SIZE = 300
 
-def start_websocket(symbols):
-    instrument_tokens = []
-    try:
-        ltp_data = kite.ltp([f"NSE:{s}" for s in symbols])
-        for s in symbols:
-            key = f"NSE:{s}"
-            if key in ltp_data:
-                instrument_tokens.append(ltp_data[key]["instrument_token"])
-            else:
-                print(f"⚠️ Skipping {s}: No LTP data.")
-    except Exception as e:
-        st.error(f"❌ Failed to get tokens: {e}")
-        return
-
+def start_websocket(instrument_tokens):
     batches = [instrument_tokens[i:i+MAX_BATCH_SIZE] for i in range(0, len(instrument_tokens), MAX_BATCH_SIZE)]
 
     def run_batch(batch, idx):
         kws = KiteTicker(API_KEY, ACCESS_TOKEN)
 
         def on_connect(ws, resp):
-            print(f"✅ Batch {idx}: Connected")
             ws.subscribe(batch)
             ws.set_mode(ws.MODE_FULL, batch)
 
@@ -150,31 +134,54 @@ min_ai_score = st.sidebar.slider("🎯 Min Combined Score", 0, 200, 100)
 kite = init_kite()
 sheet = load_sheet()
 symbols = get_halal_symbols(sheet)
-st.success(f"✅ Loaded {len(symbols)} symbols.")
+
+# ---------------------------
+# Instrument tokens upfront
+# ---------------------------
+try:
+    ltp_data = kite.ltp([f"NSE:{s}" for s in symbols])
+    for s in symbols:
+        key = f"NSE:{s}"
+        token_map[s] = ltp_data[key]["instrument_token"]
+    st.success(f"✅ Loaded {len(token_map)} instrument tokens.")
+except Exception as e:
+    st.error(f"❌ Failed to fetch instrument tokens: {e}")
 
 if not enable_dummy:
-    start_websocket(symbols)
+    start_websocket(list(token_map.values()))
 
 # ---------------------------
 # Get live data
 # ---------------------------
-@st.cache_data
 def get_live_data(symbols):
     results = []
     for sym in symbols:
         try:
+            token = token_map.get(sym)
             if enable_dummy:
                 cmp = round(random.uniform(200,1500),2)
                 proba = random.uniform(0.4,0.6)
             else:
-                hist = kite.historical_data(
-                    instrument_token=kite.ltp(f"NSE:{sym}")[f"NSE:{sym}"]["instrument_token"],
-                    from_date=pd.Timestamp.today()-pd.Timedelta(days=50),
-                    to_date=pd.Timestamp.today(),
-                    interval="day"
-                )
-                df_hist = pd.DataFrame(hist)
-                cmp = df_hist.iloc[-1]["close"]
+                cmp = live_ltps.get(token)
+                if not cmp:
+                    # fallback to historical
+                    hist = kite.historical_data(
+                        instrument_token=token,
+                        from_date=pd.Timestamp.today()-pd.Timedelta(days=50),
+                        to_date=pd.Timestamp.today(),
+                        interval="day"
+                    )
+                    df_hist = pd.DataFrame(hist)
+                    cmp = df_hist.iloc[-1]["close"]
+                else:
+                    hist = kite.historical_data(
+                        instrument_token=token,
+                        from_date=pd.Timestamp.today()-pd.Timedelta(days=50),
+                        to_date=pd.Timestamp.today(),
+                        interval="day"
+                    )
+                    df_hist = pd.DataFrame(hist)
+
                 proba = predict_probability(df_hist)
 
             ai_score = round(random.uniform(60,95),2)
@@ -208,13 +215,11 @@ if not candidates.empty:
     if st.button("🛒 Execute Trades Now"):
         for _, row in candidates.iterrows():
             try:
-                # Compute dynamic position sizing
                 qty, cmp = calculate_position_size(kite, row["Symbol"], total_capital)
                 if qty <=0:
                     continue
 
                 if not enable_dummy:
-                    # Place buy order
                     kite.place_order(
                         variety=kite.VARIETY_REGULAR,
                         exchange=kite.EXCHANGE_NSE,
@@ -224,30 +229,39 @@ if not candidates.empty:
                         order_type=kite.ORDER_TYPE_MARKET,
                         product=kite.PRODUCT_CNC
                     )
-                    # Place GTT stoploss
+
                     sl_price = calculate_atr_trailing_sl(kite, row["Symbol"], cmp)
-                    kite.place_gtt(
-                        trigger_type=kite.GTT_TYPE_SINGLE,
-                        tradingsymbol=row["Symbol"],
-                        exchange=kite.EXCHANGE_NSE,
-                        trigger_values=[sl_price],
-                        last_price=cmp,
-                        orders=[
-                            {
-                                "transaction_type": kite.TRANSACTION_TYPE_SELL,
-                                "quantity": qty,
-                                "order_type": kite.ORDER_TYPE_LIMIT,
-                                "price": sl_price,
-                                "product": kite.PRODUCT_CNC
-                            }
-                        ]
-                    )
-                    st.success(f"✅ GTT Stoploss set at ₹{sl_price}")
+                    try:
+                        kite.place_gtt(
+                            trigger_type=kite.GTT_TYPE_SINGLE,
+                            tradingsymbol=row["Symbol"],
+                            exchange=kite.EXCHANGE_NSE,
+                            trigger_values=[sl_price],
+                            last_price=cmp,
+                            orders=[
+                                {
+                                    "transaction_type": kite.TRANSACTION_TYPE_SELL,
+                                    "quantity": qty,
+                                    "order_type": kite.ORDER_TYPE_LIMIT,
+                                    "price": sl_price,
+                                    "product": kite.PRODUCT_CNC
+                                }
+                            ]
+                        )
+                        st.success(f"✅ GTT Stoploss set at ₹{sl_price}")
+                    except Exception as e:
+                        if "already exists" in str(e).lower():
+                            st.warning("⚠️ GTT already exists for this symbol.")
+                        else:
+                            raise
 
                 sheet.worksheet("LivePositions").append_row([
                     row["Symbol"],
                     qty,
                     float(cmp),
+                    row["AI Score"],
+                    row["Predict Proba"],
+                    row["Combined Score"],
                     time.strftime("%Y-%m-%d %H:%M:%S")
                 ])
                 st.success(f"✅ Order placed for {row['Symbol']}")

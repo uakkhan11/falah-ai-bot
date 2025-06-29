@@ -5,12 +5,12 @@ import gspread
 from datetime import datetime
 from kiteconnect import KiteConnect
 
+from ws_live_prices import live_prices, start_websocket
 from utils import (
     load_credentials,
     send_telegram,
     get_cnc_holdings,
     analyze_exit_signals,
-    get_live_price,
 )
 from indicators import (
     calculate_atr_trailing_sl,
@@ -40,7 +40,7 @@ SPREADSHEET_KEY = secrets["sheets"]["SPREADSHEET_KEY"]
 DAILY_MONITOR_TAB = "MonitoredStocks"
 EXIT_LOG_FILE = "/root/falah-ai-bot/exited_stocks.json"
 
-# Load instrument tokens for reference (if needed later)
+# Load instrument tokens
 try:
     with open("/root/falah-ai-bot/tokens.json", "r") as f:
         token_map = json.load(f)
@@ -50,8 +50,6 @@ except Exception as e:
     token_map = {}
 
 def monitor_positions():
-    print("monitor_positions() started")
-
     now = datetime.now(IST)
     market_open = now.weekday() < 5 and (
         (now.hour > 9 or (now.hour == 9 and now.minute >= 15))
@@ -87,18 +85,21 @@ def monitor_positions():
 
         print(f"🔍 Processing {symbol} (Qty={quantity}, Avg={avg_price})")
 
-        try:
-            cmp = get_live_price(kite, symbol)
-            if not cmp:
-                raise ValueError("CMP unavailable")
-            print(f"✅ Live CMP for {symbol}: {cmp}")
-        except Exception as e:
-            print(f"⚠️ Could not get CMP for {symbol}: {e}")
-            cmp = "--"
+        # Use WebSocket LTP
+        token = token_map.get(symbol)
+        if token is None:
+            print(f"⚠️ No token for {symbol}. Skipping.")
+            continue
 
-        exposure = round(cmp * quantity, 2) if cmp != "--" else "--"
+        cmp = live_prices.get(int(token))
+        if not cmp:
+            print(f"⚠️ No live LTP for {symbol}. Skipping.")
+            continue
+        print(f"✅ Live CMP for {symbol}: {cmp}")
 
-        # Update or log new row
+        exposure = round(cmp * quantity, 2)
+
+        # Check if already logged
         row_idx = None
         for idx, row in enumerate(existing_rows, start=2):
             if row.get("Date") == today_str and row.get("Symbol") == symbol:
@@ -113,6 +114,16 @@ def monitor_positions():
             except Exception as e:
                 print(f"⚠️ Failed to update CMP/Exposure: {e}")
         else:
+            # Double-check before append
+            latest_rows = monitor_tab.get_all_records()
+            duplicate = any(
+                r.get("Date") == today_str and r.get("Symbol") == symbol
+                for r in latest_rows
+            )
+            if duplicate:
+                print(f"⚠️ Detected duplicate row for {symbol}. Skipping append.")
+                continue
+
             row = [today_str, symbol, quantity, avg_price, cmp, exposure, "HOLD"]
             try:
                 monitor_tab.append_row(row)
@@ -165,3 +176,18 @@ def monitor_positions():
             try:
                 log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, reason_str)
             except Exception as e:
+                print(f"⚠️ Failed to log exit to sheet: {e}")
+        else:
+            print(f"✅ {symbol}: No exit criteria met. Holding position.")
+
+    print("✅ Monitoring complete.\n")
+
+if __name__ == "__main__":
+    # Start WebSocket streaming
+    token_list = [int(token) for token in token_map.values()]
+    start_websocket(creds["api_key"], creds["access_token"], token_list)
+
+    # Loop monitoring every 15 min
+    while True:
+        monitor_positions()
+        time.sleep(900)

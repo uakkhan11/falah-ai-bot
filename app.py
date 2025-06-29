@@ -4,8 +4,6 @@ import streamlit as st
 import pandas as pd
 import time
 import random
-import subprocess
-import os
 import threading
 import toml
 import pickle
@@ -70,38 +68,30 @@ def get_halal_symbols(sheet):
 live_ltps = {}
 token_map = {}
 
-MAX_BATCH_SIZE = 300
-
 def start_websocket(tokens):
     """
-    Starts WebSocket connections in batches.
+    Starts a SINGLE WebSocket connection for all tokens.
     """
-    batches = [tokens[i:i+MAX_BATCH_SIZE] for i in range(0, len(tokens), MAX_BATCH_SIZE)]
+    kws = KiteTicker(API_KEY, ACCESS_TOKEN)
 
-    def run_batch(batch, idx):
-        kws = KiteTicker(API_KEY, ACCESS_TOKEN)
+    def on_connect(ws, resp):
+        print(f"✅ WebSocket Connected. Subscribing {len(tokens)} tokens...")
+        ws.subscribe(tokens)
+        ws.set_mode(ws.MODE_FULL, tokens)
 
-        def on_connect(ws, resp):
-            print(f"✅ Batch {idx}: Connected")
-            ws.subscribe(batch)
-            ws.set_mode(ws.MODE_FULL, batch)
+    def on_ticks(ws, ticks):
+        for tick in ticks:
+            token = tick["instrument_token"]
+            ltp = tick.get("last_price")
+            if ltp:
+                live_ltps[token] = ltp
 
-        def on_ticks(ws, ticks):
-            for tick in ticks:
-                token = tick["instrument_token"]
-                ltp = tick.get("last_price")
-                if ltp:
-                    live_ltps[token] = ltp
+    kws.on_connect = on_connect
+    kws.on_ticks = on_ticks
+    kws.on_error = lambda ws, code, reason: print(f"⚠️ WebSocket error: {reason}")
+    kws.on_close = lambda ws, code, reason: print(f"🔌 WebSocket closed.")
 
-        kws.on_connect = on_connect
-        kws.on_ticks = on_ticks
-        kws.on_error = lambda ws, code, reason: print(f"⚠️ Batch {idx} error: {reason}")
-        kws.on_close = lambda ws, code, reason: print(f"🔌 Batch {idx} closed.")
-
-        kws.connect(threaded=True)
-
-    for idx, batch in enumerate(batches, 1):
-        threading.Thread(target=run_batch, args=(batch, idx), daemon=True).start()
+    threading.Thread(target=kws.connect, kwargs={"threaded": True}, daemon=True).start()
 
 # ---------------------------
 # Predict probability helper
@@ -156,10 +146,10 @@ for i in range(0, len(unique_symbols), 100):
                     token_map[s] = ltp_data[key]["instrument_token"]
                 else:
                     st.warning(f"⚠️ Skipping {s}: invalid token")
-            break  # success, exit retry loop
+            break
         except Exception as e:
             if "Too many requests" in str(e):
-                st.warning(f"⏳ Too many requests for batch {i//100+1}, retrying in 2s...")
+                st.warning(f"⏳ Too many requests, retrying...")
                 time.sleep(2)
                 retries -= 1
             else:
@@ -189,7 +179,6 @@ def get_live_data(symbols):
             else:
                 cmp = live_ltps.get(token)
                 if not cmp:
-                    # fallback to historical
                     hist = kite.historical_data(
                         instrument_token=token,
                         from_date=pd.Timestamp.today()-pd.Timedelta(days=50),

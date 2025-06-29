@@ -42,12 +42,8 @@ print(f"Loaded {len(symbols)} symbols from HalalList.")
 
 # ✅ Fetch instrument tokens
 tokens = {}
-ltp_data = kite.ltp([f"NSE:{s}" for s in symbols])
-
-for s in symbols:
-    key = f"NSE:{s}"
-    if key in ltp_data:
-        tokens[s] = ltp_data[key]["instrument_token"]
+with open("/root/falah-ai-bot/tokens.json", "r") as f:
+    tokens = json.load(f)
     else:
         print(f"⚠️ Skipping {s}: No LTP data available.")
 

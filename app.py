@@ -143,16 +143,28 @@ symbols = get_halal_symbols(sheet)
 # Fetch instrument tokens safely in batches
 # ---------------------------
 token_map = {}
-for i in range(0, len(symbols), 200):
-    batch = [f"NSE:{s}" for s in symbols[i:i+200]]
-    try:
-        ltp_data = kite.ltp(batch)
-        for s in symbols[i:i+200]:
-            key = f"NSE:{s}"
-            if key in ltp_data:
-                token_map[s] = ltp_data[key]["instrument_token"]
-    except Exception as e:
-        st.warning(f"❌ Failed fetching batch {i//200+1}: {e}")
+unique_symbols = list(set(symbols))
+for i in range(0, len(unique_symbols), 100):
+    batch = [f"NSE:{s}" for s in unique_symbols[i:i+100]]
+    retries = 3
+    while retries > 0:
+        try:
+            ltp_data = kite.ltp(batch)
+            for s in unique_symbols[i:i+100]:
+                key = f"NSE:{s}"
+                if key in ltp_data:
+                    token_map[s] = ltp_data[key]["instrument_token"]
+                else:
+                    st.warning(f"⚠️ Skipping {s}: invalid token")
+            break  # success, exit retry loop
+        except Exception as e:
+            if "Too many requests" in str(e):
+                st.warning(f"⏳ Too many requests for batch {i//100+1}, retrying in 2s...")
+                time.sleep(2)
+                retries -= 1
+            else:
+                st.warning(f"❌ Failed batch {i//100+1}: {e}")
+                break
 
 if not token_map:
     st.error("❌ No instrument tokens could be loaded.")

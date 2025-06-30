@@ -28,3 +28,21 @@ kite.set_access_token(access_token)
 # Test
 profile = kite.profile()
 print("✅ Logged in:", profile["user_name"])
+
+# Your existing login logic:
+from kiteconnect import KiteConnect
+
+kite = KiteConnect(api_key="...")
+data = kite.generate_session(
+    request_token=your_request_token,
+    api_secret="..."
+)
+access_token = data["access_token"]
+
+# Save access token to JSON file:
+with open("/root/falah-ai-bot/access_token.json", "w") as f:
+    import json
+    json.dump({"access_token": access_token}, f)
+
+print("✅ Access token saved to access_token.json")
+

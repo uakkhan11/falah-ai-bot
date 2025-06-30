@@ -7,6 +7,7 @@ import random
 import threading
 import toml
 import pickle
+import json
 import numpy as np
 from kiteconnect import KiteConnect, KiteTicker
 import gspread
@@ -23,7 +24,6 @@ with open("/root/falah-ai-bot/.streamlit/secrets.toml", "r") as f:
     secrets = toml.load(f)
 
 API_KEY = secrets["zerodha"]["api_key"]
-ACCESS_TOKEN = secrets["zerodha"]["access_token"]
 CREDS_JSON = "falah-credentials.json"
 SHEET_KEY = secrets.get("global", {}).get("google_sheet_key", "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c")
 
@@ -35,7 +35,10 @@ st.set_page_config(page_title="Falāh Bot UI", layout="wide")
 @st.cache_resource
 def init_kite():
     kite = KiteConnect(api_key=API_KEY)
-    kite.set_access_token(ACCESS_TOKEN)
+    # ✅ Load access token from JSON
+    with open("/root/falah-ai-bot/access_token.json") as f:
+        token = json.load(f)["access_token"]
+    kite.set_access_token(token)
     return kite
 
 @st.cache_resource
@@ -69,10 +72,7 @@ live_ltps = {}
 token_map = {}
 
 def start_websocket(tokens):
-    """
-    Starts a SINGLE WebSocket connection for all tokens.
-    """
-    kws = KiteTicker(API_KEY, ACCESS_TOKEN)
+    kws = KiteTicker(API_KEY, kite._access_token)
 
     def on_connect(ws, resp):
         print(f"✅ WebSocket Connected. Subscribing {len(tokens)} tokens...")

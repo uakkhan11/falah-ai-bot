@@ -1,151 +1,202 @@
-import pandas as pd
-from ta.momentum import RSIIndicator
-from ta.trend import EMAIndicator, MACD
-from ta.volatility import AverageTrueRange
-import pandas_ta as pta
+import time
+import json
+import pytz
+import gspread
+from datetime import datetime
+from kiteconnect import KiteConnect
 
-def detect_breakout(df, threshold=1.02):
-    if len(df) < 2:
-        return False, None
-    prev_high = df["High"].iloc[-2]
-    curr_close = df["Close"].iloc[-1]
-    is_breakout = curr_close > prev_high * threshold
-    return is_breakout, round(prev_high * threshold, 2)
+from ws_live_prices import live_prices, start_websocket
+from utils import (
+    load_credentials,
+    send_telegram,
+    get_cnc_holdings,
+    analyze_exit_signals,
+)
+from indicators import (
+    calculate_atr_trailing_sl,
+    check_supertrend_flip,
+    check_rsi_bearish_divergence,
+    check_vwap_cross,
+)
+from sheets import log_exit_to_sheet
+from holdings_state import load_previous_exits, update_exit_log
 
-def detect_rsi_ema_signals(df, rsi_period=14, ema_period=21, rsi_threshold=60):
-    rsi = RSIIndicator(df["Close"], window=rsi_period).rsi()
-    ema = EMAIndicator(df["Close"], window=ema_period).ema_indicator()
-    last_rsi = rsi.iloc[-1]
-    last_close = df["Close"].iloc[-1]
-    last_ema = ema.iloc[-1]
-    return last_rsi > rsi_threshold and last_close > last_ema
+print("✅ All imports finished")
 
-def detect_3green_days(df):
-    if len(df) < 3:
-        return False
-    last_3 = df.iloc[-3:]
-    return all(last_3["Close"] > last_3["Open"])
+# Load credentials
+secrets = load_credentials()
+creds = secrets["zerodha"]
+print("✅ Credentials loaded")
 
-def detect_darvas_box(df, lookback=20):
-    if len(df) < lookback + 1:
-        return False, None
-    recent_high = df["High"].iloc[-lookback:-1].max()
-    curr_close = df["Close"].iloc[-1]
-    is_breakout = curr_close > recent_high
-    return is_breakout, round(recent_high, 2)
+# Initialize Kite
+kite = KiteConnect(api_key=creds["api_key"])
+# ✅ Load access token from JSON
+with open("/root/falah-ai-bot/access_token.json") as f:
+    token = json.load(f)["access_token"]
+kite.set_access_token(token)
+print("✅ KiteConnect initialized")
 
-def calculate_trailing_sl(prices, atr_multiplier=1.5):
-    if len(prices) < 2:
-        return None
-    high_price = max(prices)
-    low_price = min(prices)
-    atr_value = (high_price - low_price) / len(prices)
-    trailing_sl = high_price - (atr_multiplier * atr_value)
-    return round(trailing_sl, 2)
+IST = pytz.timezone("Asia/Kolkata")
 
-def check_supertrend_flip(kite, symbol, period=10, multiplier=3):
+SHEET_NAME = secrets["google"]["sheet_name"]
+SPREADSHEET_KEY = secrets["sheets"]["SPREADSHEET_KEY"]
+DAILY_MONITOR_TAB = "MonitoredStocks"
+EXIT_LOG_FILE = "/root/falah-ai-bot/exited_stocks.json"
+
+# Load instrument tokens
+try:
+    with open("/root/falah-ai-bot/tokens.json", "r") as f:
+        token_map = json.load(f)
+    print(f"✅ Loaded {len(token_map)} instrument tokens.")
+except Exception as e:
+    print(f"⚠️ Could not load tokens.json: {e}")
+    token_map = {}
+
+def monitor_positions():
+    now = datetime.now(IST)
+    market_open = now.weekday() < 5 and (
+        (now.hour > 9 or (now.hour == 9 and now.minute >= 15))
+        and (now.hour < 15 or (now.hour == 15 and now.minute < 30))
+    )
+    today_str = now.strftime("%Y-%m-%d")
+    timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] Market open: {market_open}")
+
     try:
-        instrument_token = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
-        hist = kite.historical_data(
-            instrument_token=instrument_token,
-            from_date=pd.Timestamp.today() - pd.Timedelta(days=30),
-            to_date=pd.Timestamp.today(),
-            interval="day"
-        )
-        df = pd.DataFrame(hist)
-        df.columns = [c.capitalize() for c in df.columns]
-
-        supertrend = pta.supertrend(
-            high=df["High"],
-            low=df["Low"],
-            close=df["Close"],
-            length=period,
-            multiplier=multiplier
-        )
-        last_trend = supertrend[f"SUPERTd_{period}_{multiplier}"].iloc[-1]
-        return last_trend == -1
+        holdings = get_cnc_holdings(kite)
     except Exception as e:
-        print(f"⚠️ Supertrend check failed for {symbol}: {e}")
-        return False
+        print(f"❌ Error fetching CNC holdings: {e}")
+        holdings = []
 
-def detect_macd_cross(df):
-    if len(df) < 35:
-        return False
-    macd = MACD(df["Close"])
-    macd_line = macd.macd()
-    signal_line = macd.macd_signal()
-    return macd_line.iloc[-2] < signal_line.iloc[-2] and macd_line.iloc[-1] > signal_line.iloc[-1]
+    print("Holdings returned:", holdings)
 
-def calculate_atr_trailing_sl(kite, symbol, cmp, atr_multiplier=1.5):
-    try:
-        instrument_token = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
-        hist = kite.historical_data(
-            instrument_token=instrument_token,
-            from_date=pd.Timestamp.today() - pd.Timedelta(days=30),
-            to_date=pd.Timestamp.today(),
-            interval="day"
-        )
-        df = pd.DataFrame(hist)
-        df.columns = [c.capitalize() for c in df.columns]
+    if not holdings:
+        print("❌ No CNC holdings found.")
+        return
+    print(f"✅ CNC holdings received: {len(holdings)}")
 
-        atr = AverageTrueRange(
-            high=df["High"],
-            low=df["Low"],
-            close=df["Close"],
-            window=14
-        ).average_true_range().iloc[-1]
-        trailing_sl = round(cmp - atr * atr_multiplier, 2)
-        return trailing_sl
-    except Exception as e:
-        print(f"⚠️ ATR trailing SL error for {symbol}: {e}")
-        return None
+    exited = load_previous_exits(EXIT_LOG_FILE)
+    if not isinstance(exited, dict):
+        print("⚠️ exited_stocks.json invalid format, resetting.")
+        exited = {}
+    print("✅ Loaded exited stocks log.")
 
-def check_rsi_bearish_divergence(kite, symbol, lookback=5):
-    try:
-        instrument_token = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
-        hist = kite.historical_data(
-            instrument_token=instrument_token,
-            from_date=pd.Timestamp.today() - pd.Timedelta(days=30),
-            to_date=pd.Timestamp.today(),
-            interval="day"
-        )
-        df = pd.DataFrame(hist)
-        df.columns = [c.capitalize() for c in df.columns]
+    gc = gspread.service_account(filename="/root/falah-credentials.json")
+    sheet = gc.open_by_key(SPREADSHEET_KEY)
+    monitor_tab = sheet.worksheet(DAILY_MONITOR_TAB)
+    print("✅ Connected to Google Sheet.")
 
-        df["rsi"] = RSIIndicator(df["Close"], window=14).rsi()
-        if len(df) < lookback + 1:
-            return False
+    existing_rows = monitor_tab.get_all_records()
+    print(f"✅ Loaded {len(existing_rows)} existing rows from sheet.")
 
-        price_highs = df["Close"].iloc[-lookback:]
-        rsi_values = df["rsi"].iloc[-lookback:]
+    for stock in holdings:
+        symbol = stock.get("tradingsymbol") or stock.get("symbol")
+        quantity = stock.get("quantity")
+        avg_price = stock.get("average_price")
 
-        if price_highs.is_monotonic_increasing and rsi_values.is_monotonic_decreasing:
-            return True
-        return False
-    except Exception as e:
-        print(f"⚠️ RSI divergence check failed for {symbol}: {e}")
-        return False
+        print(f"🔍 Processing {symbol} (Qty={quantity}, Avg={avg_price})")
 
-def check_vwap_cross(kite, symbol):
-    try:
-        instrument_token = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
-        hist = kite.historical_data(
-            instrument_token=instrument_token,
-            from_date=pd.Timestamp.today() - pd.Timedelta(days=15),
-            to_date=pd.Timestamp.today(),
-            interval="day"
-        )
-        df = pd.DataFrame(hist)
-        df.columns = [c.capitalize() for c in df.columns]
+        token = token_map.get(symbol)
+        if token is None:
+            print(f"⚠️ No token for {symbol}. Skipping.")
+            continue
 
-        df["typical_price"] = (df["High"] + df["Low"] + df["Close"]) / 3
-        df["cum_tp_vol"] = (df["typical_price"] * df["Volume"]).cumsum()
-        df["cum_vol"] = df["Volume"].cumsum()
-        df["vwap"] = df["cum_tp_vol"] / df["cum_vol"]
+        cmp = live_prices.get(int(token))
+        if not cmp:
+            print(f"⚠️ No live LTP for {symbol}. Skipping.")
+            continue
+        print(f"✅ Live CMP for {symbol}: {cmp}")
 
-        last_vwap = df["vwap"].iloc[-1]
-        cmp = df["Close"].iloc[-1]
-        return cmp < last_vwap
-    except Exception as e:
-        print(f"⚠️ VWAP cross check failed for {symbol}: {e}")
-        return False
+        exposure = round(cmp * quantity, 2)
+
+        # Check if already logged
+        row_idx = None
+        for idx, row in enumerate(existing_rows, start=2):
+            if row.get("Date") == today_str and row.get("Symbol") == symbol:
+                row_idx = idx
+                break
+
+        if row_idx:
+            try:
+                monitor_tab.update(values=[[cmp]], range_name=f"E{row_idx}")
+                monitor_tab.update(values=[[exposure]], range_name=f"F{row_idx}")
+                print(f"🔄 Updated CMP/Exposure: CMP={cmp}, Exposure={exposure}")
+            except Exception as e:
+                print(f"⚠️ Failed to update CMP/Exposure: {e}")
+        else:
+            # Double-check before append
+            latest_rows = monitor_tab.get_all_records()
+            duplicate = any(
+                r.get("Date") == today_str and r.get("Symbol") == symbol
+                for r in latest_rows
+            )
+            if duplicate:
+                print(f"⚠️ Detected duplicate row for {symbol}. Skipping append.")
+                continue
+
+            row = [today_str, symbol, quantity, avg_price, cmp, exposure, "HOLD"]
+            try:
+                monitor_tab.append_row(row)
+                print(f"📝 Added new row for {symbol}.")
+            except Exception as e:
+                print(f"❌ Failed to log {symbol}: {e}")
+
+        if not market_open:
+            print(f"⏸️ Market closed. Skipping exit checks for {symbol}.")
+            continue
+
+        if exited.get(symbol) == today_str:
+            print(f"🔁 {symbol} already exited today. Skipping.")
+            continue
+
+        sl_price = calculate_atr_trailing_sl(kite, symbol, cmp)
+        sl_hit = sl_price and cmp <= sl_price
+
+        st_flip_daily = check_supertrend_flip(symbol, interval="day")
+        st_flip_15m = check_supertrend_flip(symbol, interval="15minute")
+
+        rsi_div = check_rsi_bearish_divergence(kite, symbol)
+        vwap_cross = check_vwap_cross(kite, symbol)
+
+        ai_exit = analyze_exit_signals(symbol, avg_price, cmp)
+
+        reasons = []
+        if sl_hit:
+            reasons.append(f"ATR SL hit (SL: {sl_price})")
+        if st_flip_daily and st_flip_15m:
+            reasons.append("Supertrend flipped (daily+15m)")
+        if rsi_div:
+            reasons.append("RSI bearish divergence")
+        if vwap_cross:
+            reasons.append("VWAP cross-down")
+        if ai_exit:
+            reasons.append("AI exit signal")
+
+        if reasons:
+            reason_str = ", ".join(reasons)
+            print(f"🚨 Exit triggered for {symbol} at {cmp}: {reason_str}")
+            update_exit_log(EXIT_LOG_FILE, symbol)
+            send_telegram(
+                f"🚨 Auto Exit Triggered\n"
+                f"Symbol: {symbol}\n"
+                f"Price: {cmp}\n"
+                f"Reasons: {reason_str}"
+            )
+            try:
+                log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, reason_str)
+            except Exception as e:
+                print(f"⚠️ Failed to log exit to sheet: {e}")
+        else:
+            print(f"✅ {symbol}: No exit criteria met. Holding position.")
+
+    print("✅ Monitoring complete.\n")
+
+if __name__ == "__main__":
+    # Start WebSocket streaming
+    token_list = [int(token) for token in token_map.values()]
+    start_websocket(creds["api_key"], token, token_list)
+
+    # Loop monitoring every 15 min
+    while True:
+        monitor_positions()
+        time.sleep(900)

@@ -39,6 +39,12 @@ try:
 except Exception as e:
     print(f"❌ Failed to load access token JSON: {e}")
     exit(1)
+
+# Initialize Kite
+kite = KiteConnect(api_key=creds["api_key"])
+kite.set_access_token(access_token)
+print("✅ KiteConnect initialized")
+
 # Initialize Kite
 kite = KiteConnect(api_key=creds["api_key"])
 kite.set_access_token(creds["access_token"])

@@ -30,7 +30,10 @@ print("✅ Credentials loaded")
 
 # Initialize Kite
 kite = KiteConnect(api_key=creds["api_key"])
-kite.set_access_token(creds["access_token"])
+# ✅ Load access token from JSON
+with open("/root/falah-ai-bot/access_token.json") as f:
+    token = json.load(f)["access_token"]
+kite.set_access_token(token)
 print("✅ KiteConnect initialized")
 
 IST = pytz.timezone("Asia/Kolkata")
@@ -59,7 +62,12 @@ def monitor_positions():
     timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] Market open: {market_open}")
 
-    holdings = get_cnc_holdings(kite)
+    try:
+        holdings = get_cnc_holdings(kite)
+    except Exception as e:
+        print(f"❌ Error fetching CNC holdings: {e}")
+        holdings = []
+
     print("Holdings returned:", holdings)
 
     if not holdings:
@@ -68,7 +76,10 @@ def monitor_positions():
     print(f"✅ CNC holdings received: {len(holdings)}")
 
     exited = load_previous_exits(EXIT_LOG_FILE)
-    print(f"✅ Loaded exited stocks log ({len(exited)} exited symbols).")
+    if not isinstance(exited, dict):
+        print("⚠️ exited_stocks.json invalid format, resetting.")
+        exited = {}
+    print("✅ Loaded exited stocks log.")
 
     gc = gspread.service_account(filename="/root/falah-credentials.json")
     sheet = gc.open_by_key(SPREADSHEET_KEY)
@@ -85,7 +96,6 @@ def monitor_positions():
 
         print(f"🔍 Processing {symbol} (Qty={quantity}, Avg={avg_price})")
 
-        # Use WebSocket LTP
         token = token_map.get(symbol)
         if token is None:
             print(f"⚠️ No token for {symbol}. Skipping.")
@@ -108,8 +118,8 @@ def monitor_positions():
 
         if row_idx:
             try:
-                monitor_tab.update("E"+str(row_idx), [[cmp]])
-                monitor_tab.update("F"+str(row_idx), [[exposure]])
+                monitor_tab.update(values=[[cmp]], range_name=f"E{row_idx}")
+                monitor_tab.update(values=[[exposure]], range_name=f"F{row_idx}")
                 print(f"🔄 Updated CMP/Exposure: CMP={cmp}, Exposure={exposure}")
             except Exception as e:
                 print(f"⚠️ Failed to update CMP/Exposure: {e}")
@@ -135,8 +145,7 @@ def monitor_positions():
             print(f"⏸️ Market closed. Skipping exit checks for {symbol}.")
             continue
 
-        # Corrected exit check (use `in`)
-        if symbol in exited:
+        if exited.get(symbol) == today_str:
             print(f"🔁 {symbol} already exited today. Skipping.")
             continue
 
@@ -185,7 +194,7 @@ def monitor_positions():
 if __name__ == "__main__":
     # Start WebSocket streaming
     token_list = [int(token) for token in token_map.values()]
-    start_websocket(creds["api_key"], creds["access_token"], token_list)
+    start_websocket(creds["api_key"], token, token_list)
 
     # Loop monitoring every 15 min
     while True:

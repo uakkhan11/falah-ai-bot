@@ -185,7 +185,7 @@ def monitor_positions():
 if __name__ == "__main__":
     # Start WebSocket streaming
     token_list = [int(token) for token in token_map.values()]
-    start_websocket(token_list)
+    start_websocket(creds["api_key"], creds["access_token"], token_list)
 
     # Loop monitoring every 15 min
     while True:

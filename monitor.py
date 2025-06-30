@@ -1,3 +1,5 @@
+# monitor.py
+
 import time
 import json
 import pytz
@@ -30,10 +32,7 @@ print("✅ Credentials loaded")
 
 # Initialize Kite
 kite = KiteConnect(api_key=creds["api_key"])
-# ✅ Load access token from JSON
-with open("/root/falah-ai-bot/access_token.json") as f:
-    token = json.load(f)["access_token"]
-kite.set_access_token(token)
+kite.set_access_token(creds["access_token"])
 print("✅ KiteConnect initialized")
 
 IST = pytz.timezone("Asia/Kolkata")
@@ -67,7 +66,6 @@ def monitor_positions():
     except Exception as e:
         print(f"❌ Error fetching CNC holdings: {e}")
         holdings = []
-
     print("Holdings returned:", holdings)
 
     if not holdings:
@@ -124,22 +122,20 @@ def monitor_positions():
             except Exception as e:
                 print(f"⚠️ Failed to update CMP/Exposure: {e}")
         else:
-            # Double-check before append
             latest_rows = monitor_tab.get_all_records()
             duplicate = any(
                 r.get("Date") == today_str and r.get("Symbol") == symbol
                 for r in latest_rows
             )
             if duplicate:
-                print(f"⚠️ Detected duplicate row for {symbol}. Skipping append.")
-                continue
-
-            row = [today_str, symbol, quantity, avg_price, cmp, exposure, "HOLD"]
-            try:
-                monitor_tab.append_row(row)
-                print(f"📝 Added new row for {symbol}.")
-            except Exception as e:
-                print(f"❌ Failed to log {symbol}: {e}")
+                print(f"⚠️ Duplicate row for {symbol}. Skipping append.")
+            else:
+                row = [today_str, symbol, quantity, avg_price, cmp, exposure, "HOLD"]
+                try:
+                    monitor_tab.append_row(row)
+                    print(f"📝 Added new row for {symbol}.")
+                except Exception as e:
+                    print(f"❌ Failed to log {symbol}: {e}")
 
         if not market_open:
             print(f"⏸️ Market closed. Skipping exit checks for {symbol}.")
@@ -152,9 +148,9 @@ def monitor_positions():
         sl_price = calculate_atr_trailing_sl(kite, symbol, cmp)
         sl_hit = sl_price and cmp <= sl_price
 
-        st_flip_daily = check_supertrend_flip(kite, symbol, period=10, multiplier=3)
-        st_flip_15m = check_supertrend_flip(kite, symbol, period=10, multiplier=3)
-        
+        st_flip_daily = check_supertrend_flip(kite, symbol)
+        st_flip_15m = check_supertrend_flip(kite, symbol)
+
         rsi_div = check_rsi_bearish_divergence(kite, symbol)
         vwap_cross = check_vwap_cross(kite, symbol)
 
@@ -184,6 +180,7 @@ def monitor_positions():
             )
             try:
                 log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, reason_str)
+                print("✅ Logged exit for TradeLog to sheet.")
             except Exception as e:
                 print(f"⚠️ Failed to log exit to sheet: {e}")
         else:
@@ -192,11 +189,11 @@ def monitor_positions():
     print("✅ Monitoring complete.\n")
 
 if __name__ == "__main__":
-    # Start WebSocket streaming
+    # Start WebSocket
     token_list = [int(token) for token in token_map.values()]
-    start_websocket(creds["api_key"], token, token_list)
+    start_websocket(creds["api_key"], creds["access_token"], token_list)
 
-    # Loop monitoring every 15 min
+    # Loop
     while True:
         monitor_positions()
         time.sleep(900)

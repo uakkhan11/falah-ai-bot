@@ -1,23 +1,27 @@
 import json
 import os
-
-def load_previous_exits(exit_log_file="/root/falah-ai-bot/exited_stocks.json"):
-    if not os.path.exists(exit_log_file):
-        return []
-    with open(exit_log_file, "r") as f:
-        return json.load(f)
-
-import json
 from datetime import datetime
 
-def update_exit_log(filepath, symbol):
+def load_previous_exits(filepath):
+    if not os.path.exists(filepath):
+        return {}
     try:
         with open(filepath, "r") as f:
             data = json.load(f)
-    except:
-        data = {}
+        if not isinstance(data, dict):
+            print("⚠️ exited_stocks.json invalid format, resetting.")
+            return {}
+        return data
+    except Exception as e:
+        print(f"⚠️ Failed to load exited_stocks.json: {e}")
+        return {}
 
+def update_exit_log(filepath, symbol):
+    data = load_previous_exits(filepath)
     data[symbol] = datetime.now().strftime("%Y-%m-%d")
-
-    with open(filepath, "w") as f:
-        json.dump(data, f, indent=2)
+    try:
+        with open(filepath, "w") as f:
+            json.dump(data, f, indent=2)
+        print(f"✅ Exit log updated for {symbol}")
+    except Exception as e:
+        print(f"⚠️ Failed to update exited_stocks.json: {e}")

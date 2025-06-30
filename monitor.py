@@ -68,7 +68,7 @@ def monitor_positions():
     print(f"✅ CNC holdings received: {len(holdings)}")
 
     exited = load_previous_exits(EXIT_LOG_FILE)
-    print("✅ Loaded exited stocks log.")
+    print(f"✅ Loaded exited stocks log ({len(exited)} exited symbols).")
 
     gc = gspread.service_account(filename="/root/falah-credentials.json")
     sheet = gc.open_by_key(SPREADSHEET_KEY)
@@ -108,8 +108,8 @@ def monitor_positions():
 
         if row_idx:
             try:
-                monitor_tab.update(f"E{row_idx}", [[cmp]])
-                monitor_tab.update(f"F{row_idx}", [[exposure]])
+                monitor_tab.update("E"+str(row_idx), [[cmp]])
+                monitor_tab.update("F"+str(row_idx), [[exposure]])
                 print(f"🔄 Updated CMP/Exposure: CMP={cmp}, Exposure={exposure}")
             except Exception as e:
                 print(f"⚠️ Failed to update CMP/Exposure: {e}")
@@ -135,9 +135,9 @@ def monitor_positions():
             print(f"⏸️ Market closed. Skipping exit checks for {symbol}.")
             continue
 
-        last_exit_date = exited.get(symbol)
+        # Corrected exit check (use `in`)
         if symbol in exited:
-            print(f"{symbol} already exited today. Skipping.")
+            print(f"🔁 {symbol} already exited today. Skipping.")
             continue
 
         sl_price = calculate_atr_trailing_sl(kite, symbol, cmp)
@@ -185,7 +185,7 @@ def monitor_positions():
 if __name__ == "__main__":
     # Start WebSocket streaming
     token_list = [int(token) for token in token_map.values()]
-    start_websocket(creds["api_key"], creds["access_token"], token_list)
+    start_websocket(token_list)
 
     # Loop monitoring every 15 min
     while True:

@@ -62,23 +62,36 @@ def calculate_trailing_sl(prices, atr_multiplier=1.5):
     trailing_sl = high_price - (atr_multiplier * atr_value)
     return round(trailing_sl, 2)
 
-def check_supertrend_flip(df, period=10, multiplier=3):
+def check_supertrend_flip(kite, symbol, interval="day", period=10, multiplier=3):
     """
     Returns True if Supertrend has flipped to bearish.
     """
-    if len(df) < period + 1:
+    try:
+        instrument_token = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
+        hist = kite.historical_data(
+            instrument_token=instrument_token,
+            from_date=pd.Timestamp.today() - pd.Timedelta(days=30),
+            to_date=pd.Timestamp.today(),
+            interval=interval
+        )
+        df = pd.DataFrame(hist)
+
+        if len(df) < period + 1:
+            return False
+
+        supertrend = pta.supertrend(
+            high=df["High"],
+            low=df["Low"],
+            close=df["Close"],
+            length=period,
+            multiplier=multiplier
+        )
+        last_trend = supertrend["SUPERTd_{}_{}".format(period, multiplier)].iloc[-1]
+        return last_trend == -1
+    except Exception as e:
+        print(f"⚠️ Supertrend check failed for {symbol}: {e}")
         return False
 
-    supertrend = pta.supertrend(
-        high=df["High"],
-        low=df["Low"],
-        close=df["Close"],
-        length=period,
-        multiplier=multiplier
-    )
-    last_trend = supertrend["SUPERTd_{}_{}".format(period, multiplier)].iloc[-1]
-    # -1 = bearish, 1 = bullish
-    return last_trend == -1
 
 def detect_macd_cross(df):
     """

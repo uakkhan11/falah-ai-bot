@@ -45,11 +45,6 @@ kite = KiteConnect(api_key=creds["api_key"])
 kite.set_access_token(access_token)
 print("✅ KiteConnect initialized")
 
-# Initialize Kite
-kite = KiteConnect(api_key=creds["api_key"])
-kite.set_access_token(creds["access_token"])
-print("✅ KiteConnect initialized")
-
 IST = pytz.timezone("Asia/Kolkata")
 
 SHEET_NAME = secrets["google"]["sheet_name"]
@@ -206,7 +201,7 @@ def monitor_positions():
 if __name__ == "__main__":
     # Start WebSocket
     token_list = [int(token) for token in token_map.values()]
-    start_websocket(creds["api_key"], creds["access_token"], token_list)
+    start_websocket(creds["api_key"], access_token, token_list)
 
     # Loop
     while True:

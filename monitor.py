@@ -136,8 +136,8 @@ def monitor_positions():
             continue
 
         last_exit_date = exited.get(symbol)
-        if last_exit_date == today_str:
-            print(f"🔁 {symbol} already exited today. Skipping.")
+        if symbol in exited:
+            print(f"{symbol} already exited today. Skipping.")
             continue
 
         sl_price = calculate_atr_trailing_sl(kite, symbol, cmp)

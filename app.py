@@ -39,7 +39,7 @@ def init_kite():
     with open("/root/falah-ai-bot/access_token.json") as f:
         token = json.load(f)["access_token"]
     kite.set_access_token(token)
-    return kite
+    return kite, token
 
 @st.cache_resource
 def load_sheet():
@@ -71,8 +71,8 @@ def get_halal_symbols(sheet):
 live_ltps = {}
 token_map = {}
 
-def start_websocket(tokens):
-    kws = KiteTicker(API_KEY, kite._access_token)
+def start_websocket(tokens, access_token):
+    kws = KiteTicker(API_KEY, access_token)
 
     def on_connect(ws, resp):
         print(f"✅ WebSocket Connected. Subscribing {len(tokens)} tokens...")
@@ -125,7 +125,7 @@ min_ai_score = st.sidebar.slider("🎯 Min Combined Score", 0, 200, 100)
 # ---------------------------
 # Main Execution
 # ---------------------------
-kite = init_kite()
+kite, access_token = init_kite()
 sheet = load_sheet()
 symbols = get_halal_symbols(sheet)
 
@@ -163,7 +163,7 @@ if not token_map:
 st.success(f"✅ Loaded {len(token_map)} instrument tokens.")
 
 if not enable_dummy:
-    start_websocket(list(token_map.values()))
+    start_websocket(list(token_map.values()), access_token)
 
 # ---------------------------
 # Get live data

@@ -2,12 +2,24 @@ import json
 from kiteconnect import KiteConnect
 from utils import load_credentials
 
-# Load credentials
+# Load secrets.toml credentials
+from utils import load_credentials
 secrets = load_credentials()
 creds = secrets["zerodha"]
 
+# Load access token from JSON
+try:
+    with open("/root/falah-ai-bot/access_token.json", "r") as f:
+        access_token_data = json.load(f)
+    access_token = access_token_data["access_token"]
+    print(f"✅ Access token loaded: {access_token[:4]}... (truncated)")
+except Exception as e:
+    print(f"❌ Failed to load access token: {e}")
+    exit(1)
+    
+# Initialize Kite
 kite = KiteConnect(api_key=creds["api_key"])
-kite.set_access_token(creds["access_token"])
+kite.set_access_token(access_token)
 
 # Read Halal symbols
 with open("/root/falah-ai-bot/halal_symbols.txt", "r") as f:

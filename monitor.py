@@ -152,8 +152,8 @@ def monitor_positions():
         sl_price = calculate_atr_trailing_sl(kite, symbol, cmp)
         sl_hit = sl_price and cmp <= sl_price
 
-        st_flip_daily = check_supertrend_flip(symbol, interval="day")
-        st_flip_15m = check_supertrend_flip(symbol, interval="15minute")
+        st_flip_daily = check_supertrend_flip(kite, symbol, interval="day")
+        st_flip_15m = check_supertrend_flip(kite, symbol, interval="15minute")
 
         rsi_div = check_rsi_bearish_divergence(kite, symbol)
         vwap_cross = check_vwap_cross(kite, symbol)

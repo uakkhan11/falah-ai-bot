@@ -7,7 +7,7 @@ api_secret = "yy1wd2wn8r0wx4mus00vxllgss03nuqx"
 
 # IMPORTANT:
 # You must manually get this request token after logging in
-request_token = "uzDS1G2oBqUXYx2JECN8fFaBK2F9xCql"
+request_token = "GFbF1A55i9xXCo4P4s7RekBXjMcKpHKq"
 
 # Create KiteConnect instance
 kite = KiteConnect(api_key=api_key)

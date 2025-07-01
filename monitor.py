@@ -7,7 +7,7 @@ import gspread
 from datetime import datetime
 from kiteconnect import KiteConnect
 
-from ws_live_prices import live_prices, start_websocket
+from ws_live_prices import start_websocket
 from utils import (
     load_credentials,
     send_telegram,
@@ -107,7 +107,7 @@ def monitor_positions():
             print(f"⚠️ No token for {symbol}. Skipping.")
             continue
 
-        cmp = live_prices.get(int(token))
+        cmp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["last_price"]
         if not cmp:
             print(f"⚠️ No live LTP for {symbol}. Skipping.")
             continue

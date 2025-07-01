@@ -12,6 +12,18 @@ st.set_page_config(page_title="Falāh Bot Dashboard", layout="wide")
 
 st.title("🟢 Falāh Trading Bot Dashboard")
 
+from token_loader import load_or_create_token
+
+@st.cache_resource
+def init_kite():
+    return load_or_create_token(
+        api_key=API_KEY,
+        api_secret="ijzeuwuylr3g0kug",
+        interactive=True,
+        st=st
+    )
+
+
 # ---------------------------
 # Monitor Service Status
 # ---------------------------

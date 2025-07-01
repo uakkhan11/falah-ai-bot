@@ -3,7 +3,7 @@
 import time
 import json
 from kiteconnect import KiteConnect
-from ws_live_prices import start_websockets, live_prices
+from ws_live_prices import start_websockets
 from monitor_core import monitor_once
 
 def log(msg):
@@ -15,6 +15,8 @@ with open("/root/falah-ai-bot/.streamlit/secrets.toml", "r") as f:
     secrets = toml.load(f)
 
 API_KEY = secrets["zerodha"]["api_key"]
+
+# Load access token
 with open("/root/falah-ai-bot/access_token.json") as f:
     access_token = json.load(f)["access_token"]
 
@@ -27,12 +29,13 @@ with open("/root/falah-ai-bot/tokens.json") as f:
     token_map = json.load(f)
 token_list = [int(t) for t in token_map.values()]
 
-# Start WebSocket
+# Start WebSocket batches (no live_prices dict here)
 start_websockets(API_KEY, access_token, token_list)
 
 log("✅ WebSocket started.")
 
 # Monitor loop
 while True:
-    monitor_once(kite, token_map, log, live_prices)
+    # Note: We REMOVE live_prices argument
+    monitor_once(kite, token_map, log)
     time.sleep(900)

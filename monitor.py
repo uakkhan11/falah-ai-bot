@@ -28,6 +28,10 @@ print("✅ All imports finished")
 # Load credentials
 secrets = load_credentials()
 creds = secrets["zerodha"]
+API_KEY = creds.get("api_key")
+if not API_KEY:
+    print("❌ API Key missing in credentials.")
+    exit(1)
 print("✅ Credentials loaded")
 
 # Load access token from JSON
@@ -41,7 +45,7 @@ except Exception as e:
     exit(1)
 
 # Initialize Kite
-kite = KiteConnect(api_key=creds["api_key"])
+kite = KiteConnect(api_key=API_KEY)
 kite.set_access_token(access_token)
 print("✅ KiteConnect initialized")
 
@@ -201,7 +205,7 @@ def monitor_positions():
 if __name__ == "__main__":
     # Start WebSocket
     token_list = [int(token) for token in token_map.values()]
-    start_websocket(creds["api_key"], access_token, token_list)
+    start_websocket(API_KEY, access_token, token_list)
 
     # Loop
     while True:

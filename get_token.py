@@ -2,7 +2,7 @@ from kiteconnect import KiteConnect
 
 api_key = "ijzeuwuylr3g0kug"
 api_secret = "yy1wd2wn8r0wx4mus00vxllgss03nuqx"
-request_token = "kNU3ukqP0NclyBfPxhLx9Snx66qHZirt"   # from URL
+request_token = "qUJIL8QCuY53KJGeNuTN0Uf4Ytfqobg3"   # from URL
 
 kite = KiteConnect(api_key=api_key)
 data = kite.generate_session(request_token, api_secret=api_secret)

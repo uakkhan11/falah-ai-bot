@@ -28,7 +28,7 @@ with open("/root/falah-ai-bot/tokens.json") as f:
 token_list = [int(t) for t in token_map.values()]
 
 # Start WebSocket
-start_websocket(API_KEY, access_token, token_list)
+start_websockets(API_KEY, access_token, token_list)
 
 log("✅ WebSocket started.")
 

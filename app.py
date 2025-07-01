@@ -1,76 +1,74 @@
-# app.py – Falāh Bot Mobile Dashboard
+# app.py – Falāh Streamlit Dashboard
 
 import streamlit as st
-import threading
-import json
+import subprocess
+import os
 import time
-import toml
-from kiteconnect import KiteConnect, KiteTicker
-from monitor_core import monitor_once
-from ws_live_prices import live_prices, start_websocket
+from datetime import datetime
 
-st.set_page_config(page_title="Falāh Bot", layout="wide")
+LOG_FILE = "/root/falah-ai-bot/monitor.log"
 
-# Load credentials
-with open("/root/falah-ai-bot/.streamlit/secrets.toml", "r") as f:
-    secrets = toml.load(f)
-API_KEY = secrets["zerodha"]["api_key"]
+st.set_page_config(page_title="Falāh Bot Dashboard", layout="wide")
 
-# Kite init
-@st.cache_resource
-def init_kite():
-    kite = KiteConnect(api_key=API_KEY)
-    with open("/root/falah-ai-bot/access_token.json") as f:
-        token = json.load(f)["access_token"]
-    kite.set_access_token(token)
-    return kite
+st.title("🟢 Falāh Trading Bot Dashboard")
 
-kite = init_kite()
+# ---------------------------
+# Monitor Service Status
+# ---------------------------
+def get_service_status():
+    try:
+        output = subprocess.check_output(
+            ["systemctl", "is-active", "falah_monitor.service"],
+            stderr=subprocess.STDOUT
+        )
+        return output.decode().strip()
+    except subprocess.CalledProcessError:
+        return "unknown"
 
-# Load tokens
-with open("/root/falah-ai-bot/tokens.json") as f:
-    token_map = json.load(f)
+status = get_service_status()
+st.info(f"🔄 Monitor Service Status: **{status.upper()}**")
 
-# Live LTP
-if "live_prices" not in st.session_state:
-    st.session_state["live_prices"] = {}
-
-# Monitor thread flag
-if "monitor_running" not in st.session_state:
-    st.session_state["monitor_running"] = False
-
-# Logs
-if "logs" not in st.session_state:
-    st.session_state["logs"] = []
-
-def log(message):
-    st.session_state.logs.append(message)
-    st.session_state.logs = st.session_state.logs[-50:]
-
-# Monitoring loop
-def monitoring_loop():
-    log("✅ Monitoring started.")
-    while st.session_state.monitor_running:
-        monitor_once(kite, token_map, log, live_prices)
-        time.sleep(900)
-
-# UI
-st.title("📈 Falāh Trading Bot")
-
+# ---------------------------
+# Start/Stop Buttons
+# ---------------------------
 col1, col2 = st.columns(2)
-with col1:
-    if st.session_state.monitor_running:
-        if st.button("🛑 Stop Monitoring"):
-            st.session_state.monitor_running = False
-            log("🛑 Monitoring stopped.")
+
+if col1.button("▶️ Start Monitor"):
+    subprocess.run(["systemctl", "start", "falah_monitor.service"])
+    st.success("✅ Started the monitor service.")
+
+if col2.button("⏹️ Stop Monitor"):
+    subprocess.run(["systemctl", "stop", "falah_monitor.service"])
+    st.warning("🛑 Stopped the monitor service.")
+
+# ---------------------------
+# Manual Trigger
+# ---------------------------
+if st.button("🕹️ Run Monitor Now (One Cycle)"):
+    with st.spinner("Running monitoring cycle..."):
+        os.system("python3 /root/falah-ai-bot/run_monitor.py & sleep 10 && pkill -f run_monitor.py")
+    st.success("✅ One monitoring cycle completed.")
+
+# ---------------------------
+# Show Logs
+# ---------------------------
+st.subheader("📄 Recent Logs")
+
+if os.path.exists(LOG_FILE):
+    with open(LOG_FILE, "r") as f:
+        lines = f.readlines()
+    if lines:
+        st.text_area(
+            "Monitor Log (last 100 lines)",
+            "".join(lines[-100:]),
+            height=400
+        )
     else:
-        if st.button("▶️ Start Monitoring"):
-            st.session_state.monitor_running = True
-            threading.Thread(target=monitoring_loop, daemon=True).start()
+        st.info("No logs yet.")
+else:
+    st.info("Log file not found.")
 
-with col2:
-    if st.button("🔄 Refresh Access Token"):
-        st.warning("Please run get_token.py manually for now.")
-
-st.subheader("🪵 Logs")
-st.text("\n".join(st.session_state.logs))
+# ---------------------------
+# Timestamp
+# ---------------------------
+st.caption(f"Updated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

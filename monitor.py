@@ -7,7 +7,7 @@ import gspread
 from datetime import datetime
 from kiteconnect import KiteConnect
 
-from ws_live_prices import live_prices, start_websockets
+from ws_live_prices import live_prices, start_websocket
 from utils import (
     load_credentials,
     send_telegram,
@@ -29,21 +29,6 @@ print("✅ All imports finished")
 secrets = load_credentials()
 creds = secrets["zerodha"]
 print("✅ Credentials loaded")
-
-# Load access token
-try:
-    with open("/root/falah-ai-bot/access_token.json", "r") as f:
-        access_token_data = json.load(f)
-    access_token = access_token_data["access_token"]
-    print(f"✅ Access token loaded: {access_token[:4]}... (truncated)")
-except Exception as e:
-    print(f"❌ Failed to load access token JSON: {e}")
-    exit(1)
-
-# Initialize Kite
-kite = KiteConnect(api_key=creds["api_key"])
-kite.set_access_token(access_token)
-print("✅ KiteConnect initialized")
 
 IST = pytz.timezone("Asia/Kolkata")
 
@@ -70,6 +55,17 @@ def monitor_positions():
     today_str = now.strftime("%Y-%m-%d")
     timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] Market open: {market_open}")
+
+    # 🔄 Reload access token every cycle
+    try:
+        with open("/root/falah-ai-bot/access_token.json", "r") as f:
+            access_token = json.load(f)["access_token"]
+    except Exception as e:
+        print(f"❌ Failed to load access token JSON: {e}")
+        return
+
+    kite = KiteConnect(api_key=creds["api_key"])
+    kite.set_access_token(access_token)
 
     try:
         holdings = get_cnc_holdings(kite)
@@ -117,40 +113,7 @@ def monitor_positions():
 
         exposure = round(cmp * quantity, 2)
 
-        # Check if already logged
-        row_idx = None
-        for idx, row in enumerate(existing_rows, start=2):
-            if row.get("Date") == today_str and row.get("Symbol") == symbol:
-                row_idx = idx
-                break
-
-        if row_idx:
-            try:
-                monitor_tab.update(values=[[cmp]], range_name=f"E{row_idx}")
-                monitor_tab.update(values=[[exposure]], range_name=f"F{row_idx}")
-                print(f"🔄 Updated CMP/Exposure: CMP={cmp}, Exposure={exposure}")
-            except Exception as e:
-                print(f"⚠️ Failed to update CMP/Exposure: {e}")
-        else:
-            latest_rows = monitor_tab.get_all_records()
-            duplicate = any(
-                r.get("Date") == today_str and r.get("Symbol") == symbol
-                for r in latest_rows
-            )
-            if duplicate:
-                print(f"⚠️ Duplicate row for {symbol}. Skipping append.")
-            else:
-                row = [today_str, symbol, quantity, avg_price, cmp, exposure, "HOLD"]
-                try:
-                    monitor_tab.append_row(row)
-                    print(f"📝 Added new row for {symbol}.")
-                except Exception as e:
-                    print(f"❌ Failed to log {symbol}: {e}")
-
-        if not market_open:
-            print(f"⏸️ Market closed. Skipping exit checks for {symbol}.")
-            continue
-
+        # Exit log check
         if exited.get(symbol) == today_str:
             print(f"🔁 {symbol} already exited today. Skipping.")
             continue
@@ -195,11 +158,10 @@ def monitor_positions():
 
     print("✅ Monitoring complete.\n")
 
-
 if __name__ == "__main__":
-    # Start WebSocket batches
+    # Start WebSocket
     token_list = [int(token) for token in token_map.values()]
-    start_websockets(creds["api_key"], access_token, token_list)
+    start_websocket(creds["api_key"], access_token, token_list)
 
     # Loop
     while True:

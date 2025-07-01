@@ -1,38 +1,24 @@
-# ws_worker.py
+# ws_live_prices.py
 
-import sys
-from kiteconnect import KiteTicker
+import subprocess
 
-if len(sys.argv) < 4:
-    print("Usage: python3 ws_worker.py <api_key> <access_token> <token1,token2,...>")
-    sys.exit(1)
+def start_websockets(api_key, access_token, tokens, batch_size=300):
+    """
+    Starts multiple KiteTicker WebSocket connections in separate subprocesses.
+    """
+    batches = [tokens[i:i + batch_size] for i in range(0, len(tokens), batch_size)]
+    print(f"✅ Splitting tokens into {len(batches)} batch(es).")
 
-api_key = sys.argv[1]
-access_token = sys.argv[2]
-tokens = [int(t) for t in sys.argv[3].split(",")]
+    for i, batch in enumerate(batches, start=1):
+        token_str = ",".join(str(t) for t in batch)
+        print(f"✅ Launching subprocess for batch {i} ({len(batch)} tokens)")
 
-print(f"✅ Worker started for {len(tokens)} tokens.")
-
-kws = KiteTicker(api_key, access_token)
-
-def on_connect(ws, resp):
-    print(f"✅ Subscribing {len(tokens)} tokens...")
-    ws.subscribe(tokens)
-    ws.set_mode(ws.MODE_FULL, tokens)
-
-def on_ticks(ws, ticks):
-    for tick in ticks:
-        print(f"[{tick['instrument_token']}] LTP: {tick['last_price']}")
-
-def on_close(ws, code, reason):
-    print(f"🔌 Closed: {code} - {reason}")
-
-def on_error(ws, code, reason):
-    print(f"⚠️ Error: {reason} (Code {code})")
-
-kws.on_connect = on_connect
-kws.on_ticks = on_ticks
-kws.on_close = on_close
-kws.on_error = on_error
-
-kws.connect(threaded=False)
+        subprocess.Popen(
+            [
+                "python3",
+                "/root/falah-ai-bot/ws_worker.py",
+                api_key,
+                access_token,
+                token_str
+            ]
+        )

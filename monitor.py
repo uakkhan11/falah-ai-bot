@@ -63,6 +63,8 @@ def monitor_positions():
     except Exception as e:
         print(f"❌ Failed to load access token JSON: {e}")
         return
+    
+    print("✅ Using access token:", access_token)
 
     kite = KiteConnect(api_key=creds["api_key"])
     kite.set_access_token(access_token)

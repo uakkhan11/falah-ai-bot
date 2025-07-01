@@ -89,16 +89,28 @@ def monitor_once(kite, token_map, log, live_prices):
         if reasons:
             reason_str = ", ".join(reasons)
             log(f"🚨 Exit triggered for {symbol}: {reason_str}")
+
+            # 🔥 AUTO SELL ORDER
+            try:
+                kite.place_order(
+                    variety=kite.VARIETY_REGULAR,
+                    exchange=kite.EXCHANGE_NSE,
+                    tradingsymbol=symbol,
+                    transaction_type=kite.TRANSACTION_TYPE_SELL,
+                    quantity=quantity,
+                    order_type=kite.ORDER_TYPE_MARKET,
+                    product=kite.PRODUCT_CNC
+                )
+                log(f"✅ Sell order placed for {symbol}.")
+            except Exception as e:
+                log(f"⚠️ Sell order failed for {symbol}: {e}")
+
             update_exit_log("/root/falah-ai-bot/exited_stocks.json", symbol)
             send_telegram(
-                f"🚨 Exit\nSymbol: {symbol}\nPrice: {cmp}\nReasons: {reason_str}"
+                f"🚨 Auto Exit Executed\nSymbol: {symbol}\nPrice: {cmp}\nReasons: {reason_str}"
             )
             log_exit_to_sheet(
-                "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c",
-                "MonitoredStocks",
-                symbol,
-                cmp,
-                reason_str
+                "MonitoredStocks", "MonitoredStocks", symbol, cmp, reason_str
             )
         else:
             log(f"✅ {symbol}: Holding.")

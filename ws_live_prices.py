@@ -1,6 +1,6 @@
 # ws_worker.py
+
 import sys
-import json
 from kiteconnect import KiteTicker
 
 if len(sys.argv) < 4:
@@ -13,8 +13,6 @@ tokens = [int(t) for t in sys.argv[3].split(",")]
 
 print(f"✅ Worker started for {len(tokens)} tokens.")
 
-live_prices = {}
-
 kws = KiteTicker(api_key, access_token)
 
 def on_connect(ws, resp):
@@ -24,7 +22,7 @@ def on_connect(ws, resp):
 
 def on_ticks(ws, ticks):
     for tick in ticks:
-        live_prices[tick["instrument_token"]] = tick["last_price"]
+        print(f"[{tick['instrument_token']}] LTP: {tick['last_price']}")
 
 def on_close(ws, code, reason):
     print(f"🔌 Closed: {code} - {reason}")

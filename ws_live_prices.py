@@ -16,6 +16,7 @@ def start_websockets(api_key, access_token, tokens, batch_size=300):
 
     for i, batch in enumerate(batches, start=1):
         kws = KiteTicker(api_key, access_token)
+        print("✅ Using access token:", access_token)
 
         def on_connect(ws, resp, batch=batch, idx=i):
             print(f"✅ Batch {idx}: Connected. Subscribing {len(batch)} tokens...")

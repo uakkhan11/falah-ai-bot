@@ -5,6 +5,7 @@ import subprocess
 import os
 import time
 from datetime import datetime
+API_KEY = "ijzeuwuylr3g0kug"
 
 LOG_FILE = "/root/falah-ai-bot/monitor.log"
 

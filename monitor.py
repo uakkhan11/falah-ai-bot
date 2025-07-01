@@ -7,7 +7,7 @@ import gspread
 from datetime import datetime
 from kiteconnect import KiteConnect
 
-from ws_live_prices import live_prices, start_websocket
+from ws_live_prices import live_prices, start_websockets
 from utils import (
     load_credentials,
     send_telegram,
@@ -28,13 +28,9 @@ print("✅ All imports finished")
 # Load credentials
 secrets = load_credentials()
 creds = secrets["zerodha"]
-API_KEY = creds.get("api_key")
-if not API_KEY:
-    print("❌ API Key missing in credentials.")
-    exit(1)
 print("✅ Credentials loaded")
 
-# Load access token from JSON
+# Load access token
 try:
     with open("/root/falah-ai-bot/access_token.json", "r") as f:
         access_token_data = json.load(f)
@@ -45,7 +41,7 @@ except Exception as e:
     exit(1)
 
 # Initialize Kite
-kite = KiteConnect(api_key=API_KEY)
+kite = KiteConnect(api_key=creds["api_key"])
 kite.set_access_token(access_token)
 print("✅ KiteConnect initialized")
 
@@ -161,13 +157,10 @@ def monitor_positions():
 
         sl_price = calculate_atr_trailing_sl(kite, symbol, cmp)
         sl_hit = sl_price and cmp <= sl_price
-
         st_flip_daily = check_supertrend_flip(kite, symbol)
         st_flip_15m = check_supertrend_flip(kite, symbol)
-
         rsi_div = check_rsi_bearish_divergence(kite, symbol)
         vwap_cross = check_vwap_cross(kite, symbol)
-
         ai_exit = analyze_exit_signals(symbol, avg_price, cmp)
 
         reasons = []
@@ -202,10 +195,11 @@ def monitor_positions():
 
     print("✅ Monitoring complete.\n")
 
+
 if __name__ == "__main__":
-    # Start WebSocket
+    # Start WebSocket batches
     token_list = [int(token) for token in token_map.values()]
-    start_websocket(API_KEY, access_token, token_list)
+    start_websockets(creds["api_key"], access_token, token_list)
 
     # Loop
     while True:

@@ -1,4 +1,4 @@
-# app.py – Mobile Dashboard
+# app.py – Falāh Bot Mobile Dashboard
 
 import streamlit as st
 import threading
@@ -72,6 +72,5 @@ with col2:
     if st.button("🔄 Refresh Access Token"):
         st.warning("Please run get_token.py manually for now.")
 
-# Live logs
 st.subheader("🪵 Logs")
 st.text("\n".join(st.session_state.logs))

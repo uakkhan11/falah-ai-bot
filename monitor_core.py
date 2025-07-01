@@ -1,12 +1,11 @@
 # monitor_core.py
+
 import time
 import json
 import pytz
 import gspread
 from datetime import datetime
-from kiteconnect import KiteConnect
-from ws_live_prices import live_prices, start_websocket
-from utils import load_credentials, send_telegram, get_cnc_holdings, analyze_exit_signals
+from utils import get_cnc_holdings, send_telegram, analyze_exit_signals
 from indicators import (
     calculate_atr_trailing_sl,
     check_supertrend_flip,
@@ -25,7 +24,6 @@ def monitor_once(kite, token_map, log, live_prices):
         and (now.hour < 15 or (now.hour == 15 and now.minute < 30))
     )
     today_str = now.strftime("%Y-%m-%d")
-    timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
 
     try:
         holdings = get_cnc_holdings(kite)
@@ -43,7 +41,7 @@ def monitor_once(kite, token_map, log, live_prices):
         exited = {}
 
     gc = gspread.service_account(filename="/root/falah-credentials.json")
-    sheet = gc.open_by_key("YOUR_SHEET_KEY")
+    sheet = gc.open_by_key("1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c")
     monitor_tab = sheet.worksheet("MonitoredStocks")
     existing_rows = monitor_tab.get_all_records()
 
@@ -96,7 +94,11 @@ def monitor_once(kite, token_map, log, live_prices):
                 f"🚨 Exit\nSymbol: {symbol}\nPrice: {cmp}\nReasons: {reason_str}"
             )
             log_exit_to_sheet(
-                "YOUR_SHEET_NAME", "MonitoredStocks", symbol, cmp, reason_str
+                "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c",
+                "MonitoredStocks",
+                symbol,
+                cmp,
+                reason_str
             )
         else:
             log(f"✅ {symbol}: Holding.")

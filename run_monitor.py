@@ -3,7 +3,7 @@
 import time
 import json
 from kiteconnect import KiteConnect
-from ws_live_prices import start_websocket, live_prices
+from ws_live_prices import start_websockets, live_prices
 from monitor_core import monitor_once
 
 def log(msg):

@@ -11,6 +11,8 @@ def log(msg):
 
 # Load credentials
 with open("/root/falah-ai-bot/.streamlit/secrets.toml", "r") as f:
+    access_token = json.load(f)["access_token"]
+print("✅ Using token:", access_token)
     import toml
     secrets = toml.load(f)
 

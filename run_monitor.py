@@ -4,7 +4,7 @@ import time
 import json
 import toml
 from kiteconnect import KiteConnect
-from ws_live_prices import start_websockets, live_prices
+from ws_live_prices import start_websockets
 from monitor_core import monitor_once
 
 def log(msg):
@@ -38,5 +38,5 @@ log("✅ WebSocket started.")
 
 # Monitor loop
 while True:
-    monitor_once(kite, token_map, log, live_prices)
+    monitor_once(kite, token_map, log)
     time.sleep(900)

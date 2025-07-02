@@ -1,5 +1,3 @@
-# monitor_core.py
-
 import time
 import json
 import pytz
@@ -55,10 +53,12 @@ def monitor_once(kite, token_map, log):
             log(f"⚠️ No token for {symbol}. Skipping.")
             continue
 
+        # Fetch live price using REST API
         try:
-            cmp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["last_price"]
+            ltp_data = kite.ltp(f"NSE:{symbol}")
+            cmp = ltp_data[f"NSE:{symbol}"]["last_price"]
         except Exception as e:
-            log(f"⚠️ LTP fetch failed for {symbol}: {e}")
+            log(f"⚠️ Failed to fetch LTP for {symbol}: {e}")
             continue
 
         exposure = round(cmp * quantity, 2)

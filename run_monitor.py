@@ -19,6 +19,7 @@ API_KEY = secrets["zerodha"]["api_key"]
 # Load access token
 with open("/root/falah-ai-bot/access_token.json") as f:
     access_token = json.load(f)["access_token"]
+
 print("✅ Using access_token:", access_token[:6], "...")
 
 # Init Kite

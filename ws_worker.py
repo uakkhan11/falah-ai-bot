@@ -3,32 +3,25 @@
 import sys
 from kiteconnect import KiteTicker
 
-if len(sys.argv) < 4:
-    print("Usage: python3 ws_worker.py <api_key> <access_token> <token1,token2,...>")
-    sys.exit(1)
-
 api_key = sys.argv[1]
 access_token = sys.argv[2]
 tokens = [int(t) for t in sys.argv[3].split(",")]
 
-print(f"✅ Worker started for {len(tokens)} tokens.")
-
 kws = KiteTicker(api_key, access_token)
 
-def on_connect(ws, resp):
-    print(f"✅ Subscribing {len(tokens)} tokens...")
+def on_connect(ws, response):
+    print(f"✅ Connected: Subscribing {len(tokens)} tokens")
     ws.subscribe(tokens)
     ws.set_mode(ws.MODE_FULL, tokens)
 
 def on_ticks(ws, ticks):
-    for tick in ticks:
-        print(f"[{tick['instrument_token']}] LTP: {tick['last_price']}")
+    print(f"✅ Ticks received: {len(ticks)}")
 
 def on_close(ws, code, reason):
-    print(f"🔌 Closed: {code} - {reason}")
+    print(f"🔌 Connection closed: {reason}")
 
 def on_error(ws, code, reason):
-    print(f"⚠️ Error: {reason} (Code {code})")
+    print(f"⚠️ Error: {reason}")
 
 kws.on_connect = on_connect
 kws.on_ticks = on_ticks

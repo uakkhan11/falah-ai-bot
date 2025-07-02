@@ -1,8 +1,6 @@
-import time
-import json
+from datetime import datetime
 import pytz
 import gspread
-from datetime import datetime
 from utils import get_cnc_holdings, send_telegram, analyze_exit_signals
 from indicators import (
     calculate_atr_trailing_sl,
@@ -48,12 +46,7 @@ def monitor_once(kite, token_map, log):
         quantity = stock.get("quantity")
         avg_price = stock.get("average_price")
 
-        token = token_map.get(symbol)
-        if token is None:
-            log(f"⚠️ No token for {symbol}. Skipping.")
-            continue
-
-        # Fetch live price using REST API
+        # ✅ REST API fetch live price
         try:
             ltp_data = kite.ltp(f"NSE:{symbol}")
             cmp = ltp_data[f"NSE:{symbol}"]["last_price"]
@@ -92,10 +85,8 @@ def monitor_once(kite, token_map, log):
             log(f"🚨 Exit triggered for {symbol}: {reason_str}")
             update_exit_log("/root/falah-ai-bot/exited_stocks.json", symbol)
             send_telegram(
-                f"🚨 Exit\nSymbol: {symbol}\nPrice: {cmp}\nReasons: {reason_str}"
+                f"🚨 Auto Exit\nSymbol: {symbol}\nPrice: {cmp}\nReasons: {reason_str}"
             )
-            log_exit_to_sheet(
-                "MonitoredStocks", "MonitoredStocks", symbol, cmp, reason_str
-            )
+            log_exit_to_sheet("MonitoredStocks", "MonitoredStocks", symbol, cmp, reason_str)
         else:
             log(f"✅ {symbol}: Holding.")

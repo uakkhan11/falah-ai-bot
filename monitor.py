@@ -8,7 +8,7 @@ from datetime import datetime
 from kiteconnect import KiteConnect
 from credentials import load_secrets
 
-from ws_live_prices import start_websockets
+from ws_live_prices import start_all_websockets
 from utils import (
     load_credentials,
     send_telegram,
@@ -162,7 +162,7 @@ if __name__ == "__main__":
 
     # Start WebSockets after validation
     token_list = [int(t) for t in token_map.values()]
-    start_websockets(API_KEY, access_token, token_list)
+    start_all_websockets(API_KEY, access_token, token_list)
 
     # Loop monitoring with catch-all error handler
     while True:

@@ -11,17 +11,13 @@ def load_secrets():
     return secrets
 
 def get_kite():
-    """
-    Returns an initialized KiteConnect object with access token set.
-    """
     secrets = load_secrets()
-    api_key = secrets["zerodha"]["api_key"]
-
+    kite = KiteConnect(api_key=secrets["zerodha"]["api_key"])
+    if not os.path.exists("/root/falah-ai-bot/access_token.json"):
+        raise Exception("❌ Access token file not found. Please generate it from dashboard UI.")
     with open("/root/falah-ai-bot/access_token.json", "r") as f:
-        access_token = json.load(f)["access_token"]
-
-    kite = KiteConnect(api_key=api_key)
-    kite.set_access_token(access_token)
+        token = json.load(f)["access_token"]
+    kite.set_access_token(token)
     return kite
 
 def validate_kite(kite):

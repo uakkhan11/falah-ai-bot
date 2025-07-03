@@ -10,6 +10,8 @@ from data_fetch import get_cnc_holdings, get_live_ltp, fetch_historical_candles
 from ai_engine import calculate_ai_exit_score
 from ta.volatility import AverageTrueRange
 from smart_scanner import run_smart_scan
+from fetch_historical_batch import fetch_all_historical
+from ws_live_prices import start_all_websockets
 
 st.set_page_config(page_title="Falāh Bot Dashboard", layout="wide")
 
@@ -202,3 +204,30 @@ if st.button("Fetch Stock Data"):
             st.write("Reasons:", reasons)
         except Exception as e:
             st.error(f"Error fetching data: {e}")
+
+st.subheader("⚙️ Bot Controls")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    if st.button("📥 Fetch Historical Data"):
+        st.info("Fetching historical data...")
+        fetch_all_historical()
+        st.success("Done fetching.")
+
+with col2:
+    if st.button("▶️ Start Live WebSockets"):
+        start_all_websockets()
+        st.success("WebSockets started.")
+
+with col3:
+    if st.button("🛑 Stop Live WebSockets"):
+        # This is optional. You can kill them by removing JSON files.
+        # Or you can write PID files in ws_live_prices.py and kill them here.
+        st.warning("Stop functionality not yet implemented. Use server for now.")
+
+if os.path.exists("/root/falah-ai-bot/last_fetch.txt"):
+    with open("/root/falah-ai-bot/last_fetch.txt") as f:
+        ts = f.read()
+    st.info(f"Last historical fetch: {ts}")
+

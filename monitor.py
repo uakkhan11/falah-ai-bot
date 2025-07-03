@@ -104,7 +104,11 @@ def monitor_positions(kite):
             cmp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["last_price"]
         except Exception as e:
             print(f"⚠️ Failed to fetch LTP for {symbol}: {e}")
-            continue
+    if "Incorrect `api_key` or `access_token`" in str(e):
+        print("❌ Access token invalid. Stopping monitoring.")
+        send_telegram("❌ Falāh Bot Error: Access token invalid or expired. Please re-generate the token.")
+        exit(1)
+    continue
 
         if not cmp:
             print(f"⚠️ No live LTP for {symbol}. Skipping.")
@@ -182,4 +186,11 @@ if __name__ == "__main__":
     # Loop monitoring
     while True:
         monitor_positions(kite)
+        except Exception as e:
+        if "Incorrect `api_key` or `access_token`" in str(e):
+            print("❌ Access token invalid during monitoring loop. Exiting.")
+            send_telegram("❌ Falāh Bot Error: Access token invalid or expired. Please re-generate the token.")
+            exit(1)
+        else:
+            print(f"⚠️ Unexpected monitoring error: {e}")
         time.sleep(900)

@@ -1,53 +1,51 @@
+# fetch_historical_batch.py
+
 import os
 import json
 import pandas as pd
+import time
 from kiteconnect import KiteConnect
 from datetime import datetime, timedelta
+from credentials import load_secrets
+from utils import get_halal_list
 
-# Config
-OUTPUT_DIR = "/root/falah-ai-bot/historical_data"
+OUTPUT_DIR = "/root/falah-ai-bot/historical_data/"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Load credentials
-from utils import load_credentials
-secrets = load_credentials()
+secrets = load_secrets()
 creds = secrets["zerodha"]
 
-# Kite Connect
 kite = KiteConnect(api_key=creds["api_key"])
 kite.set_access_token(creds["access_token"])
 
-# Load tokens.json
-with open("/root/falah-ai-bot/tokens.json", "r") as f:
+# Load instrument tokens
+with open("/root/falah-ai-bot/tokens.json") as f:
     token_map = json.load(f)
 
-# Load HalalList
-import gspread
-gc = gspread.service_account(filename="/root/falah-credentials.json")
-sheet = gc.open_by_key(secrets["sheets"]["SPREADSHEET_KEY"])
-symbols = sheet.worksheet("HalalList").col_values(1)[1:]
-symbols = [s.strip() for s in symbols if s.strip()]
-print(f"✅ Loaded {len(symbols)} symbols from HalalList.")
+# Get symbols
+symbols = get_halal_list("1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c")
+print(f"✅ Loaded {len(symbols)} symbols.")
 
-# Dates
+# Date range
 to_date = datetime.today()
 from_date = to_date - timedelta(days=200)
 
-# Batch processing
-BATCH_SIZE = 50
+BATCH_SIZE = 30
+
 for i in range(0, len(symbols), BATCH_SIZE):
     batch = symbols[i:i+BATCH_SIZE]
-    print(f"🚀 Processing batch {i//BATCH_SIZE +1}: {batch}")
+    print(f"🚀 Batch {i//BATCH_SIZE+1}")
 
     for sym in batch:
         token = token_map.get(sym)
         if not token:
-            print(f"⚠️ No token for {sym}. Skipping.")
+            print(f"⚠️ No token for {sym}")
             continue
 
         outfile = os.path.join(OUTPUT_DIR, f"{sym}.csv")
         if os.path.exists(outfile):
-            print(f"✅ {sym} already downloaded.")
+            print(f"✅ {sym} already exists.")
             continue
 
         try:
@@ -57,11 +55,9 @@ for i in range(0, len(symbols), BATCH_SIZE):
                 to_date=to_date,
                 interval="day"
             )
-            if not candles:
-                print(f"⚠️ No candles for {sym}.")
-                continue
             df = pd.DataFrame(candles)
             df.to_csv(outfile, index=False)
-            print(f"✅ Saved {sym} ({len(df)} rows).")
+            print(f"✅ Saved {sym}")
         except Exception as e:
-            print(f"❌ Failed to fetch {sym}: {e}")
+            print(f"❌ {sym}: {e}")
+        time.sleep(0.3)

@@ -87,23 +87,27 @@ with st.expander("🔑 Access Token Management"):
     request_token = st.text_input("Paste request_token here")
 
     if st.button("Generate Access Token"):
-        if not request_token:
-            st.error("Please paste the request_token.")
-        else:
-            try:
-                data = kite.generate_session(request_token, api_secret=api_secret)
-                access_token = data["access_token"]
-                with open("/root/falah-ai-bot/secrets.json", "r") as f:
-                    secrets_data = json.load(f)
-                    
-                secrets_data["zerodha"]["access_token"] = access_token
-                
-                with open("/root/falah-ai-bot/secrets.json", "w") as f:
-                    json.dump(secrets_data, f, indent=2)
-                    
-                st.success("✅ Access token saved.")
-            except Exception as e:
-                st.error(f"Error: {e}")
+    if not request_token:
+        st.error("Please paste the request_token.")
+    else:
+        try:
+            data = kite.generate_session(request_token, api_secret=api_secret)
+            access_token = data["access_token"]
+
+            # Save to secrets.json
+            with open("/root/falah-ai-bot/secrets.json", "r") as f:
+                secrets_data = json.load(f)
+            secrets_data["zerodha"]["access_token"] = access_token
+            with open("/root/falah-ai-bot/secrets.json", "w") as f:
+                json.dump(secrets_data, f, indent=2)
+
+            # ✅ Also save to access_token.json (needed by get_kite)
+            with open("/root/falah-ai-bot/access_token.json", "w") as f:
+                json.dump({"access_token": access_token}, f)
+
+            st.success("✅ Access token saved to both secrets.json and access_token.json.")
+        except Exception as e:
+            st.error(f"Error: {e}")
 
 # ======= Capital Allocation =======
 st.sidebar.header("⚙️ Capital & Trade Settings")

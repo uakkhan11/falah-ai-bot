@@ -1,4 +1,17 @@
+# ai_engine.py
+
 def calculate_ai_exit_score(stock_data, trailing_sl, current_price):
+    """
+    Computes an AI-based exit score for a given stock.
+
+    Args:
+        stock_data (DataFrame): Historical OHLCV data with indicators.
+        trailing_sl (float): The current trailing stoploss level.
+        current_price (float): Latest market price.
+
+    Returns:
+        Tuple[int, List[str]]: (Score, List of reasons contributing to the score)
+    """
     score = 0
     reasons = []
 
@@ -21,20 +34,20 @@ def calculate_ai_exit_score(stock_data, trailing_sl, current_price):
             score -= 10
             reasons.append("Volume drop")
 
-    # 🧠 4. Reversal Candles (basic logic)
+    # 🧠 4. Reversal Candles
     last = stock_data.iloc[-1]
     if (last["Close"] < last["Open"]) and ((last["Open"] - last["Close"]) > 0.005 * last["Open"]):
         score -= 15
         reasons.append("Bearish candle")
 
     # 🕒 5. End of day exit
-    import datetime
-    now = datetime.datetime.now()
+    from datetime import datetime
+    now = datetime.now()
     if now.hour == 15 and now.minute >= 15:
         score -= 20
         reasons.append("Time-based exit")
 
-    # ✅ Bonus: Bullish support (optional)
+    # ✅ Bonus: Bullish support
     if (last["Close"] > last["Open"]) and ((last["Close"] - last["Open"]) > 0.01 * last["Open"]):
         score += 10
         reasons.append("Strong bullish close")

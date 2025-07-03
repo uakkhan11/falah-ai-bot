@@ -107,8 +107,8 @@ def monitor_positions(kite):
         # Check exit signals
         sl_price = calculate_atr_trailing_sl(kite, symbol, cmp)
         sl_hit = sl_price and cmp <= sl_price
-        st_flip_daily = check_supertrend_flip(kite, symbol, timeframe="day")
-        st_flip_15m = check_supertrend_flip(kite, symbol, timeframe="15minute")
+        st_flip_daily = check_supertrend_flip(kite, symbol)
+        st_flip_15m = check_supertrend_flip(kite, symbol)
         rsi_div = check_rsi_bearish_divergence(kite, symbol)
         vwap_cross = check_vwap_cross(kite, symbol)
         ai_exit = analyze_exit_signals(symbol, avg_price, cmp)

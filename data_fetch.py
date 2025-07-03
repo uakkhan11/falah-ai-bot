@@ -1,9 +1,9 @@
-# data_fetch.py
 from kiteconnect import KiteConnect
 from datetime import datetime, timedelta
 import pytz
 
 IST = pytz.timezone("Asia/Kolkata")
+
 
 def get_cnc_holdings(kite: KiteConnect):
     """
@@ -12,12 +12,13 @@ def get_cnc_holdings(kite: KiteConnect):
     positions = kite.holdings()
     return positions
 
+
 def get_live_ltp(kite: KiteConnect, symbol: str):
     """
     Fetch LTP for a symbol.
     """
     try:
-       full_symbol = f"NSE:{symbol}"
+        full_symbol = f"NSE:{symbol}"
         print(f"Fetching LTP for {full_symbol}")
         data = kite.ltp(full_symbol)
         print("Raw LTP Response:", data)
@@ -27,10 +28,11 @@ def get_live_ltp(kite: KiteConnect, symbol: str):
 
         return data[full_symbol]["last_price"]
 
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            raise Exception(f"LTP fetch error: {e}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise Exception(f"LTP fetch error: {e}")
+
 
 def fetch_historical_candles(kite: KiteConnect, instrument_token: str, interval="15minute", days=5):
     """

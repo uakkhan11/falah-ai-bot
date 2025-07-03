@@ -1,19 +1,23 @@
 # dashboard.py
 
 import streamlit as st
+import pandas as pd
 import subprocess
 import os
 import signal
 import json
 from kiteconnect import KiteConnect
-from credentials import load_secrets
+from credentials import load_secrets, get_kite, validate_kite
+from data_fetch import get_cnc_holdings, get_live_ltp, fetch_historical_candles
+from ai_engine import calculate_ai_exit_score
+from ta.volatility import AverageTrueRange
+from smart_scanner import run_smart_scan
 
-st.set_page_config(page_title="Falāh Trading Bot Dashboard", layout="wide")
+st.set_page_config(page_title="Falāh Bot Dashboard", layout="wide")
 
-st.markdown("# 🟢 Falāh Trading Bot Dashboard")
+st.title("🟢 Falāh Trading Bot Dashboard")
 
-# --- Monitor Service Status ---
-
+# ======= Monitor Service Status =======
 pid_file = "/root/falah-ai-bot/monitor.pid"
 
 def is_monitor_running():
@@ -21,26 +25,22 @@ def is_monitor_running():
         with open(pid_file, "r") as f:
             pid = int(f.read())
         try:
-            os.kill(pid, 0)  # check signal
+            os.kill(pid, 0)
             return True
         except ProcessLookupError:
             return False
     return False
 
 monitor_running = is_monitor_running()
-
 status_text = "🟢 RUNNING" if monitor_running else "🔴 STOPPED"
-status_color = "success" if monitor_running else "error"
-
-st.status = getattr(st, status_color)
-st.status(f"Monitor Service Status: **{status_text}**")
+st.info(f"Monitor Service Status: **{status_text}**")
 
 col1, col2, col3 = st.columns(3)
 
 with col1:
     if st.button("▶️ Start Monitor"):
         if monitor_running:
-            st.warning("Monitor is already running.")
+            st.warning("Already running.")
         else:
             proc = subprocess.Popen(
                 ["nohup", "python", "monitor_runner.py"],
@@ -55,7 +55,7 @@ with col1:
 with col2:
     if st.button("🟥 Stop Monitor"):
         if not monitor_running:
-            st.warning("Monitor is not running.")
+            st.warning("Not running.")
         else:
             with open(pid_file, "r") as f:
                 pid = int(f.read())
@@ -65,14 +65,13 @@ with col2:
             st.experimental_rerun()
 
 with col3:
-    if st.button("🔄 Run Monitor Now (One Cycle)"):
+    if st.button("🔄 Run Monitor Once"):
         subprocess.run(["python", "monitor_runner.py", "--once"])
-        st.success("One monitoring cycle completed.")
+        st.success("Monitor cycle complete.")
 
-# --- Access Token Management ---
+# ======= Access Token Management =======
 with st.expander("🔑 Access Token Management"):
     st.subheader("Generate New Access Token")
-
     secrets = load_secrets()
     api_key = secrets["zerodha"]["api_key"]
     api_secret = secrets["zerodha"]["api_secret"]
@@ -81,21 +80,107 @@ with st.expander("🔑 Access Token Management"):
     login_url = kite.login_url()
 
     st.markdown(f"[🔗 Click here to login to Zerodha]({login_url})")
-    request_token = st.text_input("Paste the request_token here")
+    request_token = st.text_input("Paste request_token here")
 
     if st.button("Generate Access Token"):
         if not request_token:
-            st.error("Please paste your request_token.")
+            st.error("Please paste the request_token.")
         else:
             try:
                 data = kite.generate_session(request_token, api_secret=api_secret)
                 access_token = data["access_token"]
-
                 with open("/root/falah-ai-bot/access_token.json", "w") as f:
                     json.dump({"access_token": access_token}, f)
-
-                st.success("✅ Access token generated and saved.")
+                st.success("✅ Access token saved.")
             except Exception as e:
-                st.error(f"Error generating access token: {e}")
+                st.error(f"Error: {e}")
 
-st.caption("Falāh Bot © 2025")
+# ======= Capital Allocation =======
+st.sidebar.header("⚙️ Capital & Trade Settings")
+
+total_capital = st.sidebar.number_input("Total Daily Capital (₹)", min_value=1000, value=100000, step=5000)
+max_trades = st.sidebar.slider("Max Number of Trades", 1, 10, 5)
+dry_run = st.sidebar.checkbox("Dry Run Mode (No Orders)", value=True)
+
+# ======= Scanner Module =======
+st.subheader("🔍 Auto Scan for New Stocks")
+
+if st.button("Scan Stocks"):
+    st.info("🔄 Running scanner...")
+    scanned_data = run_smart_scan()
+    if scanned_data.empty:
+        st.warning("No stocks matched the criteria.")
+    else:
+        st.session_state["scanned_data"] = scanned_data
+
+if "scanned_data" in st.session_state:
+    df = st.session_state["scanned_data"]
+    st.dataframe(df, use_container_width=True)
+
+    selected = st.multiselect("Select stocks to BUY", options=df["Symbol"].tolist())
+
+    if st.button("🚀 Place Orders for Selected"):
+        if not selected:
+            st.warning("No stocks selected.")
+        else:
+            st.info("Placing orders...")
+            per_trade_capital = total_capital / max_trades
+
+            kite = get_kite()
+            if not validate_kite(kite):
+                st.error("Invalid token. Please regenerate.")
+                st.stop()
+
+            for sym in selected:
+                cmp = get_live_ltp(kite, sym)
+                qty = int(per_trade_capital / cmp)
+                st.write(f"Placing order for {sym}: Qty={qty}, Price={cmp}")
+
+                if dry_run:
+                    st.success(f"(Dry Run) Order prepared for {sym}")
+                else:
+                    try:
+                        kite.place_order(
+                            variety=kite.VARIETY_REGULAR,
+                            exchange=kite.EXCHANGE_NSE,
+                            tradingsymbol=sym,
+                            transaction_type=kite.TRANSACTION_TYPE_BUY,
+                            quantity=qty,
+                            order_type=kite.ORDER_TYPE_MARKET,
+                            product=kite.PRODUCT_CNC
+                        )
+                        st.success(f"✅ Order placed for {sym}")
+                    except Exception as e:
+                        st.error(f"Error placing order for {sym}: {e}")
+
+# ======= Manual Search =======
+st.subheader("🔍 Manual Stock Lookup")
+
+symbol_input = st.text_input("Enter NSE Symbol (e.g., INFY)")
+
+if st.button("Fetch Stock Data"):
+    if not symbol_input:
+        st.warning("Enter a symbol.")
+    else:
+        kite = get_kite()
+        if not validate_kite(kite):
+            st.error("Invalid token.")
+            st.stop()
+
+        cmp = get_live_ltp(kite, symbol_input)
+        hist = fetch_historical_candles(kite, instrument_token=kite.ltp(f"NSE:{symbol_input}")[f"NSE:{symbol_input}"]["instrument_token"], interval="day", days=30)
+        df = pd.DataFrame(hist)
+
+        st.write(f"✅ Current Market Price: ₹{cmp}")
+        st.dataframe(df.tail(10))
+
+        atr = AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range().iloc[-1]
+        trailing_sl = round(cmp - atr * 1.5, 2)
+        st.write(f"ATR(14): {atr:.2f}")
+        st.write(f"Recommended ATR-based Trailing SL: ₹{trailing_sl}")
+
+        ai_score, reasons = calculate_ai_exit_score(df, trailing_sl, cmp)
+        st.write(f"AI Exit Score: {ai_score}")
+        st.write("Reasons:", reasons)
+
+        

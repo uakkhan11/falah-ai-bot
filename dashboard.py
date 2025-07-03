@@ -11,7 +11,6 @@ from credentials import load_secrets, get_kite, validate_kite
 from data_fetch import get_cnc_holdings, get_live_ltp, fetch_historical_candles
 from ai_engine import calculate_ai_exit_score
 from ta.volatility import AverageTrueRange
-from smart_scanner import run_smart_scan
 
 st.set_page_config(page_title="Falāh Bot Dashboard", layout="wide")
 
@@ -47,7 +46,7 @@ with col1:
             st.warning("Already running.")
         else:
             proc = subprocess.Popen(
-                ["nohup", "python", "monitor_runner.py"],
+                ["nohup", "python3", "monitor_runner.py"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -68,7 +67,7 @@ with col2:
 
 with col3:
     if st.button("🔄 Run Monitor Once"):
-        subprocess.run(["python", "monitor_runner.py", "--once"])
+        subprocess.run(["python3", "monitor_runner.py", "--once"])
         st.success("Monitor cycle complete.")
 
 # ======= Access Token Management =======
@@ -156,6 +155,8 @@ if "scanned_data" in st.session_state:
                         st.error(f"Error placing order for {sym}: {e}")
 
 # ======= Manual Search =======
+from smart_scanner import run_smart_scan
+
 st.subheader("🔍 Manual Stock Lookup")
 
 symbol_input = st.text_input("Enter NSE Symbol (e.g., INFY)")

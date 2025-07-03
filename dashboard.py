@@ -17,6 +17,10 @@ st.set_page_config(page_title="Falāh Bot Dashboard", layout="wide")
 
 st.title("🟢 Falāh Trading Bot Dashboard")
 
+if "monitor_status" in st.session_state:
+    st.success(f"Monitor {st.session_state['monitor_status']}.")
+    del st.session_state["monitor_status"]
+
 # ======= Monitor Service Status =======
 pid_file = "/root/falah-ai-bot/monitor.pid"
 
@@ -49,9 +53,7 @@ with col1:
             )
             with open(pid_file, "w") as f:
                 f.write(str(proc.pid))
-            st.success("Monitor started.")
-            st.experimental_rerun()
-
+            st.session_state["monitor_status"] = "started"
 with col2:
     if st.button("🟥 Stop Monitor"):
         if not monitor_running:

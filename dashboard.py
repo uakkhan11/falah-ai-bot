@@ -172,7 +172,8 @@ if st.button("Fetch Stock Data"):
         cmp = get_live_ltp(kite, symbol_input)
         hist = fetch_historical_candles(kite, instrument_token=kite.ltp(f"NSE:{symbol_input}")[f"NSE:{symbol_input}"]["instrument_token"], interval="day", days=30)
         df = pd.DataFrame(hist)
-
+        df.columns = [col.capitalize() for col in df.columns]
+        
         st.write(f"✅ Current Market Price: ₹{cmp}")
         st.dataframe(df.tail(10))
 

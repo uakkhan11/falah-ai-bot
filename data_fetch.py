@@ -17,9 +17,13 @@ def get_live_ltp(kite: KiteConnect, symbol: str):
     Fetch LTP for a symbol.
     """
     try:
+        print(f"Fetching LTP for NSE:{symbol}")
         data = kite.ltp(f"NSE:{symbol}")
+        print("LTP Data:", data)
         return data[f"NSE:{symbol}"]["last_price"]
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise Exception(f"LTP fetch error: {e}")
 
 def fetch_historical_candles(kite: KiteConnect, instrument_token: str, interval="15minute", days=5):

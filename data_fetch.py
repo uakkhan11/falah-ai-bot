@@ -17,14 +17,19 @@ def get_live_ltp(kite: KiteConnect, symbol: str):
     Fetch LTP for a symbol.
     """
     try:
-        print(f"Fetching LTP for NSE:{symbol}")
-        data = kite.ltp(f"NSE:{symbol}")
-        print("LTP Data:", data)
-        return data[f"NSE:{symbol}"]["last_price"]
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise Exception(f"LTP fetch error: {e}")
+       full_symbol = f"NSE:{symbol}"
+        data = kite.ltp(full_symbol)
+        print("Raw LTP Response:", data)
+
+        if full_symbol not in data:
+            raise Exception(f"Symbol '{symbol}' not found in LTP response. Double-check NSE symbol spelling.")
+
+        return data[full_symbol]["last_price"]
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            raise Exception(f"LTP fetch error: {e}")
 
 def fetch_historical_candles(kite: KiteConnect, instrument_token: str, interval="15minute", days=5):
     """

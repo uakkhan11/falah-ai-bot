@@ -6,6 +6,7 @@ import toml
 from kiteconnect import KiteConnect
 from ws_live_prices import start_websockets
 from monitor_core import monitor_once
+from app import API_KEY
 
 def log(msg):
     print(msg, flush=True)
@@ -13,8 +14,6 @@ def log(msg):
 # Load credentials
 with open("/root/falah-ai-bot/.streamlit/secrets.toml", "r") as f:
     secrets = toml.load(f)
-
-API_KEY = secrets["zerodha"]["api_key"]
 
 # Load access token
 with open("/root/falah-ai-bot/access_token.json") as f:

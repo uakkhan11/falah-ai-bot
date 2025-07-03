@@ -51,3 +51,6 @@ for symbol, token in tokens.items():
         print(f"❌ Failed to fetch {symbol}: {e}")
 
 print("✅ All symbols processed.")
+
+with open("/root/falah-ai-bot/last_fetch.txt", "w") as f:
+    f.write(datetime.now().isoformat())

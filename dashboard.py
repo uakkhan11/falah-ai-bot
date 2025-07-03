@@ -2,6 +2,8 @@
 
 import streamlit as st
 import subprocess
+import os
+import signal
 import json
 from kiteconnect import KiteConnect
 from credentials import load_secrets
@@ -10,28 +12,62 @@ st.set_page_config(page_title="Falāh Trading Bot Dashboard", layout="wide")
 
 st.markdown("# 🟢 Falāh Trading Bot Dashboard")
 
-# 💡 Monitor service status (dummy logic for illustration)
-service_status = "UNKNOWN"
+# --- Monitor Service Status ---
 
-# --- Monitor Controls ---
-st.info(f"Monitor Service Status: **{service_status}**")
+pid_file = "/root/falah-ai-bot/monitor.pid"
+
+def is_monitor_running():
+    if os.path.exists(pid_file):
+        with open(pid_file, "r") as f:
+            pid = int(f.read())
+        try:
+            os.kill(pid, 0)  # check signal
+            return True
+        except ProcessLookupError:
+            return False
+    return False
+
+monitor_running = is_monitor_running()
+
+status_text = "🟢 RUNNING" if monitor_running else "🔴 STOPPED"
+status_color = "success" if monitor_running else "error"
+
+st.status = getattr(st, status_color)
+st.status(f"Monitor Service Status: **{status_text}**")
 
 col1, col2, col3 = st.columns(3)
 
 with col1:
     if st.button("▶️ Start Monitor"):
-        st.success("Monitor service started (placeholder).")
-        # Here you could run: subprocess.Popen(["python", "run_monitor.py"])
+        if monitor_running:
+            st.warning("Monitor is already running.")
+        else:
+            proc = subprocess.Popen(
+                ["nohup", "python", "monitor_runner.py"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            with open(pid_file, "w") as f:
+                f.write(str(proc.pid))
+            st.success("Monitor started.")
+            st.experimental_rerun()
 
 with col2:
     if st.button("🟥 Stop Monitor"):
-        st.warning("Monitor service stopped (placeholder).")
-        # Here you could stop: subprocess.run(["pkill", "-f", "run_monitor.py"])
+        if not monitor_running:
+            st.warning("Monitor is not running.")
+        else:
+            with open(pid_file, "r") as f:
+                pid = int(f.read())
+            os.kill(pid, signal.SIGTERM)
+            os.remove(pid_file)
+            st.success("Monitor stopped.")
+            st.experimental_rerun()
 
 with col3:
     if st.button("🔄 Run Monitor Now (One Cycle)"):
-        st.success("One monitoring cycle completed (placeholder).")
-        # You could run: subprocess.run(["python", "run_monitor.py", "--once"])
+        subprocess.run(["python", "monitor_runner.py", "--once"])
+        st.success("One monitoring cycle completed.")
 
 # --- Access Token Management ---
 with st.expander("🔑 Access Token Management"):
@@ -55,7 +91,6 @@ with st.expander("🔑 Access Token Management"):
                 data = kite.generate_session(request_token, api_secret=api_secret)
                 access_token = data["access_token"]
 
-                # Save to access_token.json
                 with open("/root/falah-ai-bot/access_token.json", "w") as f:
                     json.dump({"access_token": access_token}, f)
 

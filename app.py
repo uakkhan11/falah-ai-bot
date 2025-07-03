@@ -1,126 +1,77 @@
-# app.py – Falāh Streamlit Dashboard
-
-import streamlit as st
-import subprocess
-import os
+# app.py
 import time
 import json
+import pytz
 from datetime import datetime
-from kiteconnect import KiteConnect
+from credentials import get_kite, validate_kite, load_secrets
+from data_fetch import get_cnc_holdings, get_live_ltp
+from ai_engine import analyze_exit_signals
+from sheets import log_exit_to_sheet
+from utils import send_telegram
 
-API_KEY = "ijzeuwuylr3g0kug"
-API_SECRET = "yy1wd2wn8r0wx4mus00vxllgss03nuqx"
-LOG_FILE = "/root/falah-ai-bot/monitor.log"
+IST = pytz.timezone("Asia/Kolkata")
 
-st.set_page_config(page_title="Falāh Bot Dashboard", layout="wide")
-st.title("🟢 Falāh Trading Bot Dashboard")
+def monitor_once(kite, token_map, sheet_name, spreadsheet_key, exit_log_file):
+    now = datetime.now(IST)
+    today_str = now.strftime("%Y-%m-%d")
 
+    holdings = get_cnc_holdings(kite)
+    if not holdings:
+        print("❌ No CNC holdings.")
+        return
 
-# ---------------------------
-# Token Generation Function
-# ---------------------------
-def generate_and_save_token(request_token):
-    kite = KiteConnect(api_key=API_KEY)
-    data = kite.generate_session(request_token, api_secret=API_SECRET)
-    access_token = data["access_token"]
+    for stock in holdings:
+        symbol = stock["tradingsymbol"]
+        quantity = stock["quantity"]
+        avg_price = stock["average_price"]
 
-    with open("/root/falah-ai-bot/access_token.json", "w") as f:
-        json.dump({"access_token": access_token}, f)
+        print(f"🔍 {symbol}: Qty={quantity} Avg={avg_price}")
 
-    return access_token
+        token = token_map.get(symbol)
+        if not token:
+            print(f"⚠️ No token for {symbol}. Skipping.")
+            continue
 
+        cmp = get_live_ltp(kite, symbol)
+        print(f"✅ CMP {symbol}: {cmp}")
 
-# ---------------------------
-# Monitor Service Status
-# ---------------------------
-def get_service_status():
-    try:
-        output = subprocess.check_output(
-            ["systemctl", "is-active", "falah_monitor.service"],
-            stderr=subprocess.STDOUT
-        )
-        return output.decode().strip()
-    except subprocess.CalledProcessError:
-        return "unknown"
+        reasons = analyze_exit_signals(kite, symbol, avg_price, cmp)
 
-
-status = get_service_status()
-st.info(f"🔄 Monitor Service Status: **{status.upper()}**")
-
-
-# ---------------------------
-# Start/Stop Buttons
-# ---------------------------
-col1, col2 = st.columns(2)
-
-if col1.button("▶️ Start Monitor"):
-    subprocess.run(["systemctl", "start", "falah_monitor.service"])
-    st.success("✅ Started the monitor service.")
-
-if col2.button("⏹️ Stop Monitor"):
-    subprocess.run(["systemctl", "stop", "falah_monitor.service"])
-    st.warning("🛑 Stopped the monitor service.")
-
-
-# ---------------------------
-# Manual Trigger
-# ---------------------------
-if st.button("🕹️ Run Monitor Now (One Cycle)"):
-    with st.spinner("Running monitoring cycle..."):
-        os.system("python3 /root/falah-ai-bot/run_monitor.py & sleep 10 && pkill -f run_monitor.py")
-    st.success("✅ One monitoring cycle completed.")
-
-
-# ---------------------------
-# 🔑 Access Token Management
-# ---------------------------
-st.subheader("🔑 Access Token Management")
-
-with st.expander("Generate New Access Token"):
-    st.markdown(
-        """
-        👉 **Step 1:** Login here and get your `request_token`:  
-        [Zerodha Login](https://kite.trade/connect/login?v=3&api_key=ijzeuwuylr3g0kug)
-        """
-    )
-    request_token = st.text_input("Paste Request Token Here")
-
-    if st.button("Generate & Save Access Token"):
-        if request_token.strip():
-            try:
-                token = generate_and_save_token(request_token.strip())
-                st.success(f"✅ Access token saved: {token[:4]}... (truncated)")
-
-                # Optionally restart monitor
-                subprocess.run(["systemctl", "restart", "falah_monitor.service"])
-                st.info("🔄 Monitor service restarted to use new token.")
-            except Exception as e:
-                st.error(f"❌ Error: {e}")
+        if reasons:
+            reason_str = ", ".join(reasons)
+            print(f"🚨 Exit triggered: {reason_str}")
+            send_telegram(
+                f"🚨 Exit Triggered\nSymbol: {symbol}\nPrice: {cmp}\nReasons: {reason_str}"
+            )
+            log_exit_to_sheet(sheet_name, "MonitoredStocks", symbol, cmp, reason_str)
         else:
-            st.warning("⚠️ Please enter a valid request token.")
+            print(f"✅ No exit for {symbol}.")
 
 
-# ---------------------------
-# Show Logs
-# ---------------------------
-st.subheader("📄 Recent Logs")
+if __name__ == "__main__":
+    # Load credentials
+    secrets = load_secrets()
+    kite = get_kite()
 
-if os.path.exists(LOG_FILE):
-    with open(LOG_FILE, "r") as f:
-        lines = f.readlines()
-    if lines:
-        st.text_area(
-            "Monitor Log (last 100 lines)",
-            "".join(lines[-100:]),
-            height=400
-        )
-    else:
-        st.info("No logs yet.")
-else:
-    st.info("Log file not found.")
+    if not validate_kite(kite):
+        send_telegram("❌ Falāh Bot: Invalid token, exiting.")
+        exit(1)
 
+    # Load tokens
+    with open("/root/falah-ai-bot/tokens.json", "r") as f:
+        token_map = json.load(f)
 
-# ---------------------------
-# Timestamp
-# ---------------------------
-st.caption(f"Updated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    exit_log_file = "/root/falah-ai-bot/exited_stocks.json"
+    sheet_name = secrets["google"]["sheet_name"]
+    spreadsheet_key = secrets["sheets"]["SPREADSHEET_KEY"]
+
+    # Loop monitoring
+    while True:
+        try:
+            monitor_once(kite, token_map, sheet_name, spreadsheet_key, exit_log_file)
+        except Exception as e:
+            print(f"❌ Monitoring error: {e}")
+            if "Incorrect `api_key` or `access_token`" in str(e):
+                send_telegram("❌ Falāh Bot: Token expired, exiting.")
+                exit(1)
+        time.sleep(900)

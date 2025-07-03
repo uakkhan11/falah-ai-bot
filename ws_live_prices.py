@@ -5,10 +5,9 @@ import subprocess
 from credentials import load_secrets
 from utils import get_halal_list
 
-def start_websockets():
+def start_all_websockets():
     secrets = load_secrets()
 
-    # Load tokens
     with open("/root/falah-ai-bot/tokens.json") as f:
         token_map = json.load(f)
 
@@ -18,7 +17,7 @@ def start_websockets():
 
     for i, batch in enumerate(batches, start=1):
         token_str = ",".join(str(t) for t in batch)
-        print(f"🚀 Starting batch {i} ({len(batch)} tokens)")
+        print(f"🚀 Starting batch {i}")
         subprocess.Popen([
             "python3", "/root/falah-ai-bot/ws_worker.py",
             secrets["zerodha"]["api_key"],
@@ -27,4 +26,4 @@ def start_websockets():
         ])
 
 if __name__ == "__main__":
-    start_websockets()
+    start_all_websockets()

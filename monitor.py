@@ -163,7 +163,7 @@ def monitor_positions():
 if __name__ == "__main__":
     # Start WebSocket
     token_list = [int(token) for token in token_map.values()]
-    start_websocket(creds["api_key"], access_token, token_list)
+    start_websockets(creds["api_key"], access_token, token_list)
 
     # Loop
     while True:

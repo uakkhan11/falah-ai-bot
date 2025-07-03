@@ -1,71 +1,48 @@
-# smart_scanner.py – Multi-Timeframe, Multi-Threaded Halal Scanner
+# smart_scanner.py
 
-from credentials import load_secrets
-import threading
+import os
+import json
 import pandas as pd
-import pytz
-from datetime import datetime, timedelta
-from kiteconnect import KiteConnect
-from indicators import (
-    detect_breakout,
-    detect_rsi_ema_signals,
-    detect_3green_days,
-    detect_darvas_box,
-)
+from utils import get_halal_list
+from credentials import get_kite, load_secrets
+import glob
 
-# ---- Config ----
-IST = pytz.timezone('Asia/Kolkata')
-HALAL_LIST_PATH = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
-results_lock = threading.Lock()
-scan_results = []
+HIST_DIR = "/root/falah-ai-bot/historical_data/"
+
+def load_all_live_prices():
+    live = {}
+    for f in glob.glob("/tmp/live_prices_*.json"):
+        with open(f) as fd:
+            live.update(json.load(fd))
+    return live
 
 def run_smart_scan():
-    """
-    Runs the scan and returns a DataFrame of results.
-    """
-    global scan_results
-    scan_results = []
+    kite = get_kite()
+    live_prices = load_all_live_prices()
+    with open("/root/falah-ai-bot/tokens.json") as f:
+        token_map = json.load(f)
+    token_to_symbol = {v: k for k, v in token_map.items()}
 
-    # ✅ Load credentials INSIDE the function
-    secrets = load_secrets()
-    kite = KiteConnect(api_key=secrets["zerodha"]["api_key"])
-    kite.set_access_token(secrets["zerodha"]["access_token"])
+    results = []
+    for token, ltp in live_prices.items():
+        sym = token_to_symbol.get(str(token))
+        if not sym:
+            continue
 
-    # Load halal symbols
-    halal_symbols = get_halal_list(HALAL_LIST_PATH)
+        hist_file = os.path.join(HIST_DIR, f"{sym}.csv")
+        if not os.path.exists(hist_file):
+            continue
 
-    # Split symbols into chunks for threads
-    chunks = [halal_symbols[i::5] for i in range(5)]
+        df = pd.read_csv(hist_file)
 
-    def worker(symbols_chunk):
-        for symbol in symbols_chunk:
-            try:
-                has_breakout = detect_breakout(kite, symbol)
-                has_rsi = detect_rsi_ema_signals(kite, symbol)
-                has_3green = detect_3green_days(kite, symbol)
-                has_darvas = detect_darvas_box(kite, symbol)
+        # Simple logic: close > SMA(20)
+        df["SMA20"] = df["close"].rolling(20).mean()
+        last_sma = df["SMA20"].iloc[-1]
+        if ltp > last_sma:
+            results.append({
+                "Symbol": sym,
+                "CMP": ltp,
+                "SMA20": round(last_sma, 2)
+            })
 
-                score = sum([has_breakout, has_rsi, has_3green, has_darvas])
-
-                if score >= 2:
-                    cmp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["last_price"]
-
-                    with results_lock:
-                        scan_results.append({
-                            "Symbol": symbol,
-                            "Confidence": score / 4,
-                            "CMP": cmp
-                        })
-            except Exception as e:
-                print(f"Error scanning {symbol}: {e}")
-
-    # Launch threads
-    threads = [threading.Thread(target=worker, args=(chunk,)) for chunk in chunks]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    df = pd.DataFrame(scan_results)
-    df = df.sort_values(by="Confidence", ascending=False).reset_index(drop=True)
-    return df
+    return pd.DataFrame(results)

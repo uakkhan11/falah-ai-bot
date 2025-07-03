@@ -1,5 +1,3 @@
-# dashboard.py
-
 import streamlit as st
 import pandas as pd
 import subprocess
@@ -11,11 +9,13 @@ from credentials import load_secrets, get_kite, validate_kite
 from data_fetch import get_cnc_holdings, get_live_ltp, fetch_historical_candles
 from ai_engine import calculate_ai_exit_score
 from ta.volatility import AverageTrueRange
+from smart_scanner import run_smart_scan
 
 st.set_page_config(page_title="Falāh Bot Dashboard", layout="wide")
 
 st.title("🟢 Falāh Trading Bot Dashboard")
 
+# Show monitor status message if any
 if "monitor_status" in st.session_state:
     st.success(f"Monitor {st.session_state['monitor_status']}.")
     del st.session_state["monitor_status"]
@@ -53,6 +53,7 @@ with col1:
             with open(pid_file, "w") as f:
                 f.write(str(proc.pid))
             st.session_state["monitor_status"] = "started"
+
 with col2:
     if st.button("🟥 Stop Monitor"):
         if not monitor_running:
@@ -133,14 +134,14 @@ if "scanned_data" in st.session_state:
                 st.stop()
 
             for sym in selected:
-                cmp = get_live_ltp(kite, sym)
-                qty = int(per_trade_capital / cmp)
-                st.write(f"Placing order for {sym}: Qty={qty}, Price={cmp}")
+                try:
+                    cmp = get_live_ltp(kite, sym)
+                    qty = int(per_trade_capital / cmp)
+                    st.write(f"Placing order for {sym}: Qty={qty}, Price={cmp}")
 
-                if dry_run:
-                    st.success(f"(Dry Run) Order prepared for {sym}")
-                else:
-                    try:
+                    if dry_run:
+                        st.success(f"(Dry Run) Order prepared for {sym}")
+                    else:
                         kite.place_order(
                             variety=kite.VARIETY_REGULAR,
                             exchange=kite.EXCHANGE_NSE,
@@ -151,12 +152,10 @@ if "scanned_data" in st.session_state:
                             product=kite.PRODUCT_CNC
                         )
                         st.success(f"✅ Order placed for {sym}")
-                    except Exception as e:
-                        st.error(f"Error placing order for {sym}: {e}")
+                except Exception as e:
+                    st.error(f"Error placing order for {sym}: {e}")
 
 # ======= Manual Search =======
-from smart_scanner import run_smart_scan
-
 st.subheader("🔍 Manual Stock Lookup")
 
 symbol_input = st.text_input("Enter NSE Symbol (e.g., INFY)")
@@ -170,21 +169,30 @@ if st.button("Fetch Stock Data"):
             st.error("Invalid token.")
             st.stop()
 
-        cmp = get_live_ltp(kite, symbol_input)
-        hist = fetch_historical_candles(kite, instrument_token=kite.ltp(f"NSE:{symbol_input}")[f"NSE:{symbol_input}"]["instrument_token"], interval="day", days=30)
-        df = pd.DataFrame(hist)
-        df.columns = [col.capitalize() for col in df.columns]
-        
-        st.write(f"✅ Current Market Price: ₹{cmp}")
-        st.dataframe(df.tail(10))
+        try:
+            ltp_data = kite.ltp(f"NSE:{symbol_input}")
+            cmp = ltp_data[f"NSE:{symbol_input}"]["last_price"]
+            instrument_token = ltp_data[f"NSE:{symbol_input}"]["instrument_token"]
 
-        atr = AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range().iloc[-1]
-        trailing_sl = round(cmp - atr * 1.5, 2)
-        st.write(f"ATR(14): {atr:.2f}")
-        st.write(f"Recommended ATR-based Trailing SL: ₹{trailing_sl}")
+            hist = fetch_historical_candles(
+                kite,
+                instrument_token=instrument_token,
+                interval="day",
+                days=30
+            )
+            df = pd.DataFrame(hist)
+            df.columns = [col.capitalize() for col in df.columns]
 
-        ai_score, reasons = calculate_ai_exit_score(df, trailing_sl, cmp)
-        st.write(f"AI Exit Score: {ai_score}")
-        st.write("Reasons:", reasons)
+            st.write(f"✅ Current Market Price: ₹{cmp}")
+            st.dataframe(df.tail(10))
 
-        
+            atr = AverageTrueRange(df["High"], df["Low"], df["Close"], window=14).average_true_range().iloc[-1]
+            trailing_sl = round(cmp - atr * 1.5, 2)
+            st.write(f"ATR(14): {atr:.2f}")
+            st.write(f"Recommended ATR-based Trailing SL: ₹{trailing_sl}")
+
+            ai_score, reasons = calculate_ai_exit_score(df, trailing_sl, cmp)
+            st.write(f"AI Exit Score: {ai_score}")
+            st.write("Reasons:", reasons)
+        except Exception as e:
+            st.error(f"Error fetching data: {e}")

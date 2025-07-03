@@ -7,7 +7,7 @@ import gspread
 from datetime import datetime
 from kiteconnect import KiteConnect
 
-from ws_live_prices import start_websocket
+from ws_live_prices import start_websockets
 from utils import (
     load_credentials,
     send_telegram,
@@ -24,6 +24,8 @@ from sheets import log_exit_to_sheet
 from holdings_state import load_previous_exits, update_exit_log
 
 print("✅ All imports finished")
+
+start_websockets(api_key, access_token, tokens)
 
 # Load credentials
 secrets = load_credentials()

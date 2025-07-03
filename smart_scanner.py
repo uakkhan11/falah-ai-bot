@@ -6,7 +6,12 @@ import pandas as pd
 import pytz
 from datetime import datetime, timedelta
 from kiteconnect import KiteConnect
-from indicators import detect_breakout, detect_rsi_ema_signals, detect_3green_days, detect_darvas_box
+from indicators import (
+    detect_breakout,
+    detect_rsi_ema_signals,
+    detect_3green_days,
+    detect_darvas_box,
+)
 
 # ---- Config ----
 IST = pytz.timezone('Asia/Kolkata')
@@ -18,20 +23,19 @@ def run_smart_scan():
     """
     Runs the scan and returns a DataFrame of results.
     """
-    # Clear previous results
     global scan_results
     scan_results = []
 
-    # ✅ Load credentials inside the function
+    # ✅ Load credentials INSIDE the function
     secrets = load_credentials()
     kite = KiteConnect(api_key=secrets["zerodha"]["api_key"])
-    kite.set_access_token(secrets["zerodha"]["access_token"])    
+    kite.set_access_token(secrets["zerodha"]["access_token"])
 
     # Load halal symbols
     halal_symbols = get_halal_list(HALAL_LIST_PATH)
 
     # Split symbols into chunks for threads
-    chunks = [halal_symbols[i::5] for i in range(5)]  # 5 threads
+    chunks = [halal_symbols[i::5] for i in range(5)]
 
     def worker(symbols_chunk):
         for symbol in symbols_chunk:
@@ -62,7 +66,6 @@ def run_smart_scan():
     for t in threads:
         t.join()
 
-    # Convert results to DataFrame
     df = pd.DataFrame(scan_results)
     df = df.sort_values(by="Confidence", ascending=False).reset_index(drop=True)
     return df

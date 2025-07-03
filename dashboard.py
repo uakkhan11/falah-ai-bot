@@ -66,7 +66,7 @@ with col2:
             os.kill(pid, signal.SIGTERM)
             os.remove(pid_file)
             st.success("Monitor stopped.")
-            st.experimental_rerun()
+            st.rerun()
 
 with col3:
     if st.button("🔄 Run Monitor Once"):

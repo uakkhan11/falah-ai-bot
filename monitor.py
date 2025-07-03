@@ -58,6 +58,11 @@ def monitor_positions(kite):
     print(f"[{timestamp}] Market open: {market_open}")
 
     try:
+        profile = kite.profile()
+    print("✅ KiteConnect Profile:", profile)
+except Exception as e:
+    print(f"❌ API Key/Access Token invalid: {e}")
+    return
         holdings = get_cnc_holdings(kite)
     except Exception as e:
         print(f"❌ Error fetching CNC holdings: {e}")

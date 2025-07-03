@@ -58,17 +58,7 @@ def monitor_positions(kite):
     timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] Market open: {market_open}")
 
-    try:
-        holdings = get_cnc_holdings(kite)
-    except Exception as e:
-        print(f"❌ Error fetching CNC holdings: {e}")
-        # NEW: Stop if token invalid
-        if "Incorrect `api_key` or `access_token`" in str(e):
-            print("❌ Access token invalid. Stopping monitoring.")
-            send_telegram("❌ Falāh Bot Error: Access token invalid or expired. Please re-generate the token.")
-            exit(1)
-        holdings = []
-
+    holdings = get_cnc_holdings(kite)
     if not holdings:
         print("❌ No CNC holdings found.")
         return
@@ -100,16 +90,7 @@ def monitor_positions(kite):
             print(f"⚠️ No token for {symbol}. Skipping.")
             continue
 
-        try:
-            cmp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["last_price"]
-        except Exception as e:
-            print(f"⚠️ Failed to fetch LTP for {symbol}: {e}")
-    if "Incorrect `api_key` or `access_token`" in str(e):
-        print("❌ Access token invalid. Stopping monitoring.")
-        send_telegram("❌ Falāh Bot Error: Access token invalid or expired. Please re-generate the token.")
-        exit(1)
-    continue
-
+        cmp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["last_price"]
         if not cmp:
             print(f"⚠️ No live LTP for {symbol}. Skipping.")
             continue
@@ -120,7 +101,6 @@ def monitor_positions(kite):
             print(f"🔁 {symbol} already exited today. Skipping.")
             continue
 
-        # Check exit signals
         sl_price = calculate_atr_trailing_sl(kite, symbol, cmp)
         sl_hit = sl_price and cmp <= sl_price
         st_flip_daily = check_supertrend_flip(kite, symbol)
@@ -171,6 +151,7 @@ if __name__ == "__main__":
     kite = KiteConnect(api_key=API_KEY)
     kite.set_access_token(access_token)
 
+    # Verify credentials
     try:
         profile = kite.profile()
         print("✅ KiteConnect Profile:", profile)
@@ -179,18 +160,18 @@ if __name__ == "__main__":
         send_telegram("❌ Falāh Bot Error: Access token invalid or expired. Please re-generate the token.")
         exit(1)
 
-    # Start WebSockets only after credentials validated
+    # Start WebSockets after validation
     token_list = [int(t) for t in token_map.values()]
     start_websockets(API_KEY, access_token, token_list)
 
-    # Loop monitoring
+    # Loop monitoring with catch-all error handler
     while True:
-        monitor_positions(kite)
+        try:
+            monitor_positions(kite)
         except Exception as e:
-        if "Incorrect `api_key` or `access_token`" in str(e):
-            print("❌ Access token invalid during monitoring loop. Exiting.")
-            send_telegram("❌ Falāh Bot Error: Access token invalid or expired. Please re-generate the token.")
-            exit(1)
-        else:
-            print(f"⚠️ Unexpected monitoring error: {e}")
+            print(f"❌ Monitoring error: {e}")
+            if "Incorrect `api_key` or `access_token`" in str(e):
+                print("❌ Access token invalid detected in monitoring loop. Exiting.")
+                send_telegram("❌ Falāh Bot Error: Access token invalid or expired during monitoring. Please re-generate the token.")
+                exit(1)
         time.sleep(900)

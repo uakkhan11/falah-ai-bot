@@ -6,7 +6,7 @@ import pytz
 import gspread
 from datetime import datetime
 from kiteconnect import KiteConnect
-from app import API_KEY
+from credentials import load_secrets
 
 from ws_live_prices import start_websockets
 from utils import (
@@ -27,8 +27,8 @@ from holdings_state import load_previous_exits, update_exit_log
 print("✅ All imports finished")
 
 # Load credentials
-secrets = load_credentials()
-creds = secrets["zerodha"]
+secrets = load_secrets()
+API_KEY = secrets["zerodha"]["api_key"]
 print("✅ Credentials loaded")
 
 IST = pytz.timezone("Asia/Kolkata")

@@ -156,7 +156,7 @@ if __name__ == "__main__":
 
     # Start WebSockets
     token_list = [int(t) for t in token_map.values()]
-    start_websockets(creds["api_key"], access_token, token_list)
+    start_websockets(API_KEY, access_token, token_list)
 
     # Loop monitoring
     while True:

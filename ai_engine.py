@@ -53,3 +53,13 @@ def calculate_ai_exit_score(stock_data, trailing_sl, current_price):
         reasons.append("Strong bullish close")
 
     return score, reasons
+
+
+def analyze_exit_signals(symbol, avg_price, cmp):
+    """
+    Basic AI exit signal logic.
+    Returns True if CMP has dropped more than 3% below average price.
+    """
+    if cmp < avg_price * 0.97:
+        return True
+    return False

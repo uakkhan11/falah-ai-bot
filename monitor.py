@@ -25,8 +25,6 @@ from holdings_state import load_previous_exits, update_exit_log
 
 print("✅ All imports finished")
 
-start_websockets(api_key, access_token, tokens)
-
 # Load credentials
 secrets = load_credentials()
 creds = secrets["zerodha"]

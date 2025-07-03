@@ -18,6 +18,7 @@ def get_live_ltp(kite: KiteConnect, symbol: str):
     """
     try:
        full_symbol = f"NSE:{symbol}"
+        print(f"Fetching LTP for {full_symbol}")
         data = kite.ltp(full_symbol)
         print("Raw LTP Response:", data)
 

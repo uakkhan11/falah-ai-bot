@@ -115,11 +115,11 @@ st.subheader("🔍 Auto Scan for New Stocks")
 
 if st.button("Scan Stocks"):
     st.info("🔄 Running scanner...")
-    scanned_data = run_smart_scan()
-    if scanned_data.empty:
-        st.warning("No stocks matched the criteria.")
+    df = run_smart_scan()
+    if df.empty:
+        st.warning("No signals.")
     else:
-        st.session_state["scanned_data"] = scanned_data
+        st.dataframe(df)
 
 if "scanned_data" in st.session_state:
     df = st.session_state["scanned_data"]

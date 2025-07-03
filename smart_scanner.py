@@ -1,6 +1,6 @@
 # smart_scanner.py – Multi-Timeframe, Multi-Threaded Halal Scanner
 
-from utils import get_halal_list, load_credentials
+from credentials import load_secrets
 import threading
 import pandas as pd
 import pytz
@@ -27,7 +27,7 @@ def run_smart_scan():
     scan_results = []
 
     # ✅ Load credentials INSIDE the function
-    secrets = load_credentials()
+    secrets = load_secrets()
     kite = KiteConnect(api_key=secrets["zerodha"]["api_key"])
     kite.set_access_token(secrets["zerodha"]["access_token"])
 

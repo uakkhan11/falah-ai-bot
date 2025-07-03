@@ -1,3 +1,5 @@
+# ws_worker.py
+
 import sys
 import json
 import time
@@ -13,7 +15,7 @@ live_prices = {}
 last_save_time = time.time()
 
 def on_connect(ws, response):
-    print(f"✅ Connected: Subscribing {len(tokens)} tokens")
+    print(f"✅ Connected. Subscribing {len(tokens)} tokens.")
     ws.subscribe(tokens)
     ws.set_mode(ws.MODE_FULL, tokens)
 
@@ -23,16 +25,14 @@ def on_ticks(ws, ticks):
         token = tick["instrument_token"]
         ltp = tick["last_price"]
         live_prices[token] = ltp
-
-    # Save every 3 seconds
     if time.time() - last_save_time > 3:
-        outfile = "/tmp/live_prices_{}.json".format(os.getpid())
-        with open(outfile, "w") as f:
+        out = f"/tmp/live_prices_{os.getpid()}.json"
+        with open(out, "w") as f:
             json.dump(live_prices, f)
         last_save_time = time.time()
 
 def on_close(ws, code, reason):
-    print(f"❌ WebSocket closed: code={code}, reason={reason}")
+    print(f"❌ Closed: {reason}")
 
 def on_error(ws, error):
     print(f"⚠️ Error: {error}")
@@ -41,5 +41,4 @@ kws.on_connect = on_connect
 kws.on_ticks = on_ticks
 kws.on_close = on_close
 kws.on_error = on_error
-
 kws.connect(threaded=False)

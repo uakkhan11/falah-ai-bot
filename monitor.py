@@ -150,7 +150,7 @@ if __name__ == "__main__":
         access_token = json.load(f)["access_token"]
     print("✅ Access token loaded.")
 
-    kite = KiteConnect(api_key=creds["api_key"]or creds.get("api"))
+    kite = KiteConnect(api_key=creds.get("api_key") or creds.get("api"))
     kite.set_access_token(access_token)
     print("✅ KiteConnect initialized.")
 

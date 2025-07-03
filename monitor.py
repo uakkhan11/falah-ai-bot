@@ -56,13 +56,7 @@ def monitor_positions(kite):
     today_str = now.strftime("%Y-%m-%d")
     timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] Market open: {market_open}")
-
-    try:
-        profile = kite.profile()
-        print("✅ KiteConnect Profile:", profile)
-        except Exception as e:
-    print(f"❌ API Key/Access Token invalid: {e}")
-    return
+    
         holdings = get_cnc_holdings(kite)
     except Exception as e:
         print(f"❌ Error fetching CNC holdings: {e}")
@@ -158,7 +152,13 @@ if __name__ == "__main__":
 
     kite = KiteConnect(api_key=creds.get("api_key") or creds.get("api"))
     kite.set_access_token(access_token)
-    print("✅ KiteConnect initialized.")
+        try:
+        profile = kite.profile()
+        print("✅ KiteConnect Profile:", profile)
+    except Exception as e:
+        print(f"❌ API Key/Access Token invalid: {e}")
+        return
+
 
     # Start WebSockets
     token_list = [int(t) for t in token_map.values()]

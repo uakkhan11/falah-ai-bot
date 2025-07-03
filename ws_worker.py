@@ -18,7 +18,7 @@ def on_ticks(ws, ticks):
     # print(f"✅ Ticks received: {len(ticks)}")
 
 def on_close(ws, code, reason):
-    print(f"🔌 Connection closed: {reason}")
+    print(f"WebSocket closed: code={code}, reason={reason}")
 
 def on_error(ws, code, reason):
     print(f"⚠️ Error: {reason}")

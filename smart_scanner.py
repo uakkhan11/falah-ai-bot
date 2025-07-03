@@ -35,14 +35,15 @@ def run_smart_scan():
 
         df = pd.read_csv(hist_file)
 
-        # Simple logic: close > SMA(20)
         df["SMA20"] = df["close"].rolling(20).mean()
         last_sma = df["SMA20"].iloc[-1]
-        if ltp > last_sma:
-            results.append({
-                "Symbol": sym,
-                "CMP": ltp,
-                "SMA20": round(last_sma, 2)
-            })
+
+        # ✅ Always append for testing (remove this later)
+        results.append({
+            "Symbol": sym,
+            "CMP": ltp,
+            "SMA20": round(last_sma, 2),
+            "AboveSMA": ltp > last_sma
+        })
 
     return pd.DataFrame(results)

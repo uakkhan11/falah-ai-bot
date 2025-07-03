@@ -60,7 +60,7 @@ def monitor_positions(kite):
     try:
         profile = kite.profile()
         print("✅ KiteConnect Profile:", profile)
-except Exception as e:
+        except Exception as e:
     print(f"❌ API Key/Access Token invalid: {e}")
     return
         holdings = get_cnc_holdings(kite)

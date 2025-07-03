@@ -91,8 +91,14 @@ with st.expander("🔑 Access Token Management"):
             try:
                 data = kite.generate_session(request_token, api_secret=api_secret)
                 access_token = data["access_token"]
-                with open("/root/falah-ai-bot/access_token.json", "w") as f:
-                    json.dump({"access_token": access_token}, f)
+                with open("/root/falah-ai-bot/secrets.json", "r") as f:
+                    secrets_data = json.load(f)
+                    
+                secrets_data["zerodha"]["access_token"] = access_token
+                
+                with open("/root/falah-ai-bot/secrets.json", "w") as f:
+                    json.dump(secrets_data, f, indent=2)
+                    
                 st.success("✅ Access token saved.")
             except Exception as e:
                 st.error(f"Error: {e}")

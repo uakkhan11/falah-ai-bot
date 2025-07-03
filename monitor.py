@@ -46,7 +46,7 @@ except Exception as e:
     print(f"⚠️ Could not load tokens.json: {e}")
     token_map = {}
 
-def monitor_positions():
+def monitor_positions(kite):
     now = datetime.now(IST)
     market_open = now.weekday() < 5 and (
         (now.hour > 9 or (now.hour == 9 and now.minute >= 15))
@@ -56,25 +56,11 @@ def monitor_positions():
     timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] Market open: {market_open}")
 
-    # 🔄 Reload access token every cycle
-    try:
-        with open("/root/falah-ai-bot/access_token.json", "r") as f:
-            access_token = json.load(f)["access_token"]
-    except Exception as e:
-        print(f"❌ Failed to load access token JSON: {e}")
-        return
-    
-    print("✅ Using access token:", access_token)
-
-    kite = KiteConnect(api_key=creds["api_key"])
-    kite.set_access_token(access_token)
-
     try:
         holdings = get_cnc_holdings(kite)
     except Exception as e:
         print(f"❌ Error fetching CNC holdings: {e}")
         holdings = []
-    print("Holdings returned:", holdings)
 
     if not holdings:
         print("❌ No CNC holdings found.")
@@ -85,7 +71,6 @@ def monitor_positions():
     if not isinstance(exited, dict):
         print("⚠️ exited_stocks.json invalid format, resetting.")
         exited = {}
-    print("✅ Loaded exited stocks log.")
 
     gc = gspread.service_account(filename="/root/falah-credentials.json")
     sheet = gc.open_by_key(SPREADSHEET_KEY)
@@ -113,17 +98,16 @@ def monitor_positions():
             continue
         print(f"✅ Live CMP for {symbol}: {cmp}")
 
-        exposure = round(cmp * quantity, 2)
-
-        # Exit log check
+        # Skip if already exited today
         if exited.get(symbol) == today_str:
             print(f"🔁 {symbol} already exited today. Skipping.")
             continue
 
+        # Check exit signals
         sl_price = calculate_atr_trailing_sl(kite, symbol, cmp)
         sl_hit = sl_price and cmp <= sl_price
-        st_flip_daily = check_supertrend_flip(kite, symbol)
-        st_flip_15m = check_supertrend_flip(kite, symbol)
+        st_flip_daily = check_supertrend_flip(kite, symbol, timeframe="day")
+        st_flip_15m = check_supertrend_flip(kite, symbol, timeframe="15minute")
         rsi_div = check_rsi_bearish_divergence(kite, symbol)
         vwap_cross = check_vwap_cross(kite, symbol)
         ai_exit = analyze_exit_signals(symbol, avg_price, cmp)
@@ -161,11 +145,20 @@ def monitor_positions():
     print("✅ Monitoring complete.\n")
 
 if __name__ == "__main__":
-    # Start WebSocket
-    token_list = [int(token) for token in token_map.values()]
+    # Load access token fresh
+    with open("/root/falah-ai-bot/access_token.json", "r") as f:
+        access_token = json.load(f)["access_token"]
+    print("✅ Access token loaded.")
+
+    kite = KiteConnect(api_key=creds["api_key"])
+    kite.set_access_token(access_token)
+    print("✅ KiteConnect initialized.")
+
+    # Start WebSockets
+    token_list = [int(t) for t in token_map.values()]
     start_websockets(creds["api_key"], access_token, token_list)
 
-    # Loop
+    # Loop monitoring
     while True:
-        monitor_positions()
+        monitor_positions(kite)
         time.sleep(900)

@@ -6,6 +6,7 @@ import pytz
 import gspread
 from datetime import datetime
 from kiteconnect import KiteConnect
+from app import API_KEY
 
 from ws_live_prices import start_websockets
 from utils import (

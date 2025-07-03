@@ -47,6 +47,7 @@ except Exception as e:
     print(f"⚠️ Could not load tokens.json: {e}")
     token_map = {}
 
+
 def monitor_positions(kite):
     now = datetime.now(IST)
     market_open = now.weekday() < 5 and (
@@ -61,11 +62,17 @@ def monitor_positions(kite):
         holdings = get_cnc_holdings(kite)
     except Exception as e:
         print(f"❌ Error fetching CNC holdings: {e}")
+        # NEW: Stop if token invalid
+        if "Incorrect `api_key` or `access_token`" in str(e):
+            print("❌ Access token invalid. Stopping monitoring.")
+            send_telegram("❌ Falāh Bot Error: Access token invalid or expired. Please re-generate the token.")
+            exit(1)
         holdings = []
 
     if not holdings:
         print("❌ No CNC holdings found.")
         return
+
     print(f"✅ CNC holdings received: {len(holdings)}")
 
     exited = load_previous_exits(EXIT_LOG_FILE)
@@ -93,7 +100,12 @@ def monitor_positions(kite):
             print(f"⚠️ No token for {symbol}. Skipping.")
             continue
 
-        cmp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["last_price"]
+        try:
+            cmp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["last_price"]
+        except Exception as e:
+            print(f"⚠️ Failed to fetch LTP for {symbol}: {e}")
+            continue
+
         if not cmp:
             print(f"⚠️ No live LTP for {symbol}. Skipping.")
             continue
@@ -160,9 +172,10 @@ if __name__ == "__main__":
         print("✅ KiteConnect Profile:", profile)
     except Exception as e:
         print(f"❌ API Key/Access Token invalid: {e}")
+        send_telegram("❌ Falāh Bot Error: Access token invalid or expired. Please re-generate the token.")
         exit(1)
 
-    # Start WebSockets
+    # Start WebSockets only after credentials validated
     token_list = [int(t) for t in token_map.values()]
     start_websockets(API_KEY, access_token, token_list)
 

@@ -15,13 +15,15 @@ def on_connect(ws, response):
     ws.set_mode(ws.MODE_FULL, tokens)
 
 def on_ticks(ws, ticks):
+    pass
+    # If you want to print tick counts, uncomment the next line:
     # print(f"✅ Ticks received: {len(ticks)}")
 
 def on_close(ws, code, reason):
-    print(f"WebSocket closed: code={code}, reason={reason}")
+    print(f"❌ WebSocket closed: code={code}, reason={reason}")
 
-def on_error(ws, code, reason):
-    print(f"⚠️ Error: {reason}")
+def on_error(ws, error):
+    print(f"⚠️ Error: {error}")
 
 kws.on_connect = on_connect
 kws.on_ticks = on_ticks

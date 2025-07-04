@@ -162,7 +162,7 @@ if __name__ == "__main__":
 
     # Start WebSockets after validation
     token_list = [int(t) for t in token_map.values()]
-    start_all_websockets(API_KEY, access_token, token_list)
+    start_all_websockets()
 
     # Loop monitoring with catch-all error handler
     while True:

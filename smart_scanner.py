@@ -103,8 +103,10 @@ def run_smart_scan():
         if last_15m["close"] > last_15m["SMA20"]:
             score += 1
             reasons.append("15m SMA confluence")
-
-        if score >= 3:
+            
+        print(f"{sym}: Score={score} | Reasons={reasons}")
+        
+        if score >= 2:
             results.append({
                 "Symbol": sym,
                 "CMP": ltp,

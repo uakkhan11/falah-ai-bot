@@ -33,7 +33,6 @@ def run_smart_scan():
         if not sym:
             continue
 
-        # Daily historical
         daily_file = os.path.join(HIST_DIR, f"{sym}.csv")
         if not os.path.exists(daily_file):
             continue
@@ -42,7 +41,6 @@ def run_smart_scan():
         if len(daily_df) < 21:
             continue
 
-        # Compute Daily indicators
         daily_df["SMA20"] = daily_df["close"].rolling(20).mean()
         daily_df["EMA10"] = EMAIndicator(close=daily_df["close"], window=10).ema_indicator()
         daily_df["EMA21"] = EMAIndicator(close=daily_df["close"], window=21).ema_indicator()
@@ -56,7 +54,6 @@ def run_smart_scan():
 
         last_daily = daily_df.iloc[-1]
 
-        # Multi-timeframe 15min data
         try:
             to_dt = datetime.now()
             from_dt = to_dt - timedelta(days=5)
@@ -77,39 +74,32 @@ def run_smart_scan():
         score = 0
         reasons = []
 
-        # ✅ SMA(20)
         if ltp > last_daily["SMA20"]:
             score += 1
             reasons.append("Above SMA20")
 
-        # ✅ EMA crossover
         if last_daily["EMA10"] > last_daily["EMA21"]:
             score += 1
             reasons.append("EMA10 > EMA21")
 
-        # ✅ RSI filter
         if last_daily["RSI"] and last_daily["RSI"] > 55:
             score += 1
             reasons.append(f"RSI {last_daily['RSI']:.1f}")
 
-        # ✅ ATR filter
         if atr and atr > 1.0:
             score += 1
             reasons.append(f"ATR {atr:.2f}")
 
-        # ✅ Volume breakout
         if last_daily["volume"] > 1.2 * daily_df["volume"].rolling(10).mean().iloc[-1]:
             score += 1
             reasons.append("Volume breakout")
 
-        # ✅ Gap up detection
         prev_close = daily_df["close"].iloc[-2]
         today_open = last_daily["open"]
         if today_open > prev_close * 1.02:
             score += 1
             reasons.append("Gap up")
 
-        # ✅ Multi-timeframe confirmation
         if last_15m["close"] > last_15m["SMA20"]:
             score += 1
             reasons.append("15m SMA confluence")
@@ -123,12 +113,12 @@ def run_smart_scan():
             })
 
     df = pd.DataFrame(results)
+
     if df.empty:
         return df
 
     df = df.sort_values(by="Score", ascending=False)
 
-# Now save to Google Sheets and Telegram
     try:
         from sheets import log_scan_to_sheet
         log_scan_to_sheet(df)

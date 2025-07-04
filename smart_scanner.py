@@ -26,6 +26,7 @@ def run_smart_scan():
     with open("/root/falah-ai-bot/tokens.json") as f:
         token_map = json.load(f)
     token_to_symbol = {v: k for k, v in token_map.items()}
+    print(f"\n✅ Loaded {len(live_prices)} live prices.")
 
     results = []
     for token, ltp in live_prices.items():

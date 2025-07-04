@@ -1,6 +1,8 @@
 # credentials.py
 import json
 import os
+import gspread
+from datetime import datetime
 from kiteconnect import KiteConnect
 
 def load_secrets():
@@ -32,3 +34,33 @@ def validate_kite(kite):
     except Exception as e:
         print(f"❌ Invalid credentials: {e}")
         return False
+
+import requests
+
+def send_telegram(message):
+    token = "YOUR_TELEGRAM_BOT_TOKEN"
+    chat_id = "YOUR_CHAT_ID"
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": message}
+    r = requests.post(url, data=payload)
+    return r.json()
+import requests
+
+def send_telegram(message):
+    token = "YOUR_TELEGRAM_BOT_TOKEN"
+    chat_id = "YOUR_CHAT_ID"
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": message}
+    r = requests.post(url, data=payload)
+    return r.json()
+    
+def log_scan_to_sheet(df):
+    gc = gspread.service_account(filename="/root/falah-credentials.json")
+    sh = gc.open("FalahSheet")
+    ws = sh.worksheet("ScanLog")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rows = [
+        [now, row["Symbol"], row["CMP"], row["Score"], row["Reasons"]]
+        for _, row in df.iterrows()
+    ]
+    ws.append_rows(rows, value_input_option="RAW")

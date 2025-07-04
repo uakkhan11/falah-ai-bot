@@ -108,12 +108,12 @@ def run_smart_scan():
         print(f"👉 {sym} | Score: {score} | Reasons: {reasons}")
         
         #if score >= 2:
-            results.append({
-                "Symbol": sym,
-                "CMP": ltp,
-                "Score": score,
-                "Reasons": ", ".join(reasons)
-            })
+        results.append({
+            "Symbol": sym,
+            "CMP": ltp,
+            "Score": score,
+            "Reasons": ", ".join(reasons)
+        })
 
     df = pd.DataFrame(results)
 

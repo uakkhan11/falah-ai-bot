@@ -38,8 +38,8 @@ def validate_kite(kite):
 import requests
 
 def send_telegram(message):
-    token = "YOUR_TELEGRAM_BOT_TOKEN"
-    chat_id = "YOUR_CHAT_ID"
+    token = "7763450358:AAH32bWYyu_hXR6l-UaVMaarFGZ4YFOv6q8"
+    chat_id = "6784139148"
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {"chat_id": chat_id, "text": message}
     r = requests.post(url, data=payload)

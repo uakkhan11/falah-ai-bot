@@ -32,7 +32,8 @@ def run_smart_scan():
         sym = token_to_symbol.get(str(token))
         if not sym:
             continue
-
+        print(f"\n🔍 {sym} - Evaluating...")
+        
         daily_file = os.path.join(HIST_DIR, f"{sym}.csv")
         if not os.path.exists(daily_file):
             continue
@@ -104,7 +105,7 @@ def run_smart_scan():
             score += 1
             reasons.append("15m SMA confluence")
             
-        print(f"{sym}: Score={score} | Reasons={reasons}")
+        print(f"👉 {sym} | Score: {score} | Reasons: {reasons}")
         
         if score >= 2:
             results.append({

@@ -124,7 +124,7 @@ def run_smart_scan():
 
     df = pd.DataFrame(results)
     if df.empty:
-    return df
+        return df
 
 df = df.sort_values(by="Score", ascending=False)
 

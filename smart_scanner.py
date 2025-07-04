@@ -122,23 +122,26 @@ def run_smart_scan():
                 "Reasons": ", ".join(reasons)
             })
 
-    df = pd.DataFrame(results).sort_values(by="Score", ascending=False)
-    if not df.empty:
-        # Save to Google Sheets (Phase 3)
-        try:
-            from sheets import log_scan_to_sheet
-            log_scan_to_sheet(df)
-        except Exception as e:
-            print(f"⚠️ Failed to save to sheet: {e}")
-
-        # Send Telegram (Phase 2)
-        try:
-            from utils import send_telegram
-            msg = "🟢 Scan Results:\n" + "\n".join(
-                f"{r['Symbol']} | {r['Score']} | {r['Reasons']}" for _, r in df.iterrows()
-            )
-            send_telegram(msg)
-        except Exception as e:
-            print(f"⚠️ Failed to send Telegram: {e}")
-
+    df = pd.DataFrame(results)
+    if df.empty:
     return df
+
+df = df.sort_values(by="Score", ascending=False)
+
+# Now save to Google Sheets and Telegram
+try:
+    from sheets import log_scan_to_sheet
+    log_scan_to_sheet(df)
+except Exception as e:
+    print(f"⚠️ Failed to save to sheet: {e}")
+
+try:
+    from utils import send_telegram
+    msg = "🟢 Scan Results:\n" + "\n".join(
+        f"{r['Symbol']} | {r['Score']} | {r['Reasons']}" for _, r in df.iterrows()
+    )
+    send_telegram(msg)
+except Exception as e:
+    print(f"⚠️ Failed to send Telegram: {e}")
+
+return df

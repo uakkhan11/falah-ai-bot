@@ -32,15 +32,19 @@ def run_smart_scan():
     for token, ltp in live_prices.items():
         sym = token_to_symbol.get(str(token))
         if not sym:
+            print(f"⚠️ No symbol mapping for token {token}")
             continue
+            
         print(f"\n🔍 {sym} - Evaluating...")
-        
+
         daily_file = os.path.join(HIST_DIR, f"{sym}.csv")
         if not os.path.exists(daily_file):
+            print(f"⚠️ Missing historical file for {sym}")
             continue
 
         daily_df = pd.read_csv(daily_file)
         if len(daily_df) < 21:
+            print(f"⚠️ Not enough rows in {sym} historical data.")
             continue
 
         daily_df["SMA20"] = daily_df["close"].rolling(20).mean()

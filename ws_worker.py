@@ -8,8 +8,10 @@ from kiteconnect import KiteTicker
 
 api_key = sys.argv[1]
 access_token = sys.argv[2]
-tokens = [int(t) for t in sys.argv[3].split(",")]
-
+import json
+with open("/root/falah-ai-bot/tokens.json") as f:
+    tokens_dict = json.load(f)
+tokens = list(tokens_dict.values())
 kws = KiteTicker(api_key, access_token)
 live_prices = {}
 last_save_time = time.time()

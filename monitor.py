@@ -1,177 +1,159 @@
-# monitor.py
+# monitor.py – Falāh Bot Monitoring Module
 
+import os
 import time
 import json
-import pytz
+import datetime
+import pandas as pd
+import requests
 import gspread
-from datetime import datetime
 from kiteconnect import KiteConnect
-from credentials import load_secrets
+from oauth2client.service_account import ServiceAccountCredentials
+import toml
 
-from ws_live_prices import start_all_websockets
-from utils import (
-    load_credentials,
-    send_telegram,
-    get_cnc_holdings,
-    analyze_exit_signals,
-)
-from indicators import (
-    calculate_atr_trailing_sl,
-    check_supertrend_flip,
-    check_rsi_bearish_divergence,
-    check_vwap_cross,
-)
-from sheets import log_exit_to_sheet
-from holdings_state import load_previous_exits, update_exit_log
+# 🟢 Load credentials
+with open("/root/falah-ai-bot/.streamlit/secrets.toml", "r") as f:
+    secrets = toml.load(f)
 
-print("✅ All imports finished")
-
-# Load credentials
-secrets = load_secrets()
 API_KEY = secrets["zerodha"]["api_key"]
-print("✅ Credentials loaded")
+API_SECRET = secrets["zerodha"]["api_secret"]
+ACCESS_TOKEN = secrets["zerodha"]["access_token"]
+BOT_TOKEN = secrets["telegram"]["bot_token"]
+CHAT_ID = secrets["telegram"]["chat_id"]
+SPREADSHEET_KEY = secrets["global"]["google_sheet_key"]
 
-IST = pytz.timezone("Asia/Kolkata")
+# 🟢 Authenticate Zerodha
+kite = KiteConnect(api_key=API_KEY)
+kite.set_access_token(ACCESS_TOKEN)
 
-SHEET_NAME = secrets["google"]["sheet_name"]
-SPREADSHEET_KEY = secrets["sheets"]["SPREADSHEET_KEY"]
-DAILY_MONITOR_TAB = "MonitoredStocks"
-EXIT_LOG_FILE = "/root/falah-ai-bot/exited_stocks.json"
+# 🟢 Authenticate Google Sheets
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_name("falah-credentials.json", scope)
+gc = gspread.authorize(creds)
+sheet = gc.open_by_key(SPREADSHEET_KEY)
+log_sheet = sheet.worksheet("TradeLog")
+monitor_sheet = sheet.worksheet("MonitoredStocks")
 
-# Load instrument tokens
-try:
-    with open("/root/falah-ai-bot/tokens.json", "r") as f:
-        token_map = json.load(f)
-    print(f"✅ Loaded {len(token_map)} instrument tokens.")
-except Exception as e:
-    print(f"⚠️ Could not load tokens.json: {e}")
-    token_map = {}
-
-
-def monitor_positions(kite):
-    now = datetime.now(IST)
-    market_open = now.weekday() < 5 and (
-        (now.hour > 9 or (now.hour == 9 and now.minute >= 15))
-        and (now.hour < 15 or (now.hour == 15 and now.minute < 30))
-    )
-    today_str = now.strftime("%Y-%m-%d")
-    timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] Market open: {market_open}")
-
-    holdings = get_cnc_holdings(kite)
-    if not holdings:
-        print("❌ No CNC holdings found.")
-        return
-
-    print(f"✅ CNC holdings received: {len(holdings)}")
-
-    exited = load_previous_exits(EXIT_LOG_FILE)
-    if not isinstance(exited, dict):
-        print("⚠️ exited_stocks.json invalid format, resetting.")
-        exited = {}
-
-    gc = gspread.service_account(filename="/root/falah-credentials.json")
-    sheet = gc.open_by_key(SPREADSHEET_KEY)
-    monitor_tab = sheet.worksheet(DAILY_MONITOR_TAB)
-    print("✅ Connected to Google Sheet.")
-
-    existing_rows = monitor_tab.get_all_records()
-    print(f"✅ Loaded {len(existing_rows)} existing rows from sheet.")
-
-    for stock in holdings:
-        symbol = stock.get("tradingsymbol") or stock.get("symbol")
-        quantity = stock.get("quantity")
-        avg_price = stock.get("average_price")
-
-        print(f"🔍 Processing {symbol} (Qty={quantity}, Avg={avg_price})")
-
-        token = token_map.get(symbol)
-        if token is None:
-            print(f"⚠️ No token for {symbol}. Skipping.")
-            continue
-
-        cmp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["last_price"]
-        if not cmp:
-            print(f"⚠️ No live LTP for {symbol}. Skipping.")
-            continue
-        print(f"✅ Live CMP for {symbol}: {cmp}")
-
-        # Skip if already exited today
-        if exited.get(symbol) == today_str:
-            print(f"🔁 {symbol} already exited today. Skipping.")
-            continue
-
-        sl_price = calculate_atr_trailing_sl(kite, symbol, cmp)
-        sl_hit = sl_price and cmp <= sl_price
-        st_flip_daily = check_supertrend_flip(kite, symbol)
-        st_flip_15m = check_supertrend_flip(kite, symbol)
-        rsi_div = check_rsi_bearish_divergence(kite, symbol)
-        vwap_cross = check_vwap_cross(kite, symbol)
-        ai_exit = analyze_exit_signals(symbol, avg_price, cmp)
-
-        reasons = []
-        if sl_hit:
-            reasons.append(f"ATR SL hit (SL: {sl_price})")
-        if st_flip_daily and st_flip_15m:
-            reasons.append("Supertrend flipped (daily+15m)")
-        if rsi_div:
-            reasons.append("RSI bearish divergence")
-        if vwap_cross:
-            reasons.append("VWAP cross-down")
-        if ai_exit:
-            reasons.append("AI exit signal")
-
-        if reasons:
-            reason_str = ", ".join(reasons)
-            print(f"🚨 Exit triggered for {symbol} at {cmp}: {reason_str}")
-            update_exit_log(EXIT_LOG_FILE, symbol)
-            send_telegram(
-                f"🚨 Auto Exit Triggered\n"
-                f"Symbol: {symbol}\n"
-                f"Price: {cmp}\n"
-                f"Reasons: {reason_str}"
-            )
-            try:
-                log_exit_to_sheet(SHEET_NAME, DAILY_MONITOR_TAB, symbol, cmp, reason_str)
-                print("✅ Logged exit for TradeLog to sheet.")
-            except Exception as e:
-                print(f"⚠️ Failed to log exit to sheet: {e}")
-        else:
-            print(f"✅ {symbol}: No exit criteria met. Holding position.")
-
-    print("✅ Monitoring complete.\n")
-
-
-if __name__ == "__main__":
-    # Load access token fresh
-    with open("/root/falah-ai-bot/access_token.json", "r") as f:
-        access_token = json.load(f)["access_token"]
-    print("✅ Access token loaded.")
-
-    kite = KiteConnect(api_key=API_KEY)
-    kite.set_access_token(access_token)
-
-    # Verify credentials
+# 🟢 Helper: Telegram
+def send_telegram(message):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
-        profile = kite.profile()
-        print("✅ KiteConnect Profile:", profile)
+        requests.post(url, data=payload)
     except Exception as e:
-        print(f"❌ API Key/Access Token invalid: {e}")
-        send_telegram("❌ Falāh Bot Error: Access token invalid or expired. Please re-generate the token.")
-        exit(1)
+        print(f"Telegram error: {e}")
 
-    # Start WebSockets after validation
-    token_list = [int(t) for t in token_map.values()]
-    start_all_websockets()
+# 🟢 Helper: Check Market Hours
+def is_market_open():
+    now = datetime.datetime.now()
+    return now.weekday() < 5 and now.hour >= 9 and (now.hour < 15 or (now.hour == 15 and now.minute <= 30))
 
-    # Loop monitoring with catch-all error handler
+# 🟢 Helper: Compute Trailing Stoploss
+def calculate_trailing_sl(entry, highest, trail_pct=2):
+    return highest * (1 - trail_pct / 100)
+
+# 🟢 Helper: AI Exit Decision
+def ai_exit_decision(symbol, ltp, entry, trailing_sl, supertrend_signal, volume_spike, reversal_pattern):
+    ai_score = 0
+    reasons = []
+    if ltp < trailing_sl:
+        ai_score += 40
+        reasons.append("Trailing SL hit")
+    if supertrend_signal == "SELL":
+        ai_score += 25
+        reasons.append("Supertrend SELL")
+    if volume_spike:
+        ai_score += 15
+        reasons.append("Volume Spike")
+    if reversal_pattern:
+        ai_score += 15
+        reasons.append("Reversal Pattern")
+    if ltp < entry * 0.95:
+        ai_score += 10
+        reasons.append("5% Loss Threshold")
+    return ai_score, reasons
+
+# 🟢 Helper: Dummy Supertrend/Volume/Reversal (replace with real logic)
+def get_supertrend(symbol):
+    return "BUY"  # or "SELL"
+
+def check_volume_spike(symbol):
+    return False
+
+def detect_reversal(symbol):
+    return False
+
+# 🟢 Main Monitoring Loop
+def monitor_positions():
+    send_telegram("✅ <b>Falāh Monitoring Started</b>\nTracking all CNC holdings...")
     while True:
-        try:
-            monitor_positions(kite)
-        except Exception as e:
-            print(f"❌ Monitoring error: {e}")
-            if "Incorrect `api_key` or `access_token`" in str(e):
-                print("❌ Access token invalid detected in monitoring loop. Exiting.")
-                send_telegram("❌ Falāh Bot Error: Access token invalid or expired during monitoring. Please re-generate the token.")
-                exit(1)
+        if not is_market_open():
+            print("⏸ Market closed. Sleeping 10 min...")
+            time.sleep(600)
+            continue
+
+        positions = kite.positions()["net"]
+        holdings = [p for p in positions if p["product"] == "CNC" and p["quantity"] > 0]
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        all_rows = []
+
+        for pos in holdings:
+            symbol = pos["tradingsymbol"]
+            qty = pos["quantity"]
+            avg_price = pos["average_price"]
+            ltp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["last_price"]
+
+            # Compute trailing SL
+            highest = max(ltp, avg_price * 1.03)
+            trailing_sl = calculate_trailing_sl(avg_price, highest, trail_pct=2)
+
+            # AI-based exit analysis
+            supertrend = get_supertrend(symbol)
+            volume_spike = check_volume_spike(symbol)
+            reversal = detect_reversal(symbol)
+            ai_score, reasons = ai_exit_decision(symbol, ltp, avg_price, trailing_sl, supertrend, volume_spike, reversal)
+
+            print(f"🔍 {symbol}: Qty={qty}, LTP={ltp:.2f}, Trailing SL={trailing_sl:.2f}, AI Score={ai_score}")
+
+            # Log all holdings to sheet
+            all_rows.append([
+                timestamp,
+                symbol,
+                qty,
+                avg_price,
+                ltp,
+                trailing_sl,
+                ai_score,
+                ", ".join(reasons) if reasons else "Holding"
+            ])
+
+            # Exit if AI score >= 50
+            if ai_score >= 50:
+                try:
+                    kite.place_order(
+                        variety=kite.VARIETY_REGULAR,
+                        exchange=kite.EXCHANGE_NSE,
+                        tradingsymbol=symbol,
+                        transaction_type=kite.TRANSACTION_TYPE_SELL,
+                        quantity=qty,
+                        order_type=kite.ORDER_TYPE_MARKET,
+                        product=kite.PRODUCT_CNC
+                    )
+                    msg = f"⚠️ <b>Exit Triggered</b>\n{symbol}\nQty: {qty}\nLTP: ₹{ltp:.2f}\nReasons: {', '.join(reasons)}"
+                    send_telegram(msg)
+                    log_sheet.append_row([
+                        timestamp, symbol, "SELL", qty, ltp, "Exit Triggered", ", ".join(reasons)
+                    ])
+                except Exception as e:
+                    send_telegram(f"❌ Error exiting {symbol}: {e}")
+
+        if all_rows:
+            monitor_sheet.append_rows(all_rows, value_input_option="USER_ENTERED")
+
+        # Wait 15 minutes
         time.sleep(900)
+
+# 🟢 Run Monitoring
+if __name__ == "__main__":
+    monitor_positions()

@@ -22,6 +22,7 @@ def run_smart_scan():
     kite = get_kite()
     live_prices = load_all_live_prices()
     with open("/root/falah-ai-bot/tokens.json") as f:
+        tokens = json.load(f)
     token_to_symbol = {str(v): k for k, v in tokens.items()}
     print(f"\n✅ Loaded {len(live_prices)} live prices.")
 

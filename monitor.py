@@ -7,6 +7,7 @@ import datetime
 import pandas as pd
 import requests
 import gspread
+from config import load_secrets
 from kiteconnect import KiteConnect
 from oauth2client.service_account import ServiceAccountCredentials
 import toml

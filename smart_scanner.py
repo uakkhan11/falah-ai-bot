@@ -54,6 +54,8 @@ if today_open > prev_close * 1.02:
     reasons.append("Gap up")
 
 # ML model score
+import joblib
+model = joblib.load("/root/falah-ai-bot/model.pkl")
 features = [[
     last_daily["RSI"],
     last_daily["EMA10"],

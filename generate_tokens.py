@@ -1,7 +1,8 @@
 # generate_tokens.py
 
 from kiteconnect import KiteConnect
-from credentials import load_secrets, get_halal_list
+from credentials import load_secrets
+from utils import get_halal_list
 import json
 
 secrets = load_secrets()

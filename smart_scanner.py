@@ -7,9 +7,7 @@ import glob
 from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator
 from ta.volatility import AverageTrueRange
-from utils import get_halal_list
 from credentials import get_kite
-from datetime import datetime, timedelta
 
 HIST_DIR = "/root/falah-ai-bot/historical_data/"
 
@@ -47,6 +45,7 @@ def run_smart_scan():
             print(f"⚠️ Not enough rows in {sym} historical data.")
             continue
 
+        # Compute indicators
         daily_df["SMA20"] = daily_df["close"].rolling(20).mean()
         daily_df["EMA10"] = EMAIndicator(close=daily_df["close"], window=10).ema_indicator()
         daily_df["EMA21"] = EMAIndicator(close=daily_df["close"], window=21).ema_indicator()
@@ -60,26 +59,10 @@ def run_smart_scan():
 
         last_daily = daily_df.iloc[-1]
 
-        try:
-            to_dt = datetime.now()
-            from_dt = to_dt - timedelta(days=5)
-            candles = kite.historical_data(
-                instrument_token=token,
-                from_date=from_dt,
-                to_date=to_dt,
-                interval="15minute"
-            )
-            tf_df = pd.DataFrame(candles)
-            tf_df["SMA20"] = tf_df["close"].rolling(20).mean()
-        except Exception as e:
-            print(f"⚠️ Could not fetch 15m for {sym}: {e}")
-            continue
-
-        last_15m = tf_df.iloc[-1]
-
         score = 0
         reasons = []
 
+        # Simple signals
         if ltp > last_daily["SMA20"]:
             score += 1
             reasons.append("Above SMA20")
@@ -106,13 +89,8 @@ def run_smart_scan():
             score += 1
             reasons.append("Gap up")
 
-        if last_15m["close"] > last_15m["SMA20"]:
-            score += 1
-            reasons.append("15m SMA confluence")
-            
         print(f"👉 {sym} | Score: {score} | Reasons: {reasons}")
         
-        #if score >= 2:
         results.append({
             "Symbol": sym,
             "CMP": ltp,
@@ -123,10 +101,12 @@ def run_smart_scan():
     df = pd.DataFrame(results)
 
     if df.empty:
+        print("⚠️ No signals found.")
         return df
 
     df = df.sort_values(by="Score", ascending=False)
 
+    # Save to Sheets and Telegram
     try:
         from sheets import log_scan_to_sheet
         log_scan_to_sheet(df)

@@ -170,7 +170,7 @@ if "scanned_data" in st.session_state:
 # ======= Manual Search =======
 st.subheader("🔍 Manual Stock Lookup")
 
-symbol_input = st.text_input("Enter NSE Symbol (e.g., INFY)")
+symbol_input = st.text_input("Enter NSE Symbol (e.g., INFY)").strip().upper()
 
 if st.button("Fetch Stock Data"):
     if not symbol_input:
@@ -182,6 +182,7 @@ if st.button("Fetch Stock Data"):
             st.stop()
 
         try:
+            ltp_data = kite.ltp(f"NSE:{symbol_input}")
             ltp_data = kite.ltp(f"NSE:{symbol_input}")
             cmp = ltp_data[f"NSE:{symbol_input}"]["last_price"]
             instrument_token = ltp_data[f"NSE:{symbol_input}"]["instrument_token"]

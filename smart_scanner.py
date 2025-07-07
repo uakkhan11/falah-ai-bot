@@ -28,7 +28,7 @@ def run_smart_scan():
 
     results = []
     for token, ltp in live_prices.items():
-        sym = token_to_symbol.get(int(token))
+        sym = token_to_symbol.get(str(token))
         if not sym:
             print(f"⚠️ No symbol mapping for token {token}")
             continue
@@ -107,6 +107,21 @@ def run_smart_scan():
     df = df.sort_values(by="Score", ascending=False)
     print("✅ Final scan results:")
     print(df)
+    try:
+        from sheets import log_scan_to_sheet
+        log_scan_to_sheet(df)
+    except Exception as e:
+        print(f"⚠️ Failed to save to sheet: {e}")
+
+    try:
+        from utils import send_telegram
+        msg = "🟢 Scan Results:\n" + "\n".join(
+            f"{r['Symbol']} | {r['Score']} | {r['Reasons']}" for _, r in df.iterrows()
+        )
+        send_telegram(msg)
+    except Exception as e:
+        print(f"⚠️ Failed to send Telegram: {e}")
+        
     return df
 
     # Save to Sheets and Telegram

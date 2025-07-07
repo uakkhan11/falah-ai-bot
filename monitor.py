@@ -10,11 +10,10 @@ import gspread
 from config import load_secrets
 from kiteconnect import KiteConnect
 from oauth2client.service_account import ServiceAccountCredentials
-import toml
 
 # 🟢 Load credentials
-with open("/root/falah-ai-bot/.streamlit/secrets.toml", "r") as f:
-    secrets = toml.load(f)
+with open("/root/falah-ai-bot/secrets.json", "r") as f:
+    secrets = json.load(f)
 
 API_KEY = secrets["zerodha"]["api_key"]
 API_SECRET = secrets["zerodha"]["api_secret"]

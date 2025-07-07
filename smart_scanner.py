@@ -28,7 +28,7 @@ def run_smart_scan():
 
     results = []
     for token, ltp in live_prices.items():
-        sym = token_to_symbol.get(str(token))
+        sym = token_to_symbol.get(int(token))
         if not sym:
             print(f"⚠️ No symbol mapping for token {token}")
             continue

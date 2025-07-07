@@ -2,6 +2,7 @@
 import time
 import json
 import pytz
+from config import load_secrets
 from datetime import datetime
 from credentials import get_kite, validate_kite, load_secrets
 from data_fetch import get_cnc_holdings, get_live_ltp
@@ -51,6 +52,10 @@ def monitor_once(kite, token_map, sheet_name, spreadsheet_key, exit_log_file):
 if __name__ == "__main__":
     # Load credentials
     secrets = load_secrets()
+
+    print("API Key:", secrets["zerodha"]["api_key"])
+    print("Access Token:", secrets["zerodha"]["access_token"])
+
     kite = get_kite()
 
     if not validate_kite(kite):

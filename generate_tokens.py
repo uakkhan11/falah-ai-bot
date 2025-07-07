@@ -1,10 +1,10 @@
 # generate_tokens.py
 
 from kiteconnect import KiteConnect
-from utils import load_credentials, get_halal_list
+from credentials import load_secrets, get_halal_list
 import json
 
-secrets = load_credentials()
+secrets = load_secrets()
 kite = KiteConnect(api_key=secrets["zerodha"]["api_key"])
 kite.set_access_token(secrets["zerodha"]["access_token"])
 

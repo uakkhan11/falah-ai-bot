@@ -101,10 +101,13 @@ def run_smart_scan():
     df = pd.DataFrame(results)
 
     if df.empty:
-        print("⚠️ No signals found.")
+        print("⚠️ No stocks matched ANY criteria.")
         return df
 
     df = df.sort_values(by="Score", ascending=False)
+    print("✅ Final scan results:")
+    print(df)
+    return df
 
     # Save to Sheets and Telegram
     try:

@@ -67,7 +67,12 @@ def load_historical_df(symbol):
     if not os.path.exists(path):
         return None
     df = pd.read_csv(path)
-    df["date"] = pd.to_datetime(df["date"])
+    # Normalize column names
+    df.columns = [c.strip().capitalize() for c in df.columns]
+    if not all(c in df.columns for c in ["High", "Low", "Close", "Volume"]):
+        print(f"⚠️ Historical data for {symbol} is missing required columns. Found columns: {df.columns.tolist()}")
+        return None
+    df["Date"] = pd.to_datetime(df["Date"])
     return df
 
 # 🟢 Load Nifty for relative strength

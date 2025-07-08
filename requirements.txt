@@ -1,0 +1,9 @@
+streamlit
+kiteconnect
+pandas
+pandas-ta
+ta
+gspread
+oauth2client
+requests
+matplotlib

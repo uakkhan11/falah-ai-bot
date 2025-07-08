@@ -35,6 +35,11 @@ def get_live_ltp(kite: KiteConnect, symbol: str):
 
 
 def fetch_historical_candles(kite: KiteConnect, instrument_token: str, interval="day", days=60):
+    """
+    Fetch historical candles for a given instrument.
+    """
+    import pandas as pd
+
     to_date = datetime.now(IST)
     from_date = to_date - timedelta(days=days)
 
@@ -45,13 +50,12 @@ def fetch_historical_candles(kite: KiteConnect, instrument_token: str, interval=
         interval
     )
 
-    import pandas as pd
     df = pd.DataFrame(candles)
     if df.empty:
         raise ValueError("No historical data returned.")
     df.columns = [c.capitalize() for c in df.columns]
     if len(df) < 20:
-        raise ValueError(f"Only {len(df)} rows fetched. Need at least 20.")
+        raise ValueError(f"Only {len(df)} rows fetched. Need at least 20 rows for indicators.")
     return df
 
     

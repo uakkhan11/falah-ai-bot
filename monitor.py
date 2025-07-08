@@ -1,4 +1,4 @@
-# monitor.py – Falāh Bot Monitoring Module
+# monitor.py
 
 import os
 import time
@@ -6,17 +6,24 @@ import json
 import datetime
 import pandas as pd
 import requests
+import pandas_ta as ta
 import gspread
-from config import load_secrets
 from kiteconnect import KiteConnect
 from oauth2client.service_account import ServiceAccountCredentials
+from pytz import timezone
+
+from indicators import (
+    detect_rsi_ema_signals,
+    detect_3green_days,
+    detect_macd_cross,
+    detect_darvas_box
+)
 
 # 🟢 Load credentials
 with open("/root/falah-ai-bot/secrets.json", "r") as f:
     secrets = json.load(f)
 
 API_KEY = secrets["zerodha"]["api_key"]
-API_SECRET = secrets["zerodha"]["api_secret"]
 ACCESS_TOKEN = secrets["zerodha"]["access_token"]
 BOT_TOKEN = secrets["telegram"]["bot_token"]
 CHAT_ID = secrets["telegram"]["chat_id"]
@@ -34,7 +41,7 @@ sheet = gc.open_by_key(SPREADSHEET_KEY)
 log_sheet = sheet.worksheet("TradeLog")
 monitor_sheet = sheet.worksheet("MonitoredStocks")
 
-# 🟢 Helper: Telegram
+# 🟢 Helper: Send Telegram message
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
@@ -43,9 +50,7 @@ def send_telegram(message):
     except Exception as e:
         print(f"Telegram error: {e}")
 
-# 🟢 Helper: Check Market Hours
-from pytz import timezone
-
+# 🟢 Helper: Market hours check
 def is_market_open():
     india = timezone("Asia/Kolkata")
     now = datetime.datetime.now(india)
@@ -54,51 +59,38 @@ def is_market_open():
         now.hour >= 9 and
         (now.hour < 15 or (now.hour == 15 and now.minute <= 30))
     )
-    
-# 🟢 Helper: Compute Trailing Stoploss
-def calculate_trailing_sl(entry, highest, trail_pct=2):
-    return highest * (1 - trail_pct / 100)
 
-# 🟢 Helper: AI Exit Decision
-def ai_exit_decision(symbol, ltp, entry, trailing_sl, supertrend_signal, volume_spike, reversal_pattern):
-    ai_score = 0
-    reasons = []
-    if ltp < trailing_sl:
-        ai_score += 40
-        reasons.append("Trailing SL hit")
-    if supertrend_signal == "SELL":
-        ai_score += 25
-        reasons.append("Supertrend SELL")
-    if volume_spike:
-        ai_score += 15
-        reasons.append("Volume Spike")
-    if reversal_pattern:
-        ai_score += 15
-        reasons.append("Reversal Pattern")
-    if ltp < entry * 0.95:
-        ai_score += 10
-        reasons.append("5% Loss Threshold")
-    return ai_score, reasons
+# 🟢 Helper: Load historical OHLC
+def load_historical_df(symbol):
+    path = f"/root/falah-ai-bot/historical_data/{symbol}.csv"
+    if not os.path.exists(path):
+        return None
+    df = pd.read_csv(path)
+    df["date"] = pd.to_datetime(df["date"])
+    return df
 
-# 🟢 Helper: Dummy Supertrend/Volume/Reversal (replace with real logic)
-def get_supertrend(symbol):
-    return "BUY"  # or "SELL"
+# 🟢 Load Nifty for relative strength
+nifty_df = load_historical_df("NIFTY")
+if nifty_df is None:
+    raise Exception("Nifty historical data required (NIFTY.csv).")
 
-def check_volume_spike(symbol):
-    return False
+# 🟢 Market regime detection
+def detect_market_regime(df):
+    adx = ta.adx(high=df["High"], low=df["Low"], close=df["Close"], length=14)
+    if adx["ADX_14"].iloc[-1] > 25:
+        return "TREND"
+    else:
+        return "RANGE"
 
-def detect_reversal(symbol):
-    return False
-
-# 🟢 Main Monitoring Loop
+# 🟢 Main monitoring loop
 def monitor_positions():
     send_telegram("✅ <b>Falāh Monitoring Started</b>\nTracking all CNC holdings...")
-    while True:
-        if not is_market_open():
-            print("⏸ Market closed. Sleeping 10 min...")
-            time.sleep(600)
-            continue
+    trade_log_df = pd.DataFrame(columns=[
+        "Timestamp", "Symbol", "Quantity", "AvgPrice", "LTP",
+        "TrailingSL", "RelStrength", "Regime", "AI_Score", "Reasons"
+    ])
 
+    while True:
         positions = kite.positions()["net"]
         holdings = [p for p in positions if p["product"] == "CNC" and p["quantity"] > 0]
 
@@ -110,61 +102,134 @@ def monitor_positions():
             qty = pos["quantity"]
             avg_price = pos["average_price"]
             exchange = pos["exchange"]
+
             ltp_data = kite.ltp(f"{exchange}:{symbol}")
             ltp = ltp_data[f"{exchange}:{symbol}"]["last_price"]
-            print(f"🔍 Checking {symbol} ({exchange}): Qty={qty}, Avg={avg_price}")
-            print(f"✅ LTP fetched: {ltp}")
-            
-            # Compute trailing SL
-            highest = max(ltp, avg_price * 1.03)
-            trailing_sl = calculate_trailing_sl(avg_price, highest, trail_pct=2)
+            print(f"🔍 {symbol}: LTP={ltp}")
 
-            # AI-based exit analysis
-            supertrend = get_supertrend(symbol)
-            volume_spike = check_volume_spike(symbol)
-            reversal = detect_reversal(symbol)
-            ai_score, reasons = ai_exit_decision(symbol, ltp, avg_price, trailing_sl, supertrend, volume_spike, reversal)
+            df = load_historical_df(symbol)
+            if df is None:
+                print(f"⚠️ No historical data for {symbol}. Skipping.")
+                continue
 
-            print(f"🔍 {symbol}: Qty={qty}, LTP={ltp:.2f}, Trailing SL={trailing_sl:.2f}, AI Score={ai_score}")
+            # Indicators
+            df["vwap"] = ta.vwap(df["High"], df["Low"], df["Close"], df["Volume"])
+            df["atr"] = ta.atr(df["High"], df["Low"], df["Close"], length=14)
+            rsi_series = ta.rsi(df["Close"], length=14)
+            regime = detect_market_regime(df)
+            rel_strength = df["Close"].iloc[-1] / nifty_df["Close"].iloc[-1]
+            rsi_latest = rsi_series.iloc[-1]
+            rsi_percentile = (rsi_latest - rsi_series.min()) / (rsi_series.max() - rsi_series.min())
 
-            # Log all holdings to sheet
+            # Custom signals
+            rsi_ema = detect_rsi_ema_signals(df)
+            macd_cross = detect_macd_cross(df)
+            three_green = detect_3green_days(df)
+            darvas, _ = detect_darvas_box(df)
+
+            atr_value = df["atr"].iloc[-1]
+            trailing_sl = ltp - atr_value * (1.5 if rsi_percentile < 0.5 else 1.0)
+
+            # AI scoring
+            ai_score = 0
+            reasons = []
+
+            if ltp < avg_price * 0.98:
+                ai_score += 15
+                reasons.append("Loss >2%")
+
+            if regime == "RANGE":
+                ai_score += 10
+                reasons.append("Market RANGE")
+
+            if ltp < df["vwap"].iloc[-1]:
+                ai_score += 10
+                reasons.append("Below VWAP")
+
+            if rel_strength < 0.98:
+                ai_score += 10
+                reasons.append("Weak relative strength")
+
+            if rsi_percentile < 0.2:
+                ai_score += 15
+                reasons.append("RSI oversold")
+            if rsi_percentile > 0.8:
+                ai_score += 15
+                reasons.append("RSI overbought")
+
+            weights = {"rsi_ema": 0.3, "macd_cross": 0.3, "three_green": 0.1, "darvas_box": 0.2}
+            if not rsi_ema:
+                ai_score += 100 * weights["rsi_ema"]
+                reasons.append("RSI/EMA weak")
+            if not macd_cross:
+                ai_score += 100 * weights["macd_cross"]
+                reasons.append("MACD no cross")
+            if not three_green:
+                ai_score += 100 * weights["three_green"]
+                reasons.append("No 3 green days")
+            if not darvas:
+                ai_score += 100 * weights["darvas_box"]
+                reasons.append("Darvas Box absent")
+            if ltp < trailing_sl:
+                ai_score += 10
+                reasons.append("Trailing SL breached")
+
+            print(f"✅ {symbol}: AI Score={ai_score}, Reasons={', '.join(reasons) if reasons else 'Holding'}")
+
+            exit_qty = 0
+            if ai_score >= 70:
+                exit_qty = qty
+            elif ai_score >= 50:
+                exit_qty = int(qty * 0.5)
+
             all_rows.append([
-                timestamp,
-                symbol,
-                qty,
-                avg_price,
-                ltp,
-                trailing_sl,
-                ai_score,
+                timestamp, symbol, qty, avg_price, ltp,
+                trailing_sl, round(rel_strength, 4),
+                regime, ai_score,
                 ", ".join(reasons) if reasons else "Holding"
             ])
 
-            # Exit if AI score >= 50
-            if ai_score >= 50:
-                try:
-                    kite.place_order(
-                        variety=kite.VARIETY_REGULAR,
-                        exchange=kite.EXCHANGE_NSE,
-                        tradingsymbol=symbol,
-                        transaction_type=kite.TRANSACTION_TYPE_SELL,
-                        quantity=qty,
-                        order_type=kite.ORDER_TYPE_MARKET,
-                        product=kite.PRODUCT_CNC
+            trade_log_df = pd.concat([
+                trade_log_df,
+                pd.DataFrame([{
+                    "Timestamp": timestamp, "Symbol": symbol, "Quantity": qty,
+                    "AvgPrice": avg_price, "LTP": ltp, "TrailingSL": trailing_sl,
+                    "RelStrength": rel_strength, "Regime": regime,
+                    "AI_Score": ai_score, "Reasons": ", ".join(reasons)
+                }])
+            ])
+
+            if exit_qty > 0:
+                if is_market_open():
+                    try:
+                        kite.place_order(
+                            variety=kite.VARIETY_REGULAR,
+                            exchange=exchange,
+                            tradingsymbol=symbol,
+                            transaction_type=kite.TRANSACTION_TYPE_SELL,
+                            quantity=exit_qty,
+                            order_type=kite.ORDER_TYPE_MARKET,
+                            product=kite.PRODUCT_CNC
+                        )
+                        send_telegram(f"⚠️ <b>Exit Triggered</b>\n{symbol}\nQty:{exit_qty}\nLTP:{ltp}\nReasons:{', '.join(reasons)}")
+                        log_sheet.append_row([
+                            timestamp, symbol, "SELL", exit_qty, ltp, "Exit Triggered", ", ".join(reasons)
+                        ])
+                    except Exception as e:
+                        send_telegram(f"❌ Exit error for {symbol}: {e}")
+                else:
+                    send_telegram(
+                        f"⚠️ <b>Exit Signal Generated but Market Closed</b>\n"
+                        f"{symbol}\nQty:{exit_qty}\nLTP:{ltp}\nReasons:{', '.join(reasons)}"
                     )
-                    msg = f"⚠️ <b>Exit Triggered</b>\n{symbol}\nQty: {qty}\nLTP: ₹{ltp:.2f}\nReasons: {', '.join(reasons)}"
-                    send_telegram(msg)
-                    log_sheet.append_row([
-                        timestamp, symbol, "SELL", qty, ltp, "Exit Triggered", ", ".join(reasons)
-                    ])
-                except Exception as e:
-                    send_telegram(f"❌ Error exiting {symbol}: {e}")
+                    print(f"⚠️ Market closed, will not place exit order for {symbol}.")
 
         if all_rows:
             monitor_sheet.append_rows(all_rows, value_input_option="USER_ENTERED")
+        trade_log_df.to_csv("daily_trade_log.csv", index=False)
 
-        # Wait 15 minutes
         time.sleep(900)
 
-# 🟢 Run Monitoring
+# 🟢 Run
 if __name__ == "__main__":
     monitor_positions()

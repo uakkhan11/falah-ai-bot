@@ -4,6 +4,7 @@ import os
 import time
 import json
 import datetime
+import argparse
 import pandas as pd
 import requests
 import pandas_ta as ta
@@ -48,7 +49,7 @@ def send_telegram(message):
     try:
         requests.post(url, data=payload)
     except Exception as e:
-        print(f"Telegram error: {e}")
+        print(f"[Telegram Error] {e}")
 
 # 🟢 Helper: Market hours check
 def is_market_open():
@@ -83,16 +84,19 @@ def detect_market_regime(df):
         return "RANGE"
 
 # 🟢 Main monitoring loop
-def monitor_positions():
+def monitor_positions(loop=True):
     send_telegram("✅ <b>Falāh Monitoring Started</b>\nTracking all CNC holdings...")
-    trade_log_df = pd.DataFrame(columns=[
-        "Timestamp", "Symbol", "Quantity", "AvgPrice", "LTP",
-        "TrailingSL", "RelStrength", "Regime", "AI_Score", "Reasons"
-    ])
 
     while True:
+        print("\n==============================")
+        print(f"🕒 {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Scanning positions...")
         positions = kite.positions()["net"]
         holdings = [p for p in positions if p["product"] == "CNC" and p["quantity"] > 0]
+
+        if not holdings:
+            print("⚠️ No CNC holdings found.")
+        else:
+            print(f"✅ Found {len(holdings)} holdings.")
 
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         all_rows = []
@@ -105,30 +109,29 @@ def monitor_positions():
 
             ltp_data = kite.ltp(f"{exchange}:{symbol}")
             ltp = ltp_data[f"{exchange}:{symbol}"]["last_price"]
-            print(f"🔍 {symbol}: LTP={ltp}")
+            print(f"\n🔍 {symbol}: LTP = ₹{ltp}")
 
             df = load_historical_df(symbol)
             if df is None:
                 print(f"⚠️ No historical data for {symbol}. Skipping.")
                 continue
 
-            # Indicators
             df["vwap"] = ta.vwap(df["High"], df["Low"], df["Close"], df["Volume"])
             df["atr"] = ta.atr(df["High"], df["Low"], df["Close"], length=14)
             rsi_series = ta.rsi(df["Close"], length=14)
+
             regime = detect_market_regime(df)
             rel_strength = df["Close"].iloc[-1] / nifty_df["Close"].iloc[-1]
             rsi_latest = rsi_series.iloc[-1]
             rsi_percentile = (rsi_latest - rsi_series.min()) / (rsi_series.max() - rsi_series.min())
 
-            # Custom signals
             rsi_ema = detect_rsi_ema_signals(df)
             macd_cross = detect_macd_cross(df)
             three_green = detect_3green_days(df)
             darvas, _ = detect_darvas_box(df)
 
             atr_value = df["atr"].iloc[-1]
-            trailing_sl = ltp - atr_value * (1.5 if rsi_percentile < 0.5 else 1.0)
+            trailing_sl = round(ltp - atr_value * (1.5 if rsi_percentile < 0.5 else 1.0), 2)
 
             # AI scoring
             ai_score = 0
@@ -174,8 +177,9 @@ def monitor_positions():
                 ai_score += 10
                 reasons.append("Trailing SL breached")
 
-            print(f"✅ {symbol}: AI Score={ai_score}, Reasons={', '.join(reasons) if reasons else 'Holding'}")
+            print(f"✅ AI Score: {ai_score} | {', '.join(reasons) if reasons else 'Holding'}")
 
+            # Exit decision
             exit_qty = 0
             if ai_score >= 70:
                 exit_qty = qty
@@ -187,16 +191,6 @@ def monitor_positions():
                 trailing_sl, round(rel_strength, 4),
                 regime, ai_score,
                 ", ".join(reasons) if reasons else "Holding"
-            ])
-
-            trade_log_df = pd.concat([
-                trade_log_df,
-                pd.DataFrame([{
-                    "Timestamp": timestamp, "Symbol": symbol, "Quantity": qty,
-                    "AvgPrice": avg_price, "LTP": ltp, "TrailingSL": trailing_sl,
-                    "RelStrength": rel_strength, "Regime": regime,
-                    "AI_Score": ai_score, "Reasons": ", ".join(reasons)
-                }])
             ])
 
             if exit_qty > 0:
@@ -215,21 +209,28 @@ def monitor_positions():
                         log_sheet.append_row([
                             timestamp, symbol, "SELL", exit_qty, ltp, "Exit Triggered", ", ".join(reasons)
                         ])
+                        print(f"✅ Exit order placed for {symbol}.")
                     except Exception as e:
                         send_telegram(f"❌ Exit error for {symbol}: {e}")
+                        print(f"❌ Error placing exit order: {e}")
                 else:
                     send_telegram(
                         f"⚠️ <b>Exit Signal Generated but Market Closed</b>\n"
                         f"{symbol}\nQty:{exit_qty}\nLTP:{ltp}\nReasons:{', '.join(reasons)}"
                     )
-                    print(f"⚠️ Market closed, will not place exit order for {symbol}.")
+                    print(f"⚠️ Market closed. Exit pending for {symbol}.")
 
         if all_rows:
             monitor_sheet.append_rows(all_rows, value_input_option="USER_ENTERED")
-        trade_log_df.to_csv("daily_trade_log.csv", index=False)
 
+        print("✅ Monitoring cycle completed.\n")
+        if not loop:
+            break
         time.sleep(900)
 
-# 🟢 Run
+# 🟢 Entry point
 if __name__ == "__main__":
-    monitor_positions()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--once", action="store_true", help="Run one monitoring cycle and exit")
+    args = parser.parse_args()
+    monitor_positions(loop=not args.once)

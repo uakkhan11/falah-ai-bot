@@ -34,7 +34,7 @@ def get_live_ltp(kite: KiteConnect, symbol: str):
         raise Exception(f"LTP fetch error: {e}")
 
 
-def fetch_historical_candles(kite: KiteConnect, instrument_token: str, interval="15minute", days=5):
+def fetch_historical_candles(kite: KiteConnect, instrument_token: str, interval="15minute", days=60):
     """
     Fetch historical candles for a given instrument.
     """
@@ -47,4 +47,14 @@ def fetch_historical_candles(kite: KiteConnect, instrument_token: str, interval=
         to_date,
         interval
     )
+
+    import pandas as pd
+
+    df = pd.DataFrame(candles)
+    if df.empty:
+        raise ValueError("No historical data returned.")
+
+    df.columns = [c.capitalize() for c in df.columns]
+
     return candles
+    

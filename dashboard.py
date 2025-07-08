@@ -4,25 +4,23 @@ import subprocess
 import os
 import signal
 import json
+import matplotlib.pyplot as plt
 from kiteconnect import KiteConnect
+
 from credentials import load_secrets, get_kite, validate_kite
-from data_fetch import get_cnc_holdings, get_live_ltp, fetch_historical_candles
-from ai_engine import calculate_ai_exit_score
-from ta.volatility import AverageTrueRange
-from smart_scanner import run_smart_scan
+from data_fetch import fetch_historical_candles, get_live_ltp
 from fetch_historical_batch import fetch_all_historical
+from smart_scanner import run_smart_scan
 from ws_live_prices import start_all_websockets
 
-st.set_page_config(page_title="Falāh Bot Dashboard", layout="wide")
+from stock_analysis import analyze_stock, get_regime
+from bulk_analysis import analyze_multiple_stocks
+from telegram_utils import send_telegram
 
+st.set_page_config(page_title="Falāh Bot Dashboard", layout="wide")
 st.title("🟢 Falāh Trading Bot Dashboard")
 
-# Show monitor status message if any
-if "monitor_status" in st.session_state:
-    st.success(f"Monitor {st.session_state['monitor_status']}.")
-    del st.session_state["monitor_status"]
-
-# ======= Monitor Service Status =======
+# ===== Monitor Service Status =====
 pid_file = "/root/falah-ai-bot/monitor.pid"
 
 def is_monitor_running():
@@ -41,7 +39,6 @@ status_text = "🟢 RUNNING" if monitor_running else "🔴 STOPPED"
 st.info(f"Monitor Service Status: **{status_text}**")
 
 col1, col2, col3 = st.columns(3)
-
 with col1:
     if st.button("▶️ Start Monitor"):
         if monitor_running:
@@ -55,6 +52,7 @@ with col1:
             with open(pid_file, "w") as f:
                 f.write(str(proc.pid))
             st.session_state["monitor_status"] = "started"
+            st.success("Monitor started.")
 
 with col2:
     if st.button("🟥 Stop Monitor"):
@@ -73,13 +71,12 @@ with col3:
         subprocess.run(["python3", "monitor_runner.py", "--once"])
         st.success("Monitor cycle complete.")
 
-# ======= Access Token Management =======
+# ===== Access Token Management =====
 with st.expander("🔑 Access Token Management"):
     st.subheader("Generate New Access Token")
     secrets = load_secrets()
     api_key = secrets["zerodha"]["api_key"]
     api_secret = secrets["zerodha"]["api_secret"]
-
     kite = KiteConnect(api_key=api_key)
     login_url = kite.login_url()
 
@@ -94,43 +91,39 @@ with st.expander("🔑 Access Token Management"):
                 data = kite.generate_session(request_token, api_secret=api_secret)
                 access_token = data["access_token"]
 
-                # Save to secrets.json
                 with open("/root/falah-ai-bot/secrets.json", "r") as f:
                     secrets_data = json.load(f)
                 secrets_data["zerodha"]["access_token"] = access_token
                 with open("/root/falah-ai-bot/secrets.json", "w") as f:
                     json.dump(secrets_data, f, indent=2)
 
-                # ✅ Also save to access_token.json (needed by get_kite)
                 with open("/root/falah-ai-bot/access_token.json", "w") as f:
                     json.dump({"access_token": access_token}, f)
 
-                st.success("✅ Access token saved to both secrets.json and access_token.json.")
+                st.success("✅ Access token saved successfully.")
             except Exception as e:
                 st.error(f"Error: {e}")
 
-# ======= Capital Allocation =======
+# ===== Capital Settings =====
 st.sidebar.header("⚙️ Capital & Trade Settings")
-
 total_capital = st.sidebar.number_input("Total Daily Capital (₹)", min_value=1000, value=100000, step=5000)
 max_trades = st.sidebar.slider("Max Number of Trades", 1, 10, 5)
 dry_run = st.sidebar.checkbox("Dry Run Mode (No Orders)", value=True)
 
-# ======= Scanner Module =======
+# ===== Auto Scanner =====
 st.subheader("🔍 Auto Scan for New Stocks")
-
 if st.button("Scan Stocks"):
-    st.info("🔄 Running scanner...")
+    st.info("Running scanner...")
     df = run_smart_scan()
     if df.empty:
         st.warning("No signals.")
     else:
+        st.session_state["scanned_data"] = df
         st.dataframe(df)
 
 if "scanned_data" in st.session_state:
     df = st.session_state["scanned_data"]
     st.dataframe(df, use_container_width=True)
-
     selected = st.multiselect("Select stocks to BUY", options=df["Symbol"].tolist())
 
     if st.button("🚀 Place Orders for Selected"):
@@ -139,20 +132,16 @@ if "scanned_data" in st.session_state:
         else:
             st.info("Placing orders...")
             per_trade_capital = total_capital / max_trades
-
             kite = get_kite()
             if not validate_kite(kite):
-                st.error("Invalid token. Please regenerate.")
+                st.error("Invalid token.")
                 st.stop()
-
             for sym in selected:
                 try:
                     cmp = get_live_ltp(kite, sym)
                     qty = int(per_trade_capital / cmp)
-                    st.write(f"Placing order for {sym}: Qty={qty}, Price={cmp}")
-
                     if dry_run:
-                        st.success(f"(Dry Run) Order prepared for {sym}")
+                        st.success(f"(Dry Run) Order prepared for {sym} (Qty={qty})")
                     else:
                         kite.place_order(
                             variety=kite.VARIETY_REGULAR,
@@ -167,11 +156,9 @@ if "scanned_data" in st.session_state:
                 except Exception as e:
                     st.error(f"Error placing order for {sym}: {e}")
 
-# ======= Manual Search =======
+# ===== Manual Stock Lookup =====
 st.subheader("🔍 Manual Stock Lookup")
-
 symbol_input = st.text_input("Enter NSE Symbol (e.g., INFY)").strip().upper()
-
 if st.button("Fetch Stock Data"):
     if not symbol_input:
         st.warning("Enter a symbol.")
@@ -180,45 +167,84 @@ if st.button("Fetch Stock Data"):
         if not validate_kite(kite):
             st.error("Invalid token.")
             st.stop()
-
         try:
-            ltp_data = kite.ltp(f"NSE:{symbol_input}")
-            ltp_data = kite.ltp(f"NSE:{symbol_input}")
-            cmp = ltp_data[f"NSE:{symbol_input}"]["last_price"]
-            instrument_token = ltp_data[f"NSE:{symbol_input}"]["instrument_token"]
-
-            hist = fetch_historical_candles(
-                kite,
-                instrument_token=instrument_token,
-                interval="day",
-                days=30
+            result = analyze_stock(kite, symbol_input)
+            st.write(f"✅ CMP: ₹{result['cmp']:.2f}")
+            st.write(f"ATR(14): {result['atr']:.2f}")
+            st.write(f"Trailing SL: ₹{result['trailing_sl']:.2f}")
+            st.write(f"ADX: {result['adx']:.2f} ({get_regime(result['adx'])})")
+            st.write(f"RSI: {result['rsi']:.2f} ({result['rsi_percentile']*100:.1f}% percentile)")
+            st.write(
+                f"Bollinger Bands: Upper ₹{result['bb_upper']:.2f}, Mid ₹{result['bb_mid']:.2f}, Lower ₹{result['bb_lower']:.2f}"
             )
-            df = pd.DataFrame(hist)
-            df.columns = [col.capitalize() for col in df.columns]
+            st.write(f"Relative Strength: {result['rel_strength']:.2f}")
+            st.write(f"Risk per share: ₹{result['risk']:.2f}, Reward per share: ₹{result['reward']:.2f}")
+            st.write(f"Backtest Win Rate: {result['backtest_winrate']:.1f}%")
+            st.write(f"🚦 Recommendation: **{result['recommendation']}**")
+            st.write(f"AI Exit Score: {result['ai_score']}")
+            st.write("Reasons:", result["reasons"])
+            st.dataframe(result["history"].tail(10))
 
-            st.write(f"✅ Current Market Price: ₹{cmp}")
-            st.dataframe(df.tail(10))
+            fig, ax = plt.subplots()
+            ax.plot(result["history"]["Date"], result["history"]["RSI"], label="RSI")
+            ax.axhline(70, color="red", linestyle="--")
+            ax.axhline(30, color="green", linestyle="--")
+            ax.set_title("RSI Over Time")
+            ax.legend()
+            st.pyplot(fig)
 
-            atr = AverageTrueRange(df["High"], df["Low"], df["Close"], window=14).average_true_range().iloc[-1]
-            trailing_sl = round(cmp - atr * 1.5, 2)
-            st.write(f"ATR(14): {atr:.2f}")
-            st.write(f"Recommended ATR-based Trailing SL: ₹{trailing_sl}")
-
-            ai_score, reasons = calculate_ai_exit_score(df, trailing_sl, cmp)
-            st.write(f"AI Exit Score: {ai_score}")
-            st.write("Reasons:", reasons)
+            fig2, ax2 = plt.subplots()
+            ax2.plot(result["history"]["Date"], result["history"]["Close"], label="Close")
+            ax2.plot(result["history"]["Date"], result["history"]["Supertrend"], label="Supertrend")
+            ax2.set_title("Price vs Supertrend")
+            ax2.legend()
+            st.pyplot(fig2)
         except Exception as e:
             st.error(f"Error fetching data: {e}")
 
-st.subheader("⚙️ Bot Controls")
+# ===== Bulk Analysis =====
+st.subheader("📊 Bulk Stock Analysis")
+symbols_input = st.text_area(
+    "Enter NSE symbols separated by commas (e.g., INFY,TCS,HDFCBANK):"
+).strip().upper()
 
+if st.button("Analyze Stocks"):
+    if not symbols_input:
+        st.warning("Enter at least one symbol.")
+    else:
+        symbols_list = [s.strip() for s in symbols_input.split(",")]
+        kite = get_kite()
+        if not validate_kite(kite):
+            st.error("Invalid token.")
+            st.stop()
+        st.info("Analyzing...")
+        results = analyze_multiple_stocks(kite, symbols_list)
+
+        rows = []
+        for r in results:
+            if "error" in r:
+                rows.append({"Symbol": r["symbol"], "Error": r["error"]})
+            else:
+                rows.append({
+                    "Symbol": r["symbol"],
+                    "CMP": r["cmp"],
+                    "ADX": r["adx"],
+                    "RSI": r["rsi"],
+                    "RelStrength": r["rel_strength"],
+                    "AI_Score": r["ai_score"],
+                    "Recommendation": r["recommendation"]
+                })
+        df = pd.DataFrame(rows)
+        st.dataframe(df)
+
+# ===== Bot Controls =====
+st.subheader("⚙️ Bot Controls")
 col1, col2, col3 = st.columns(3)
 
 with col1:
     if st.button("📥 Fetch Historical Data"):
-        st.info("Fetching historical data...")
         fetch_all_historical()
-        st.success("Done fetching.")
+        st.success("Historical data fetched.")
 
 with col2:
     if st.button("▶️ Start Live WebSockets"):
@@ -227,12 +253,9 @@ with col2:
 
 with col3:
     if st.button("🛑 Stop Live WebSockets"):
-        # This is optional. You can kill them by removing JSON files.
-        # Or you can write PID files in ws_live_prices.py and kill them here.
-        st.warning("Stop functionality not yet implemented. Use server for now.")
+        st.warning("Stop functionality not implemented yet.")
 
 if os.path.exists("/root/falah-ai-bot/last_fetch.txt"):
     with open("/root/falah-ai-bot/last_fetch.txt") as f:
         ts = f.read()
     st.info(f"Last historical fetch: {ts}")
-

@@ -11,7 +11,7 @@ def get_regime(adx_value):
 
 def load_nifty_df():
     df_nifty = pd.read_csv("historical_data/NIFTY.csv")
-    df_nifty["date"] = pd.to_datetime(df_nifty["date"])
+    df_nifty["date"] = pd.to_datetime(df_nifty["date"]).dt.tz_localize(None)
     return df_nifty
 
 
@@ -32,7 +32,7 @@ def analyze_stock(kite, symbol):
     # Make sure date column exists and is datetime
     if "date" not in df:
         raise ValueError("Missing 'date' column in historical data.")
-    df["date"] = pd.to_datetime(df["date"])
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
 
     # Sort
     df = df.sort_values("date").reset_index(drop=True)

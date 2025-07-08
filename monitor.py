@@ -91,7 +91,7 @@ def monitor_positions(loop=True):
         print("\n==============================")
         print(f"🕒 {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Scanning positions...")
         positions = kite.positions()["net"]
-        holdings = [p for p in positions if p["product"] == "CNC" and p["quantity"] > 0]
+        holdings = kite.holdings()
 
         if not holdings:
             print("⚠️ No CNC holdings found.")

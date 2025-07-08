@@ -64,21 +64,20 @@ def analyze_stock(kite, symbol):
     )
 
     # Load NIFTY for relative strength
-    nifty_df = load_nifty_df()
+nifty_df_renamed = nifty_df.rename(columns={"date": "date_nifty", "close": "close_nifty"})
+merged_df = pd.merge_asof(
+    df.sort_values("date"),
+    nifty_df_renamed[["date_nifty", "close_nifty"]].sort_values("date_nifty"),
+    left_on="date",
+    right_on="date_nifty",
+    direction="backward"
+)
 
-    # Merge on date
-    merged_df = pd.merge(
-        df,
-        nifty_df.rename(columns={"date": "date_nifty", "close": "close_nifty"}),
-        left_on="date",
-        right_on="date_nifty",
-        how="inner"
-    )
-    if merged_df.empty:
-        raise ValueError("Could not merge NIFTY data with symbol candles.")
+if merged_df["close_nifty"].isnull().all():
+    raise ValueError("Could not align any NIFTY closes with the symbol candles.")
 
-    merged_df["RelStrength"] = merged_df["close"] / merged_df["close_nifty"]
-    latest_rel_strength = merged_df["RelStrength"].iloc[-1]
+merged_df["RelStrength"] = merged_df["close"] / merged_df["close_nifty"]
+latest_rel_strength = merged_df["RelStrength"].iloc[-1]
 
     # Compute trailing SL
     atr_latest = df["ATR"].iloc[-1]

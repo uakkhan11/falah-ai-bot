@@ -1,114 +1,54 @@
-# stock_analysis.py
-
 import pandas as pd
 import pandas_ta as ta
 from ta.volatility import AverageTrueRange
 from ta.trend import ADXIndicator
 from ai_engine import calculate_ai_exit_score
 
-
 def get_regime(adx_value):
-    """
-    Simple ADX regime classification.
-    """
     return "TREND" if adx_value >= 25 else "RANGE"
 
-
 def load_nifty_df():
-    df_nifty = pd.read_csv("/root/falah-ai-bot/historical_data/NIFTY.csv")
+    df_nifty = pd.read_csv("historical_data/NIFTY.csv")
     df_nifty["date"] = pd.to_datetime(df_nifty["date"])
     return df_nifty
 
-
 def analyze_stock(kite, symbol):
-    """
-    Fetches data, calculates indicators, and computes AI exit score.
-
-    Returns a dict with all relevant info.
-    """
-    # Live price
     ltp_data = kite.ltp(f"NSE:{symbol}")
     cmp = ltp_data[f"NSE:{symbol}"]["last_price"]
     instrument_token = ltp_data[f"NSE:{symbol}"]["instrument_token"]
 
-    # Historical candles
-    hist = fetch_historical_candles(
-        kite,
-        instrument_token=instrument_token,
-        interval="day",
-        days=30
-    )
+    from data_fetch import fetch_historical_candles
+    hist = fetch_historical_candles(kite, instrument_token, interval="day", days=30)
     df = pd.DataFrame(hist)
     df.columns = [col.capitalize() for col in df.columns]
 
-    # ATR
-    atr_series = AverageTrueRange(df["High"], df["Low"], df["Close"], window=14).average_true_range()
-    df["ATR"] = atr_series
-
-    # ADX
+    df["ATR"] = AverageTrueRange(df["High"], df["Low"], df["Close"], window=14).average_true_range()
     adx_indicator = ADXIndicator(df["High"], df["Low"], df["Close"], window=14)
     df["ADX"] = adx_indicator.adx()
-
-    # RSI
     rsi_series = ta.rsi(df["Close"], length=14)
     df["RSI"] = rsi_series
     rsi_latest = rsi_series.iloc[-1]
     rsi_percentile = (rsi_latest - rsi_series.min()) / (rsi_series.max() - rsi_series.min())
-
-    # Bollinger Bands
     boll = ta.bbands(df["Close"], length=20, std=2)
     df["BB_upper"] = boll["BBU_20_2.0"]
     df["BB_lower"] = boll["BBL_20_2.0"]
     df["BB_mid"] = boll["BBM_20_2.0"]
-
-    # Supertrend
-    supertrend_df = ta.supertrend(
-        high=df["High"],
-        low=df["Low"],
-        close=df["Close"],
-        length=10,
-        multiplier=3.0
-    )
+    supertrend_df = ta.supertrend(df["High"], df["Low"], df["Close"], length=10, multiplier=3.0)
     df["Supertrend"] = supertrend_df["SUPERT_10_3.0"]
 
-    # Relative Strength vs Nifty
     nifty_df = load_nifty_df()
-    merged_df = df.merge(
-        nifty_df,
-        left_on="Date",
-        right_on="date",
-        suffixes=("", "_nifty")
-    )
+    merged_df = df.merge(nifty_df, left_on="Date", right_on="date", suffixes=("", "_nifty"))
     merged_df["RelStrength"] = merged_df["Close"] / merged_df["Close_nifty"]
     latest_rel_strength = merged_df["RelStrength"].iloc[-1]
 
-    # Trailing SL
     trailing_sl = cmp - df["ATR"].iloc[-1] * 1.5
-
-    # AI Exit Score
-    ai_score, reasons = calculate_ai_exit_score(
-        stock_data=df,
-        trailing_sl=trailing_sl,
-        current_price=cmp,
-        atr_value=df["ATR"].iloc[-1]
-    )
-
-    # Risk/Reward
+    ai_score, reasons = calculate_ai_exit_score(df, trailing_sl, cmp, atr_value=df["ATR"].iloc[-1])
     risk_amount = df["ATR"].iloc[-1] * 1.5
     reward_amount = df["ATR"].iloc[-1] * 3.0
+    win_rate = (df.tail(10)["Close"] > df.tail(10)["Supertrend"]).mean() * 100
 
-    # Backtest Win Rate
-    last10 = df.tail(10)
-    win_rate = (last10["Close"] > last10["Supertrend"]).mean() * 100
-
-    # Trade Recommendation
     recommendation = "Hold"
-    if (
-        df["ADX"].iloc[-1] > 25
-        and rsi_latest < 70
-        and cmp > df["Supertrend"].iloc[-1]
-        and latest_rel_strength > 1
-    ):
+    if df["ADX"].iloc[-1] > 25 and rsi_latest < 70 and cmp > df["Supertrend"].iloc[-1] and latest_rel_strength > 1:
         recommendation = "Potential Buy"
 
     return {

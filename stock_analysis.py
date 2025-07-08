@@ -4,56 +4,109 @@ from ta.volatility import AverageTrueRange
 from ta.trend import ADXIndicator
 from ai_engine import calculate_ai_exit_score
 
+
 def get_regime(adx_value):
     return "TREND" if adx_value >= 25 else "RANGE"
+
 
 def load_nifty_df():
     df_nifty = pd.read_csv("historical_data/NIFTY.csv")
     df_nifty["date"] = pd.to_datetime(df_nifty["date"])
     return df_nifty
 
+
 def analyze_stock(kite, symbol):
+    # Get live LTP and instrument token
     ltp_data = kite.ltp(f"NSE:{symbol}")
     cmp = ltp_data[f"NSE:{symbol}"]["last_price"]
     instrument_token = ltp_data[f"NSE:{symbol}"]["instrument_token"]
 
     from data_fetch import fetch_historical_candles
-    hist = fetch_historical_candles(kite, instrument_token, interval="day", days=30)
-    df = pd.DataFrame(hist)
-    df.columns = [col.capitalize() for col in df.columns]
 
-    df["ATR"] = AverageTrueRange(df["High"], df["Low"], df["Close"], window=14).average_true_range()
-    adx_indicator = ADXIndicator(df["High"], df["Low"], df["Close"], window=14)
+    # Fetch historical data
+    df = fetch_historical_candles(kite, instrument_token, interval="day", days=60)
+
+    # Ensure correct column names
+    df = df.rename(columns=str.lower)
+
+    # Make sure date column exists and is datetime
+    if "date" not in df:
+        raise ValueError("Missing 'date' column in historical data.")
+    df["date"] = pd.to_datetime(df["date"])
+
+    # Sort
+    df = df.sort_values("date").reset_index(drop=True)
+
+    # Compute indicators
+    df["ATR"] = AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range()
+    adx_indicator = ADXIndicator(df["high"], df["low"], df["close"], window=14)
     df["ADX"] = adx_indicator.adx()
-    rsi_series = ta.rsi(df["Close"], length=14)
-    df["RSI"] = rsi_series
-    rsi_latest = rsi_series.iloc[-1]
-    rsi_percentile = (rsi_latest - rsi_series.min()) / (rsi_series.max() - rsi_series.min())
-    boll = ta.bbands(df["Close"], length=20, std=2)
+    df["RSI"] = ta.rsi(df["close"], length=14)
+    boll = ta.bbands(df["close"], length=20, std=2)
     df["BB_upper"] = boll["BBU_20_2.0"]
     df["BB_lower"] = boll["BBL_20_2.0"]
     df["BB_mid"] = boll["BBM_20_2.0"]
-    supertrend_df = ta.supertrend(df["High"], df["Low"], df["Close"], length=10, multiplier=3.0)
+    supertrend_df = ta.supertrend(df["high"], df["low"], df["close"], length=10, multiplier=3.0)
     df["Supertrend"] = supertrend_df["SUPERT_10_3.0"]
 
+    # Drop rows with NaNs in any indicator
+    df = df.dropna().reset_index(drop=True)
+    if df.empty:
+        raise ValueError("No data after computing indicators. Not enough candles.")
+
+    # Compute latest RSI percentile safely
+    rsi_latest = df["RSI"].iloc[-1]
+    rsi_min = df["RSI"].min()
+    rsi_max = df["RSI"].max()
+    rsi_percentile = (
+        (rsi_latest - rsi_min) / (rsi_max - rsi_min)
+        if rsi_max != rsi_min else 0.5
+    )
+
+    # Load NIFTY for relative strength
     nifty_df = load_nifty_df()
-    merged_df = df.merge(nifty_df, left_on="Date", right_on="date", suffixes=("", "_nifty"))
-    merged_df["RelStrength"] = merged_df["Close"] / merged_df["Close_nifty"]
+
+    # Merge on date
+    merged_df = pd.merge(
+        df,
+        nifty_df.rename(columns={"date": "date_nifty", "close": "close_nifty"}),
+        left_on="date",
+        right_on="date_nifty",
+        how="inner"
+    )
+    if merged_df.empty:
+        raise ValueError("Could not merge NIFTY data with symbol candles.")
+
+    merged_df["RelStrength"] = merged_df["close"] / merged_df["close_nifty"]
     latest_rel_strength = merged_df["RelStrength"].iloc[-1]
 
-    trailing_sl = cmp - df["ATR"].iloc[-1] * 1.5
-    ai_score, reasons = calculate_ai_exit_score(df, trailing_sl, cmp, atr_value=df["ATR"].iloc[-1])
-    risk_amount = df["ATR"].iloc[-1] * 1.5
-    reward_amount = df["ATR"].iloc[-1] * 3.0
-    win_rate = (df.tail(10)["Close"] > df.tail(10)["Supertrend"]).mean() * 100
+    # Compute trailing SL
+    atr_latest = df["ATR"].iloc[-1]
+    trailing_sl = cmp - atr_latest * 1.5
 
+    # AI exit score
+    ai_score, reasons = calculate_ai_exit_score(df, trailing_sl, cmp, atr_value=atr_latest)
+
+    # Risk / reward
+    risk_amount = atr_latest * 1.5
+    reward_amount = atr_latest * 3.0
+
+    # Simple backtest: win rate = % of closes > supertrend over last 10 bars
+    win_rate = (df.tail(10)["close"] > df.tail(10)["Supertrend"]).mean() * 100
+
+    # Recommendation
     recommendation = "Hold"
-    if df["ADX"].iloc[-1] > 25 and rsi_latest < 70 and cmp > df["Supertrend"].iloc[-1] and latest_rel_strength > 1:
+    if (
+        df["ADX"].iloc[-1] > 25
+        and rsi_latest < 70
+        and cmp > df["Supertrend"].iloc[-1]
+        and latest_rel_strength > 1
+    ):
         recommendation = "Potential Buy"
 
     return {
         "cmp": cmp,
-        "atr": df["ATR"].iloc[-1],
+        "atr": atr_latest,
         "trailing_sl": trailing_sl,
         "adx": df["ADX"].iloc[-1],
         "rsi": rsi_latest,

@@ -56,5 +56,5 @@ def fetch_historical_candles(kite: KiteConnect, instrument_token: str, interval=
 
     df.columns = [c.capitalize() for c in df.columns]
 
-    return candles
+    return df
     

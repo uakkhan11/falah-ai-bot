@@ -44,10 +44,17 @@ def send_telegram(message):
         print(f"Telegram error: {e}")
 
 # 🟢 Helper: Check Market Hours
-def is_market_open():
-    now = datetime.datetime.now()
-    return now.weekday() < 5 and now.hour >= 9 and (now.hour < 15 or (now.hour == 15 and now.minute <= 30))
+from pytz import timezone
 
+def is_market_open():
+    india = timezone("Asia/Kolkata")
+    now = datetime.datetime.now(india)
+    return (
+        now.weekday() < 5 and
+        now.hour >= 9 and
+        (now.hour < 15 or (now.hour == 15 and now.minute <= 30))
+    )
+    
 # 🟢 Helper: Compute Trailing Stoploss
 def calculate_trailing_sl(entry, highest, trail_pct=2):
     return highest * (1 - trail_pct / 100)

@@ -109,8 +109,12 @@ def monitor_positions():
             symbol = pos["tradingsymbol"]
             qty = pos["quantity"]
             avg_price = pos["average_price"]
-            ltp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["last_price"]
-
+            exchange = pos["exchange"]
+            ltp_data = kite.ltp(f"{exchange}:{symbol}")
+            ltp = ltp_data[f"{exchange}:{symbol}"]["last_price"]
+            print(f"🔍 Checking {symbol} ({exchange}): Qty={qty}, Avg={avg_price}")
+            print(f"✅ LTP fetched: {ltp}")
+            
             # Compute trailing SL
             highest = max(ltp, avg_price * 1.03)
             trailing_sl = calculate_trailing_sl(avg_price, highest, trail_pct=2)

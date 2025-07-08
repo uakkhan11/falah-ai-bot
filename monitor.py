@@ -20,7 +20,7 @@ API_SECRET = secrets["zerodha"]["api_secret"]
 ACCESS_TOKEN = secrets["zerodha"]["access_token"]
 BOT_TOKEN = secrets["telegram"]["bot_token"]
 CHAT_ID = secrets["telegram"]["chat_id"]
-SPREADSHEET_KEY = secrets["global"]["google_sheet_key"]
+SPREADSHEET_KEY = secrets["global"]["spreadsheet_key"]
 
 # 🟢 Authenticate Zerodha
 kite = KiteConnect(api_key=API_KEY)

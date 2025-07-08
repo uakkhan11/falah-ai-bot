@@ -69,10 +69,14 @@ def load_historical_df(symbol):
     df = pd.read_csv(path)
     # Normalize column names
     df.columns = [c.strip().capitalize() for c in df.columns]
-    if not all(c in df.columns for c in ["High", "Low", "Close", "Volume"]):
+    # Check required columns
+    if not all(c in df.columns for c in ["Date", "High", "Low", "Close", "Volume"]):
         print(f"⚠️ Historical data for {symbol} is missing required columns. Found columns: {df.columns.tolist()}")
         return None
+    # Parse date
     df["Date"] = pd.to_datetime(df["Date"])
+    # Sort and set index
+    df = df.sort_values("Date").set_index("Date")
     return df
 
 # 🟢 Load Nifty for relative strength

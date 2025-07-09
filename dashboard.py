@@ -175,4 +175,88 @@ if "scanned_data" in st.session_state:
                 except Exception as e:
                     st.error(f"Error placing order for {sym}: {e}")
 
-# Everything else (manual lookup, bulk analysis, bot controls) remains unchanged
+# Manual Stock Lookup
+st.subheader("🔍 Manual Stock Lookup")
+symbol_input = st.text_input("Enter NSE Symbol (e.g., INFY)").strip().upper()
+if st.button("Fetch Stock Data"):
+    if not symbol_input:
+        st.warning("Enter a symbol.")
+    else:
+        kite = get_kite()
+        if not validate_kite(kite):
+            st.error("Invalid token.")
+            st.stop()
+        try:
+            result = analyze_stock(kite, symbol_input)
+            st.write(f"✅ CMP: ₹{result['cmp']:.2f}")
+            st.write(f"ATR(14): {result['atr']:.2f}")
+            trailing_sl = compute_trailing_sl(result['cmp'], result['atr'])
+            target_price = round(result['cmp'] + (result['cmp'] - trailing_sl) * 3, 2)
+            st.write(f"Trailing SL: ₹{trailing_sl}")
+            st.write(f"Target Price (1:3 R/R): ₹{target_price}")
+            st.write(f"ADX: {result['adx']:.2f} ({get_regime(result['adx'])})")
+            st.write(f"RSI: {result['rsi']:.2f} ({result['rsi_percentile']*100:.1f}% percentile)")
+            st.write(f"Relative Strength: {result['rel_strength']:.2f}")
+            st.write(f"AI Exit Score: {result['ai_score']}")
+            st.write(f"Recommendation: **{result['recommendation']}**")
+            st.dataframe(result["history"].tail(10))
+
+        except Exception as e:
+            st.error(f"Error fetching data: {e}")
+
+# Bulk Analysis
+st.subheader("📊 Bulk Stock Analysis")
+symbols_input = st.text_area(
+    "Enter NSE symbols separated by commas (e.g., INFY,TCS,HDFCBANK):"
+).strip().upper()
+
+if st.button("Analyze Stocks"):
+    if not symbols_input:
+        st.warning("Enter at least one symbol.")
+    else:
+        symbols_list = [s.strip() for s in symbols_input.split(",")]
+        kite = get_kite()
+        if not validate_kite(kite):
+            st.error("Invalid token.")
+            st.stop()
+        st.info("Analyzing...")
+        results = analyze_multiple_stocks(kite, symbols_list)
+
+        rows = []
+        for r in results:
+            if "error" in r:
+                rows.append({"Symbol": r["symbol"], "Error": r["error"]})
+            else:
+                rows.append({
+                    "Symbol": r["symbol"],
+                    "CMP": r["cmp"],
+                    "ADX": r["adx"],
+                    "RSI": r["rsi"],
+                    "RelStrength": r["rel_strength"],
+                    "AI_Score": r["ai_score"],
+                    "Recommendation": r["recommendation"]
+                })
+        df = pd.DataFrame(rows)
+        st.dataframe(df)
+
+# Bot Controls
+st.subheader("⚙️ Bot Controls")
+col1, col2, col3 = st.columns(3)
+with col1:
+    if st.button("📥 Fetch Historical Data"):
+        fetch_all_historical()
+        st.success("Historical data fetched.")
+
+with col2:
+    if st.button("▶️ Start Live WebSockets"):
+        start_all_websockets()
+        st.success("WebSockets started.")
+
+with col3:
+    if st.button("🛑 Stop Live WebSockets"):
+        st.warning("Stop functionality not implemented yet.")
+
+if os.path.exists("/root/falah-ai-bot/last_fetch.txt"):
+    with open("/root/falah-ai-bot/last_fetch.txt") as f:
+        ts = f.read()
+    st.info(f"Last historical fetch: {ts}")

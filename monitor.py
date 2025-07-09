@@ -55,7 +55,7 @@ nifty_df = nifty_df.sort_values("date").reset_index(drop=True)
 
 # 🟢 Main monitoring loop
 def monitor_positions(loop=True):
-    send_telegram("✅ <b>Falāh Monitoring Started</b>")
+    send_telegram(BOT_TOKEN, CHAT_ID, "✅ <b>Falāh Monitoring Started</b>")
 
     # Track peak equity for drawdown
     equity_peak = None
@@ -145,7 +145,7 @@ def monitor_positions(loop=True):
                         order_type=kite.ORDER_TYPE_MARKET,
                         product=kite.PRODUCT_CNC
                     )
-                    send_telegram(f"⚠️ Exit {symbol} Qty:{exit_qty} Reason:{', '.join(reasons)}")
+                    send_telegram(BOT_TOKEN, CHAT_ID, f"⚠️ <b>Exit Triggered</b>\n{symbol}\nQty:{exit_qty}\nLTP:{ltp}\nReasons:{', '.join(reasons)}")
                     log_trade_to_sheet(
                         log_sheet, timestamp, symbol, exit_qty, ltp,
                         "Auto Exit", ", ".join(reasons)

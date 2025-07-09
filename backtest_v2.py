@@ -90,7 +90,7 @@ class VolumeBreakoutStrategy(BaseStrategy):
                     exit_price = signals[-1]['sl']
                 elif high >= signals[-1]['tp']:
                     exit_price = signals[-1]['tp']
-                if exit_price:
+                if exit_price is not None:
                     signals[-1].update({'exit_date': date, 'exit': exit_price})
                     in_trade = False
         return signals
@@ -113,7 +113,12 @@ class AIScoreExitStrategy(BaseStrategy):
             elif in_trade:
                 hist = df.iloc[:i+1].reset_index()
                 last = signals[-1]
-                ai_score, _ = calculate_ai_exit_score(stock_data=hist, trailing_sl=last['sl'], current_price=price, atr_value=atr)
+                ai_score, _ = calculate_ai_exit_score(
+                    stock_data=hist,
+                    trailing_sl=last['sl'],
+                    current_price=price,
+                    atr_value=atr
+                )
                 if ai_score >= self.threshold:
                     signals[-1].update({'exit_date': date, 'exit': price})
                     in_trade = False
@@ -123,41 +128,83 @@ class AIScoreExitStrategy(BaseStrategy):
 def backtest():
     global equity, peak_equity
     strategies = [EMACrossoverStrategy(), RSIStrategy(), VolumeBreakoutStrategy(), AIScoreExitStrategy()]
+
     for sym in SYMBOLS:
         path = os.path.join(DATA_DIR, f"{sym}.csv")
         if not os.path.exists(path):
             print(f"⚠️ Missing data for {sym}")
             continue
+
         df = pd.read_csv(path, parse_dates=["date"]).set_index("date")
         df = df.loc[START_DATE:END_DATE]
+
         for strat in strategies:
             trades = strat.generate_signals(df)
             for t in trades:
-                entry, sl, tp = t['entry'], t['sl'], t['tp']
+                entry, sl = t['entry'], t['sl']
+                tp = t.get('tp')
+                # 1) position sizing
                 risk_amount = equity * RISK_PER_TRADE
+                if entry - sl <= 0:
+                    continue
                 qty = int(risk_amount / (entry - sl))
-                if qty < 1: continue
+                if qty < 1:
+                    continue
+                # 2) simulate entry costs
                 buy_price = entry * (1 + SLIPPAGE)
                 cost = buy_price * qty * (1 + COMMISSION)
-                # exit
-                exit_price = t.get('exit') or df['close'].shift(-1).loc[t['entry_date']]
+
+                # 3) determine exit
+                exit_date = t.get('exit_date')
+                exit_price = t.get('exit')
+                if exit_price is None:
+                    # exit next day close
+                    next_idx = df.index.get_loc(t['entry_date']) + 1
+                    if next_idx < len(df):
+                        exit_date = df.index[next_idx]
+                        exit_price = df['close'].iat[next_idx]
+                    else:
+                        continue
+                # simulate exit costs
                 sell_price = exit_price * (1 - SLIPPAGE)
                 proceeds = sell_price * qty * (1 - COMMISSION)
+
+                # 4) PnL and equity update
                 pnl = proceeds - cost
                 equity += pnl
                 peak_equity = max(peak_equity, equity)
-                drawdowns.append((peak_equity - equity) / peak_equity)
-                equity_curve.append({'date': t['exit_date'], 'equity': equity})
-                all_trades.append({'symbol': sym, 'strategy': strat.__class__.__name__, 'entry_date': t['entry_date'], 'exit_date': t['exit_date'], 'qty': qty, 'pnl': pnl})
-    # save
+                dd = (peak_equity - equity) / peak_equity
+                drawdowns.append(dd)
+                # record equity curve with date
+                equity_curve.append({'date': exit_date, 'equity': equity})
+
+                # log trade
+                all_trades.append({
+                    'symbol': sym,
+                    'strategy': strat.__class__.__name__,
+                    'entry_date': t['entry_date'],
+                    'exit_date': exit_date,
+                    'qty': qty,
+                    'entry': buy_price,
+                    'exit': sell_price,
+                    'pnl': pnl
+                })
+
+    # → save trades & equity curve
     pd.DataFrame(all_trades).to_csv('all_trades.csv', index=False)
-    ec = pd.DataFrame(equity_curve).set_index('date')
+    ec = pd.DataFrame(equity_curve)
+    if 'date' not in ec.columns:
+        raise KeyError("Equity curve records missing 'date' field")
+    ec = ec.set_index('date')
     ec.to_csv('equity_curve.csv')
+
+    # → performance summary
     returns = ec['equity'].pct_change().dropna()
     days = (ec.index[-1] - ec.index[0]).days / 365.25
-    cagr = (equity / INITIAL_EQUITY) ** (1/days) - 1
-    sharpe = returns.mean() / returns.std() * np.sqrt(252) if len(returns)>1 else np.nan
-    max_dd = max(drawdowns)*100 if drawdowns else 0
+    cagr = (equity / INITIAL_EQUITY) ** (1/days) - 1 if days > 0 else np.nan
+    sharpe = returns.mean() / returns.std() * np.sqrt(252) if len(returns) > 1 else np.nan
+    max_dd = max(drawdowns) * 100 if drawdowns else 0.0
+
     print(f"CAGR: {cagr:.2%}  |  Sharpe: {sharpe:.2f}  |  Max DD: {max_dd:.1f}%")
 
 if __name__ == '__main__':

@@ -7,6 +7,7 @@ import json
 import matplotlib.pyplot as plt
 from kiteconnect import KiteConnect
 from datetime import datetime
+from pytz import timezone
 
 from credentials import load_secrets, get_kite, validate_kite
 from data_fetch import fetch_historical_candles, get_live_ltp
@@ -17,11 +18,10 @@ from stock_analysis import analyze_stock, get_regime
 from bulk_analysis import analyze_multiple_stocks
 from telegram_utils import send_telegram
 
-# 🟢 Helper: Compute Trailing Stop Loss
+# Helper functions
 def compute_trailing_sl(cmp, atr, atr_multiplier=1.5):
     return round(cmp - atr * atr_multiplier, 2)
 
-# 🟢 Helper: Log trade to Google Sheet
 def log_trade_to_sheet(sheet, timestamp, symbol, quantity, price, action, note):
     sheet.append_row([
         timestamp,
@@ -32,8 +32,6 @@ def log_trade_to_sheet(sheet, timestamp, symbol, quantity, price, action, note):
         note
     ])
 
-# 🟢 Helper: Check Market Open
-from pytz import timezone
 def is_market_open():
     india = timezone("Asia/Kolkata")
     now = datetime.now(india)
@@ -43,7 +41,7 @@ def is_market_open():
         (now.hour < 15 or (now.hour == 15 and now.minute <= 30))
     )
 
-# 🟢 Load secrets and initialize Kite
+# Initialize
 secrets = load_secrets()
 BOT_TOKEN = secrets["telegram"]["bot_token"]
 CHAT_ID = secrets["telegram"]["chat_id"]
@@ -52,7 +50,7 @@ SPREADSHEET_KEY = secrets["google"]["spreadsheet_key"]
 st.set_page_config(page_title="Falāh Bot Dashboard", layout="wide")
 st.title("🟢 Falāh Trading Bot Dashboard")
 
-# ===== Monitor Service Status =====
+# Monitor Service
 pid_file = "/root/falah-ai-bot/monitor.pid"
 def is_monitor_running():
     if os.path.exists(pid_file):
@@ -102,7 +100,7 @@ with col3:
         subprocess.run(["python3", "monitor_runner.py", "--once"])
         st.success("Monitor cycle complete.")
 
-# ===== Access Token Management =====
+# Access Token Management
 with st.expander("🔑 Access Token Management"):
     st.subheader("Generate New Access Token")
     api_key = secrets["zerodha"]["api_key"]
@@ -131,15 +129,14 @@ with st.expander("🔑 Access Token Management"):
             except Exception as e:
                 st.error(f"Error: {e}")
 
-# ===== Capital Settings =====
+# Capital Settings
 st.sidebar.header("⚙️ Capital & Trade Settings")
 total_capital = st.sidebar.number_input("Total Daily Capital (₹)", min_value=1000, value=100000, step=5000)
 max_trades = st.sidebar.slider("Max Number of Trades", 1, 10, 5)
 dry_run = st.sidebar.checkbox("Dry Run Mode (No Orders)", value=True)
 
-# ===== Auto Scanner =====
+# Auto Scanner
 st.subheader("🔍 Auto Scan for New Stocks")
-
 if st.button("Scan Stocks"):
     st.info("Running scanner...")
     df = run_smart_scan()
@@ -148,7 +145,6 @@ if st.button("Scan Stocks"):
     else:
         st.session_state["scanned_data"] = df
 
-# Always display if data exists
 if "scanned_data" in st.session_state:
     df = st.session_state["scanned_data"]
     st.dataframe(df, use_container_width=True)
@@ -164,25 +160,21 @@ if "scanned_data" in st.session_state:
                 st.error("Invalid token.")
                 st.stop()
 
-            # Compute weights based on AI Score
             df_selected = df[df["Symbol"].isin(selected)]
             df_selected["Weight"] = df_selected["AI_Score"] / df_selected["AI_Score"].sum()
 
             for _, row in df_selected.iterrows():
                 sym = row["Symbol"]
                 weight = row["Weight"]
-                ai_score = row["AI_Score"]
-
                 cmp = get_live_ltp(kite, sym)
                 allocated_capital = total_capital * weight
                 qty = max(1, int(allocated_capital / cmp))
-
                 trailing_sl = compute_trailing_sl(cmp, row["ATR"])
                 target_price = round(cmp + (cmp - trailing_sl) * 3, 2)
 
                 msg = (
                     f"🚀 <b>Auto Trade</b>\n"
-                    f"{sym}\nQty: {qty}\nEntry: ₹{cmp}\nSL: ₹{trailing_sl}\nTarget: ₹{target_price}\nAI Score: {ai_score}"
+                    f"{sym}\nQty: {qty}\nEntry: ₹{cmp}\nSL: ₹{trailing_sl}\nTarget: ₹{target_price}\nAI Score: {row['AI_Score']}"
                 )
 
                 if dry_run:
@@ -205,7 +197,6 @@ if "scanned_data" in st.session_state:
                         st.success(f"✅ Order placed for {sym}")
                         send_telegram(BOT_TOKEN, CHAT_ID, msg)
 
-                        # Log trade
                         from gspread import authorize
                         from oauth2client.service_account import ServiceAccountCredentials
                         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -218,7 +209,7 @@ if "scanned_data" in st.session_state:
                     except Exception as e:
                         st.error(f"Error placing order for {sym}: {e}")
 
-# ===== Manual Stock Lookup =====
+# Manual Stock Lookup
 st.subheader("🔍 Manual Stock Lookup")
 symbol_input = st.text_input("Enter NSE Symbol (e.g., INFY)").strip().upper()
 if st.button("Fetch Stock Data"):
@@ -233,38 +224,21 @@ if st.button("Fetch Stock Data"):
             result = analyze_stock(kite, symbol_input)
             st.write(f"✅ CMP: ₹{result['cmp']:.2f}")
             st.write(f"ATR(14): {result['atr']:.2f}")
-            st.write(f"Trailing SL: ₹{result['trailing_sl']:.2f}")
+            trailing_sl = compute_trailing_sl(result['cmp'], result['atr'])
+            target_price = round(result['cmp'] + (result['cmp'] - trailing_sl) * 3, 2)
+            st.write(f"Trailing SL: ₹{trailing_sl}")
+            st.write(f"Target Price (1:3 R/R): ₹{target_price}")
             st.write(f"ADX: {result['adx']:.2f} ({get_regime(result['adx'])})")
             st.write(f"RSI: {result['rsi']:.2f} ({result['rsi_percentile']*100:.1f}% percentile)")
-            st.write(
-                f"Bollinger Bands: Upper ₹{result['bb_upper']:.2f}, Mid ₹{result['bb_mid']:.2f}, Lower ₹{result['bb_lower']:.2f}"
-            )
             st.write(f"Relative Strength: {result['rel_strength']:.2f}")
-            st.write(f"Risk per share: ₹{result['risk']:.2f}, Reward per share: ₹{result['reward']:.2f}")
-            st.write(f"Backtest Win Rate: {result['backtest_winrate']:.1f}%")
-            st.write(f"🚦 Recommendation: **{result['recommendation']}**")
             st.write(f"AI Exit Score: {result['ai_score']}")
-            st.write("Reasons:", result["reasons"])
+            st.write(f"Recommendation: **{result['recommendation']}**")
             st.dataframe(result["history"].tail(10))
 
-            fig, ax = plt.subplots()
-            ax.plot(result["history"]["Date"], result["history"]["RSI"], label="RSI")
-            ax.axhline(70, color="red", linestyle="--")
-            ax.axhline(30, color="green", linestyle="--")
-            ax.set_title("RSI Over Time")
-            ax.legend()
-            st.pyplot(fig)
-
-            fig2, ax2 = plt.subplots()
-            ax2.plot(result["history"]["Date"], result["history"]["Close"], label="Close")
-            ax2.plot(result["history"]["Date"], result["history"]["Supertrend"], label="Supertrend")
-            ax2.set_title("Price vs Supertrend")
-            ax2.legend()
-            st.pyplot(fig2)
         except Exception as e:
             st.error(f"Error fetching data: {e}")
 
-# ===== Bulk Analysis =====
+# Bulk Analysis
 st.subheader("📊 Bulk Stock Analysis")
 symbols_input = st.text_area(
     "Enter NSE symbols separated by commas (e.g., INFY,TCS,HDFCBANK):"
@@ -299,10 +273,9 @@ if st.button("Analyze Stocks"):
         df = pd.DataFrame(rows)
         st.dataframe(df)
 
-# ===== Bot Controls =====
+# Bot Controls
 st.subheader("⚙️ Bot Controls")
 col1, col2, col3 = st.columns(3)
-
 with col1:
     if st.button("📥 Fetch Historical Data"):
         fetch_all_historical()

@@ -68,15 +68,14 @@ def load_historical_df(symbol):
         return None
     df = pd.read_csv(path)
     # Normalize column names
-    df.columns = [c.strip().capitalize() for c in df.columns]
-    # Check required columns
-    if not all(c in df.columns for c in ["Date", "High", "Low", "Close", "Volume"]):
-        print(f"⚠️ Historical data for {symbol} is missing required columns. Found columns: {df.columns.tolist()}")
+    df.columns = [c.strip().lower() for c in df.columns]
+    # Ensure required columns
+    required = {"date", "high", "low", "close", "volume"}
+    if not required.issubset(df.columns):
+        print(f"⚠️ Historical data for {symbol} missing columns: {required - set(df.columns)}")
         return None
-    # Parse date
-    df["Date"] = pd.to_datetime(df["Date"])
-    # Sort and set index
-    df = df.sort_values("Date").set_index("Date")
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date").reset_index(drop=True)
     return df
 
 # 🟢 Load Nifty for relative strength
@@ -86,7 +85,7 @@ if nifty_df is None:
 
 # 🟢 Market regime detection
 def detect_market_regime(df):
-    adx = ta.adx(high=df["High"], low=df["Low"], close=df["Close"], length=14)
+    adx = ta.adx(high=df["high"], low=df["low"], close=df["close"], length=14)
     if adx["ADX_14"].iloc[-1] > 25:
         return "TREND"
     else:
@@ -99,7 +98,6 @@ def monitor_positions(loop=True):
     while True:
         print("\n==============================")
         print(f"🕒 {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Scanning positions...")
-        positions = kite.positions()["net"]
         holdings = kite.holdings()
 
         if not holdings:
@@ -125,14 +123,13 @@ def monitor_positions(loop=True):
                 print(f"⚠️ No historical data for {symbol}. Skipping.")
                 continue
 
-            df.columns = [c.lower() for c in df.columns]
-
+            # Indicators
             df["vwap"] = ta.vwap(df["high"], df["low"], df["close"], df["volume"])
-            df["atr"] = ta.atr(df["High"], df["Low"], df["Close"], length=14)
-            rsi_series = ta.rsi(df["Close"], length=14)
+            df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+            rsi_series = ta.rsi(df["close"], length=14)
 
             regime = detect_market_regime(df)
-            rel_strength = df["Close"].iloc[-1] / nifty_df["Close"].iloc[-1]
+            rel_strength = df["close"].iloc[-1] / nifty_df["close"].iloc[-1]
             rsi_latest = rsi_series.iloc[-1]
             rsi_percentile = (rsi_latest - rsi_series.min()) / (rsi_series.max() - rsi_series.min())
 

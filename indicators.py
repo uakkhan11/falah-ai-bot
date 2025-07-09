@@ -22,8 +22,8 @@ def detect_rsi_ema_signals(df, rsi_period=14, ema_period=21, rsi_threshold=60):
     """
     Returns True if RSI > threshold and Close > EMA.
     """
-    rsi = RSIIndicator(df['Close'], window=rsi_period).rsi()
-    ema = EMAIndicator(df['Close'], window=ema_period).ema_indicator()
+    rsi = RSIIndicator(df['close'], window=rsi_period).rsi()
+    ema = EMAIndicator(df['close'], window=ema_period).ema_indicator()
     last_rsi = rsi.iloc[-1]
     last_close = df['Close'].iloc[-1]
     last_ema = ema.iloc[-1]

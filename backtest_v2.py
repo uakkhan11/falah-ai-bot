@@ -20,6 +20,12 @@ equity        = INITIAL_EQUITY
 peak_equity   = INITIAL_EQUITY
 drawdowns     = []
 equity_curve  = []
+for trade in all_trades:
+    # … compute cum_pl or current equity …
+    equity_curve.append({
+        "equity": cum_equity,
+        # you’re missing the date here!
+    })
 all_trades    = []
 
 # ───── STRATEGY INTERFACE ─────────────────────────────────────
@@ -109,6 +115,57 @@ class VolumeBreakoutStrategy(BaseStrategy):
                     in_trade = False
         return signals
 
+from ai_engine import calculate_ai_exit_score
+
+class AIScoreExitStrategy(BaseStrategy):
+    """
+    Enter on a simple breakout (close > SMA20); exit whenever
+    calculate_ai_exit_score(df_up_to_now, trailing_sl, current_price)
+    exceeds ai_exit_threshold.
+    """
+    def __init__(self, ai_exit_threshold=70):
+        self.threshold = ai_exit_threshold
+
+    def generate_signals(self, df):
+        df = df.copy()
+        df["SMA20"] = df["close"].rolling(20).mean()
+        signals, in_trade = [], False
+
+        for i in range(20, len(df)):
+            date = df.index[i]
+            price = df["close"].iat[i]
+            # entry
+            if not in_trade and price > df["SMA20"].iat[i]:
+                # initial SL (2% ATR-based or fixed 2%)
+                atr = df["high"].sub(df["low"]).rolling(14).mean().iat[i]
+                trailing_sl = price - 1.5*atr
+                signals.append({
+                    "entry_date": date,
+                    "entry": price,
+                    "sl": trailing_sl,
+                    "tp": None  # we won’t use a fixed TP here
+                })
+                in_trade = True
+
+            # exit
+            elif in_trade:
+                hist = df.iloc[: i+1].reset_index()
+                last = signals[-1]
+                ai_score, _ = calculate_ai_exit_score(
+                    stock_data=hist,
+                    trailing_sl=last["sl"],
+                    current_price=price,
+                    atr_value=atr
+                )
+                if ai_score >= self.threshold:
+                    signals[-1].update({
+                        "exit_date": date,
+                        "exit": price
+                    })
+                    in_trade = False
+
+        return signals
+
 # ───── BACKTEST ENGINE ────────────────────────────────────────
 def backtest():
     global equity, peak_equity
@@ -116,7 +173,8 @@ def backtest():
     strategies = [
         EMACrossoverStrategy(),
         RSIStrategy(),
-        VolumeBreakoutStrategy()
+        VolumeBreakoutStrategy(),
+        AIScoreExitStrategy(ai_exit_threshold=70)
     ]
 
     for sym in SYMBOLS:

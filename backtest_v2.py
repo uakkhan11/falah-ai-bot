@@ -1,9 +1,11 @@
 # backtest_v2.py
 
-import os, pandas as pd, numpy as np
+import os
+import pandas as pd
+import numpy as np
 from datetime import datetime
 
-# --- CONFIGURATION ---
+# ───── CONFIG ─────────────────────────────────────────────────
 DATA_DIR        = "./historical_data"
 SYMBOLS         = ["INFY","TCS","HDFCBANK"]
 START_DATE      = "2018-01-01"
@@ -13,73 +15,109 @@ RISK_PER_TRADE  = 0.02    # 2% of current equity
 COMMISSION      = 0.0005  # 0.05%
 SLIPPAGE        = 0.0005  # 0.05%
 
-# --- METRICS STORAGE ---
-equity = INITIAL_EQUITY
-peak   = INITIAL_EQUITY
-drawdowns = []
-equity_curve = []
+# ───── STORAGE ────────────────────────────────────────────────
+equity        = INITIAL_EQUITY
+peak_equity   = INITIAL_EQUITY
+drawdowns     = []
+equity_curve  = []
+all_trades    = []
 
-trades = []  # list of dicts
-
-# --- STRATEGY INTERFACE ---
+# ───── STRATEGY INTERFACE ─────────────────────────────────────
 class BaseStrategy:
     def generate_signals(self, df):
         """
-        Should return a DataFrame with columns:
-           'entry_price','stop_loss','target','exit_price' (nan if open)
-        indexed by date.  Fill exit_price when SL/TP hit.
+        Returns a list of trades:
+         [
+           {"entry_date":…, "entry":…, "sl":…, "tp":…, "exit_date":…, "exit":…},
+           …
+         ]
         """
         raise NotImplementedError
 
-# --- EXAMPLE STRATEGIES ---
+# ───── EXAMPLE STRATEGIES ─────────────────────────────────────
 class EMACrossoverStrategy(BaseStrategy):
     def generate_signals(self, df):
         df = df.copy()
         df["EMA10"] = df["close"].ewm(span=10).mean()
         df["EMA21"] = df["close"].ewm(span=21).mean()
-        signals = []
-        in_trade = False
+        signals, in_trade = [], False
 
         for i in range(21, len(df)):
-            date = df.index[i]
-            price = df["close"].iat[i]
+            date, price = df.index[i], df["close"].iat[i]
             if not in_trade and df["EMA10"].iat[i] > df["EMA21"].iat[i]:
-                # enter
-                sl = price * 0.98   # fixed 2% SL
-                tp = price * 1.06   # fixed 3×SL ≈ 6%
-                signals.append({"date": date, "entry": price, "sl": sl, "tp": tp})
+                sl, tp = price * 0.98, price * 1.06  # 2% SL, 6% TP (~3×SL)
+                signals.append({"entry_date": date, "entry": price, "sl": sl, "tp": tp})
                 in_trade = True
             elif in_trade:
-                # check SL/TP
-                entry, sl, tp = (signals[-1]["entry"], signals[-1]["sl"], signals[-1]["tp"])
                 low, high = df["low"].iat[i], df["high"].iat[i]
-                if low <= sl:
-                    exit_p = sl
-                elif high >= tp:
-                    exit_p = tp
-                else:
-                    continue
-                signals[-1].update({"exit_date": date, "exit": exit_p})
-                in_trade = False
+                exit_price = None
+                if low <= signals[-1]["sl"]:
+                    exit_price = signals[-1]["sl"]
+                elif high >= signals[-1]["tp"]:
+                    exit_price = signals[-1]["tp"]
+                if exit_price is not None:
+                    signals[-1].update({"exit_date": date, "exit": exit_price})
+                    in_trade = False
 
-        return pd.DataFrame(signals).set_index("date")
+        return signals
 
 class RSIStrategy(BaseStrategy):
     def generate_signals(self, df):
         df = df.copy()
-        df["RSI"] = pd.Series(df["close"]).rolling(14).apply(
-            lambda x: np.where(
-                (x.diff() > 0).sum() / 14 > 0.5, 1, 0
-            )
-        )
-        # ... your RSI oversold logic ...
-        return pd.DataFrame()  # implement similarly
+        # compute RSI
+        delta = df["close"].diff()
+        gain = delta.clip(lower=0).rolling(14).mean()
+        loss = -delta.clip(upper=0).rolling(14).mean()
+        df["RSI"] = 100 - 100/(1 + gain/loss)
 
-# --- BACKTEST ENGINE ---
+        signals, in_trade = [], False
+        for i in range(14, len(df)):
+            date, price, rsi = df.index[i], df["close"].iat[i], df["RSI"].iat[i]
+            if not in_trade and rsi < 30:
+                sl, tp = price * 0.98, price * 1.06
+                signals.append({"entry_date": date, "entry": price, "sl": sl, "tp": tp})
+                in_trade = True
+            elif in_trade:
+                if rsi > 50:
+                    signals[-1].update({"exit_date": date, "exit": price})
+                    in_trade = False
+        return signals
+
+class VolumeBreakoutStrategy(BaseStrategy):
+    def generate_signals(self, df):
+        df = df.copy()
+        df["vol_avg"] = df["volume"].rolling(20).mean()
+        signals, in_trade = [], False
+
+        for i in range(20, len(df)):
+            date = df.index[i]
+            price = df["close"].iat[i]
+            vol, vol_avg = df["volume"].iat[i], df["vol_avg"].iat[i]
+            if not in_trade and vol > 1.5 * vol_avg:
+                sl, tp = price * 0.98, price * 1.06
+                signals.append({"entry_date": date, "entry": price, "sl": sl, "tp": tp})
+                in_trade = True
+            elif in_trade:
+                low, high = df["low"].iat[i], df["high"].iat[i]
+                exit_price = None
+                if low <= signals[-1]["sl"]:
+                    exit_price = signals[-1]["sl"]
+                elif high >= signals[-1]["tp"]:
+                    exit_price = signals[-1]["tp"]
+                if exit_price:
+                    signals[-1].update({"exit_date": date, "exit": exit_price})
+                    in_trade = False
+        return signals
+
+# ───── BACKTEST ENGINE ────────────────────────────────────────
 def backtest():
-    global equity, peak
+    global equity, peak_equity
 
-    strategies = [EMACrossoverStrategy() /*, RSIStrategy(), ...*/]
+    strategies = [
+        EMACrossoverStrategy(),
+        RSIStrategy(),
+        VolumeBreakoutStrategy()
+    ]
 
     for sym in SYMBOLS:
         path = os.path.join(DATA_DIR, f"{sym}.csv")
@@ -91,55 +129,62 @@ def backtest():
         df = df.loc[START_DATE:END_DATE]
 
         for strat in strategies:
-            sigs = strat.generate_signals(df)
-            for dt, row in sigs.iterrows():
-                entry, sl, tp = row["entry"], row["sl"], row["tp"]
-                # position sizing
-                risk_amt = equity * RISK_PER_TRADE
-                qty = int(risk_amt / (entry - sl))
-                if qty <= 0: continue
+            trades = strat.generate_signals(df)
+            for t in trades:
+                entry, sl, tp = t["entry"], t["sl"], t["tp"]
+                # 1) position sizing
+                risk_amount = equity * RISK_PER_TRADE
+                qty = int(risk_amount / (entry - sl))
+                if qty < 1: continue
 
-                # simulate commission & slippage
-                buy_price  = entry * (1 + SLIPPAGE)
-                cost       = buy_price * qty * (1 + COMMISSION)
+                # 2) simulate slippage & commission on entry
+                buy_price = entry*(1+SLIPPAGE)
+                cost = buy_price*qty*(1+COMMISSION)
 
-                exit_price = row.get("exit", np.nan)
-                if pd.isna(exit_price):
-                    # default to close price next bar
-                    exit_price = df.loc[dt:]["close"].iat[1]
-                sell_price = exit_price * (1 - SLIPPAGE)
-                proceeds   = sell_price * qty * (1 - COMMISSION)
+                # 3) decide exit
+                exit_price = t.get("exit")
+                if exit_price is None:
+                    # if no SL/TP hit, exit at next day’s close
+                    next_idx = df.index.get_loc(t["entry_date"]) + 1
+                    if next_idx < len(df):
+                        exit_price = df["close"].iat[next_idx]
+                    else:
+                        continue
+                sell_price = exit_price*(1-SLIPPAGE)
+                proceeds = sell_price*qty*(1-COMMISSION)
 
+                # 4) pnl & equity update
                 pnl = proceeds - cost
                 equity += pnl
-                peak = max(peak, equity)
-                dd   = (peak - equity) / peak
+                peak_equity = max(peak_equity, equity)
+                dd = (peak_equity - equity)/peak_equity
                 drawdowns.append(dd)
-                equity_curve.append({"date": dt, "equity": equity})
+                equity_curve.append({"date": t["exit_date"], "equity": equity})
 
-                trades.append({
+                all_trades.append({
                     "symbol": sym,
                     "strategy": strat.__class__.__name__,
-                    "entry_date": dt,
-                    "exit_date": row["exit_date"],
-                    "qty": qty,
-                    "entry": buy_price,
-                    "exit": sell_price,
-                    "pnl": pnl
+                    "entry_date": t["entry_date"],
+                    "exit_date":  t["exit_date"],
+                    "qty":        qty,
+                    "entry":      buy_price,
+                    "exit":       sell_price,
+                    "pnl":        pnl
                 })
 
-    # dump trades
-    pd.DataFrame(trades).to_csv("all_trades.csv", index=False)
-    # equity curve
+    # → save trades & equity curve
+    pd.DataFrame(all_trades).to_csv("all_trades.csv", index=False)
     ec = pd.DataFrame(equity_curve).set_index("date")
     ec.to_csv("equity_curve.csv")
-    # summary metrics
-    ret = ec["equity"].pct_change().dropna()
-    cagr = (equity / INITIAL_EQUITY) ** (1 / ((ec.index[-1]-ec.index[0]).days/365.)) -1
-    sharpe = ret.mean()/ret.std()*np.sqrt(252)
-    max_dd = max(drawdowns)*100
 
-    print(f"CAGR {cagr:.2%} | Sharpe {sharpe:.2f} | MaxDD {max_dd:.1f}%")
+    # → performance summary
+    returns = ec["equity"].pct_change().dropna()
+    days = (ec.index[-1] - ec.index[0]).days/365.25
+    cagr = (equity/INITIAL_EQUITY)**(1/days)-1
+    sharpe = returns.mean()/returns.std()*np.sqrt(252) if len(returns)>1 else np.nan
+    max_dd = max(drawdowns)*100 if drawdowns else 0.0
 
-if __name__=="__main__":
+    print(f"CAGR: {cagr:.2%}  |  Sharpe: {sharpe:.2f}  |  Max DD: {max_dd:.1f}%")
+
+if __name__ == "__main__":
     backtest()

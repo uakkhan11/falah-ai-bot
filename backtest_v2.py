@@ -167,16 +167,9 @@ def backtest():
                 peak_equity = max(peak_equity, equity)
                 drawdowns.append((peak_equity - equity) / peak_equity)
                 exit_date = t['exit_date'] if t.get('exit_date') else df.index[next_idx]
-                equity_curve.append({'date': exit_date, 'equity': equity})
-                all_trades.append({
-                    'symbol': sym,
-                    'strategy': strat.__class__.__name__,
-                    'entry_date': t['entry_date'],
-                    'exit_date': exit_date,
-                    'qty': qty,
-                    'entry': buy_price,
-                    'exit': sell_price,
-                    'pnl': pnl
+                equity_curve.append({
+                    "date": t["exit_date"],
+                    "equity": equity
                 })
 
     trades_df = pd.DataFrame(all_trades)

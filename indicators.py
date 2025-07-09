@@ -36,7 +36,7 @@ def detect_3green_days(df):
     if len(df) < 3:
         return False
     last_3 = df.iloc[-3:]
-    return all(last_3['close'] > last_3['Open'])
+    return all(last_3['close'] > last_3['open'])
 
 def detect_darvas_box(df, lookback=20):
     """

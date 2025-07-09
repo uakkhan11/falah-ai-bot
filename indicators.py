@@ -13,7 +13,7 @@ def detect_breakout(df, threshold=1.02):
     """
     if len(df) < 2:
         return False, None
-    prev_high = df['High'].iloc[-2]
+    prev_high = df['high'].iloc[-2]
     curr_close = df['close'].iloc[-1]
     is_breakout = curr_close > prev_high * threshold
     return is_breakout, round(prev_high * threshold, 2)
@@ -45,7 +45,7 @@ def detect_darvas_box(df, lookback=20):
     """
     if len(df) < lookback + 1:
         return False, None
-    recent_high = df['High'].iloc[-lookback:-1].max()
+    recent_high = df['high'].iloc[-lookback:-1].max()
     curr_close = df['close'].iloc[-1]
     is_breakout = curr_close > recent_high
     return is_breakout, round(recent_high, 2)

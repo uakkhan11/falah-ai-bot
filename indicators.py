@@ -76,9 +76,9 @@ def check_supertrend_flip(kite, symbol, period=10, multiplier=3):
         )
         df = pd.DataFrame(hist)
         supertrend = pta.supertrend(
-            high=df["High"],
-            low=df["Low"],
-            close=df["Close"],
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
             length=period,
             multiplier=multiplier
         )
@@ -117,9 +117,9 @@ def calculate_atr_trailing_sl(kite, symbol, cmp, atr_multiplier=1.5):
         )
         df = pd.DataFrame(hist)
         atr = AverageTrueRange(
-            high=df["High"],
-            low=df["Low"],
-            close=df["Close"],
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
             window=14
         ).average_true_range().iloc[-1]
         trailing_sl = round(cmp - atr * atr_multiplier, 2)
@@ -141,12 +141,12 @@ def check_rsi_bearish_divergence(kite, symbol, lookback=5):
             interval="day"
         )
         df = pd.DataFrame(hist)
-        df["rsi"] = RSIIndicator(df["Close"], window=14).rsi()
+        df["rsi"] = RSIIndicator(df["close"], window=14).rsi()
 
         if len(df) < lookback + 1:
             return False
 
-        price_highs = df["Close"].iloc[-lookback:]
+        price_highs = df["close"].iloc[-lookback:]
         rsi_values = df["rsi"].iloc[-lookback:]
 
         if price_highs.is_monotonic_increasing and rsi_values.is_monotonic_decreasing:
@@ -170,12 +170,12 @@ def check_vwap_cross(kite, symbol):
             interval="day"
         )
         df = pd.DataFrame(hist)
-        df["typical_price"] = (df["High"] + df["Low"] + df["Close"]) / 3
-        df["cum_tp_vol"] = (df["typical_price"] * df["Volume"]).cumsum()
-        df["cum_vol"] = df["Volume"].cumsum()
+        df["typical_price"] = (df["high"] + df["low"] + df["close"]) / 3
+        df["cum_tp_vol"] = (df["typical_price"] * df["volume"]).cumsum()
+        df["cum_vol"] = df["volume"].cumsum()
         df["vwap"] = df["cum_tp_vol"] / df["cum_vol"]
         last_vwap = df["vwap"].iloc[-1]
-        cmp = df["Close"].iloc[-1]
+        cmp = df["close"].iloc[-1]
         return cmp < last_vwap
     except Exception as e:
         print(f"⚠️ VWAP cross check failed for {symbol}: {e}")

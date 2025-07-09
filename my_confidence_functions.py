@@ -69,3 +69,16 @@ def compute_quantity(allocated_capital, current_price, min_lot_size=1):
     if qty < min_lot_size:
         return min_lot_size
     return qty
+
+def compute_trailing_stop(entry_price, atr_value, rrr=3.0):
+    """
+    Compute a dynamic trailing stop level.
+    Default logic:
+    - Initial stop = entry - 1.5 * ATR
+    - Target = entry + RRR * (entry - stop)
+    """
+    stop_loss = entry_price - (1.5 * atr_value)
+    target = entry_price + rrr * (entry_price - stop_loss)
+
+    return round(stop_loss, 2), round(target, 2)
+

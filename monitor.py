@@ -122,7 +122,10 @@ def monitor_positions(loop=True):
             if df is None:
                 print(f"⚠️ No historical data for {symbol}. Skipping.")
                 continue
-
+                
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.set_index("date").sort_index()
+            
             # Indicators
             df["vwap"] = ta.vwap(df["high"], df["low"], df["close"], df["volume"])
             df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)

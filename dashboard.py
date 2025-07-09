@@ -6,23 +6,54 @@ import signal
 import json
 import matplotlib.pyplot as plt
 from kiteconnect import KiteConnect
+from datetime import datetime
 
 from credentials import load_secrets, get_kite, validate_kite
 from data_fetch import fetch_historical_candles, get_live_ltp
 from fetch_historical_batch import fetch_all_historical
 from smart_scanner import run_smart_scan
 from ws_live_prices import start_all_websockets
-
 from stock_analysis import analyze_stock, get_regime
 from bulk_analysis import analyze_multiple_stocks
 from telegram_utils import send_telegram
+
+# 🟢 Helper: Compute Trailing Stop Loss
+def compute_trailing_sl(cmp, atr, atr_multiplier=1.5):
+    return round(cmp - atr * atr_multiplier, 2)
+
+# 🟢 Helper: Log trade to Google Sheet
+def log_trade_to_sheet(sheet, timestamp, symbol, quantity, price, action, note):
+    sheet.append_row([
+        timestamp,
+        symbol,
+        quantity,
+        price,
+        action,
+        note
+    ])
+
+# 🟢 Helper: Check Market Open
+from pytz import timezone
+def is_market_open():
+    india = timezone("Asia/Kolkata")
+    now = datetime.now(india)
+    return (
+        now.weekday() < 5 and
+        now.hour >= 9 and
+        (now.hour < 15 or (now.hour == 15 and now.minute <= 30))
+    )
+
+# 🟢 Load secrets and initialize Kite
+secrets = load_secrets()
+BOT_TOKEN = secrets["telegram"]["bot_token"]
+CHAT_ID = secrets["telegram"]["chat_id"]
+SPREADSHEET_KEY = secrets["google"]["spreadsheet_key"]
 
 st.set_page_config(page_title="Falāh Bot Dashboard", layout="wide")
 st.title("🟢 Falāh Trading Bot Dashboard")
 
 # ===== Monitor Service Status =====
 pid_file = "/root/falah-ai-bot/monitor.pid"
-
 def is_monitor_running():
     if os.path.exists(pid_file):
         with open(pid_file, "r") as f:
@@ -74,7 +105,6 @@ with col3:
 # ===== Access Token Management =====
 with st.expander("🔑 Access Token Management"):
     st.subheader("Generate New Access Token")
-    secrets = load_secrets()
     api_key = secrets["zerodha"]["api_key"]
     api_secret = secrets["zerodha"]["api_secret"]
     kite = KiteConnect(api_key=api_key)
@@ -97,9 +127,6 @@ with st.expander("🔑 Access Token Management"):
                 with open("/root/falah-ai-bot/secrets.json", "w") as f:
                     json.dump(secrets_data, f, indent=2)
 
-                with open("/root/falah-ai-bot/access_token.json", "w") as f:
-                    json.dump({"access_token": access_token}, f)
-
                 st.success("✅ Access token saved successfully.")
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -119,31 +146,53 @@ if st.button("Scan Stocks"):
     if df.empty:
         st.warning("No signals.")
     else:
-        st.session_state["scanned_data"] = df  # only save
+        st.session_state["scanned_data"] = df
 
 # Always display if data exists
 if "scanned_data" in st.session_state:
     df = st.session_state["scanned_data"]
     st.dataframe(df, use_container_width=True)
     selected = st.multiselect("Select stocks to BUY", options=df["Symbol"].tolist())
-    
+
     if st.button("🚀 Place Orders for Selected"):
         if not selected:
             st.warning("No stocks selected.")
         else:
             st.info("Placing orders...")
-            per_trade_capital = total_capital / max_trades
             kite = get_kite()
             if not validate_kite(kite):
                 st.error("Invalid token.")
                 st.stop()
-            for sym in selected:
-                try:
-                    cmp = get_live_ltp(kite, sym)
-                    qty = int(per_trade_capital / cmp)
-                    if dry_run:
-                        st.success(f"(Dry Run) Order prepared for {sym} (Qty={qty})")
-                    else:
+
+            # Compute weights based on AI Score
+            df_selected = df[df["Symbol"].isin(selected)]
+            df_selected["Weight"] = df_selected["AI_Score"] / df_selected["AI_Score"].sum()
+
+            for _, row in df_selected.iterrows():
+                sym = row["Symbol"]
+                weight = row["Weight"]
+                ai_score = row["AI_Score"]
+
+                cmp = get_live_ltp(kite, sym)
+                allocated_capital = total_capital * weight
+                qty = max(1, int(allocated_capital / cmp))
+
+                trailing_sl = compute_trailing_sl(cmp, row["ATR"])
+                target_price = round(cmp + (cmp - trailing_sl) * 3, 2)
+
+                msg = (
+                    f"🚀 <b>Auto Trade</b>\n"
+                    f"{sym}\nQty: {qty}\nEntry: ₹{cmp}\nSL: ₹{trailing_sl}\nTarget: ₹{target_price}\nAI Score: {ai_score}"
+                )
+
+                if dry_run:
+                    st.success(f"(Dry Run) {msg}")
+                    send_telegram(BOT_TOKEN, CHAT_ID, f"[DRY RUN]\n{msg}")
+                else:
+                    if not is_market_open():
+                        st.warning(f"Market closed for {sym}. Skipping.")
+                        continue
+                    try:
                         kite.place_order(
                             variety=kite.VARIETY_REGULAR,
                             exchange=kite.EXCHANGE_NSE,
@@ -154,8 +203,20 @@ if "scanned_data" in st.session_state:
                             product=kite.PRODUCT_CNC
                         )
                         st.success(f"✅ Order placed for {sym}")
-                except Exception as e:
-                    st.error(f"Error placing order for {sym}: {e}")
+                        send_telegram(BOT_TOKEN, CHAT_ID, msg)
+
+                        # Log trade
+                        from gspread import authorize
+                        from oauth2client.service_account import ServiceAccountCredentials
+                        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+                        creds = ServiceAccountCredentials.from_json_keyfile_name("falah-credentials.json", scope)
+                        gc = authorize(creds)
+                        sheet = gc.open_by_key(SPREADSHEET_KEY).worksheet("TradeLog")
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        log_trade_to_sheet(sheet, timestamp, sym, qty, cmp, "BUY", f"SL:{trailing_sl} Target:{target_price}")
+
+                    except Exception as e:
+                        st.error(f"Error placing order for {sym}: {e}")
 
 # ===== Manual Stock Lookup =====
 st.subheader("🔍 Manual Stock Lookup")

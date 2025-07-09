@@ -19,6 +19,12 @@ from indicators import (
     detect_macd_cross,
     detect_darvas_box
 )
+from trade_helpers import (
+    compute_trailing_sl,
+    send_telegram,
+    log_trade_to_sheet,
+    is_market_open
+)
 
 # 🟢 Load credentials
 with open("/root/falah-ai-bot/secrets.json", "r") as f:
@@ -142,7 +148,7 @@ def monitor_positions(loop=True):
             darvas, _ = detect_darvas_box(df)
 
             atr_value = df["atr"].iloc[-1]
-            trailing_sl = round(ltp - atr_value * (1.5 if rsi_percentile < 0.5 else 1.0), 2)
+            trailing_sl = compute_trailing_sl(df, atr_multiplier=1.5, lookback=10)
 
             # AI scoring
             ai_score = 0
@@ -217,9 +223,15 @@ def monitor_positions(loop=True):
                             product=kite.PRODUCT_CNC
                         )
                         send_telegram(f"⚠️ <b>Exit Triggered</b>\n{symbol}\nQty:{exit_qty}\nLTP:{ltp}\nReasons:{', '.join(reasons)}")
-                        log_sheet.append_row([
-                            timestamp, symbol, "SELL", exit_qty, ltp, "Exit Triggered", ", ".join(reasons)
-                        ])
+                        log_trade_to_sheet(
+                            log_sheet,
+                            timestamp,
+                            symbol,
+                            exit_qty,
+                            ltp,
+                            "Exit Triggered",
+                            ", ".join(reasons)
+                        )
                         print(f"✅ Exit order placed for {symbol}.")
                     except Exception as e:
                         send_telegram(f"❌ Exit error for {symbol}: {e}")

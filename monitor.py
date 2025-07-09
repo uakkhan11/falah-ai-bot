@@ -68,7 +68,7 @@ def load_historical_df(symbol):
         return None
     df = pd.read_csv(path)
     # Normalize column names
-    df.columns = [c.strip().lower() for c in df.columns]
+    # df.columns = [c.strip().lower() for c in df.columns]
     # Ensure required columns
     required = {"date", "high", "low", "close", "volume"}
     if not required.issubset(df.columns):

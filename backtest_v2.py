@@ -20,13 +20,7 @@ equity        = INITIAL_EQUITY
 peak_equity   = INITIAL_EQUITY
 drawdowns     = []
 equity_curve  = []
-for trade in all_trades:
-    # … compute cum_pl or current equity …
-    equity_curve.append({
-        "equity": cum_equity,
-        # you’re missing the date here!
-    })
-all_trades    = []
+all_trades    = []  # <— define before use
 
 # ───── STRATEGY INTERFACE ─────────────────────────────────────
 class BaseStrategy:
@@ -70,7 +64,6 @@ class EMACrossoverStrategy(BaseStrategy):
 class RSIStrategy(BaseStrategy):
     def generate_signals(self, df):
         df = df.copy()
-        # compute RSI
         delta = df["close"].diff()
         gain = delta.clip(lower=0).rolling(14).mean()
         loss = -delta.clip(upper=0).rolling(14).mean()
@@ -83,10 +76,9 @@ class RSIStrategy(BaseStrategy):
                 sl, tp = price * 0.98, price * 1.06
                 signals.append({"entry_date": date, "entry": price, "sl": sl, "tp": tp})
                 in_trade = True
-            elif in_trade:
-                if rsi > 50:
-                    signals[-1].update({"exit_date": date, "exit": price})
-                    in_trade = False
+            elif in_trade and rsi > 50:
+                signals[-1].update({"exit_date": date, "exit": price})
+                in_trade = False
         return signals
 
 class VolumeBreakoutStrategy(BaseStrategy):
@@ -119,9 +111,7 @@ from ai_engine import calculate_ai_exit_score
 
 class AIScoreExitStrategy(BaseStrategy):
     """
-    Enter on a simple breakout (close > SMA20); exit whenever
-    calculate_ai_exit_score(df_up_to_now, trailing_sl, current_price)
-    exceeds ai_exit_threshold.
+    Enter on close>SMA20; exit when AI exit score ≥ threshold.
     """
     def __init__(self, ai_exit_threshold=70):
         self.threshold = ai_exit_threshold
@@ -136,17 +126,13 @@ class AIScoreExitStrategy(BaseStrategy):
             price = df["close"].iat[i]
             # entry
             if not in_trade and price > df["SMA20"].iat[i]:
-                # initial SL (2% ATR-based or fixed 2%)
                 atr = df["high"].sub(df["low"]).rolling(14).mean().iat[i]
                 trailing_sl = price - 1.5*atr
                 signals.append({
-                    "entry_date": date,
-                    "entry": price,
-                    "sl": trailing_sl,
-                    "tp": None  # we won’t use a fixed TP here
+                    "entry_date": date, "entry": price,
+                    "sl": trailing_sl, "tp": None
                 })
                 in_trade = True
-
             # exit
             elif in_trade:
                 hist = df.iloc[: i+1].reset_index()
@@ -158,10 +144,7 @@ class AIScoreExitStrategy(BaseStrategy):
                     atr_value=atr
                 )
                 if ai_score >= self.threshold:
-                    signals[-1].update({
-                        "exit_date": date,
-                        "exit": price
-                    })
+                    signals[-1].update({"exit_date": date, "exit": price})
                     in_trade = False
 
         return signals
@@ -193,7 +176,8 @@ def backtest():
                 # 1) position sizing
                 risk_amount = equity * RISK_PER_TRADE
                 qty = int(risk_amount / (entry - sl))
-                if qty < 1: continue
+                if qty < 1:
+                    continue
 
                 # 2) simulate slippage & commission on entry
                 buy_price = entry*(1+SLIPPAGE)
@@ -202,7 +186,6 @@ def backtest():
                 # 3) decide exit
                 exit_price = t.get("exit")
                 if exit_price is None:
-                    # if no SL/TP hit, exit at next day’s close
                     next_idx = df.index.get_loc(t["entry_date"]) + 1
                     if next_idx < len(df):
                         exit_price = df["close"].iat[next_idx]
@@ -217,7 +200,11 @@ def backtest():
                 peak_equity = max(peak_equity, equity)
                 dd = (peak_equity - equity)/peak_equity
                 drawdowns.append(dd)
-                equity_curve.append({"date": t["exit_date"], "equity": equity})
+                # record equity curve at exit date
+                equity_curve.append({
+                    "date": t["exit_date"],
+                    "equity": equity
+                })
 
                 all_trades.append({
                     "symbol": sym,
@@ -238,7 +225,7 @@ def backtest():
     # → performance summary
     returns = ec["equity"].pct_change().dropna()
     days = (ec.index[-1] - ec.index[0]).days/365.25
-    cagr = (equity/INITIAL_EQUITY)**(1/days)-1
+    cagr = (equity/INITIAL_EQUITY)**(1/days)-1 if days>0 else np.nan
     sharpe = returns.mean()/returns.std()*np.sqrt(252) if len(returns)>1 else np.nan
     max_dd = max(drawdowns)*100 if drawdowns else 0.0
 

@@ -9,7 +9,6 @@ import pandas as pd
 import requests
 import pandas_ta as ta
 import gspread
-import csv
 from kiteconnect import KiteConnect
 from oauth2client.service_account import ServiceAccountCredentials
 from pytz import timezone
@@ -49,95 +48,68 @@ sheet = gc.open_by_key(SPREADSHEET_KEY)
 log_sheet = sheet.worksheet("TradeLog")
 monitor_sheet = sheet.worksheet("MonitoredStocks")
 
-# 🟢 Load Nifty data
-def load_historical_df(symbol):
-    path = f"/root/falah-ai-bot/historical_data/{symbol}.csv"
-    if not os.path.exists(path):
-        return None
-    df = pd.read_csv(path)
-    required = {"date", "high", "low", "close", "volume"}
-    if not required.issubset(df.columns):
-        print(f"⚠️ Missing columns for {symbol}: {required - set(df.columns)}")
-        return None
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values("date").reset_index(drop=True)
-    return df
+# 🟢 Load Nifty for relative strength
+nifty_df = pd.read_csv("/root/falah-ai-bot/historical_data/NIFTY.csv")
+nifty_df["date"] = pd.to_datetime(nifty_df["date"])
+nifty_df = nifty_df.sort_values("date").reset_index(drop=True)
 
-nifty_df = load_historical_df("NIFTY")
-if nifty_df is None:
-    raise Exception("NIFTY data required.")
-
-def detect_market_regime(df):
-    adx = ta.adx(df["high"], df["low"], df["close"], length=14)
-    return "TREND" if adx["ADX_14"].iloc[-1] > 25 else "RANGE"
-
-# 🟢 Local backup log file
-BACKUP_LOG_PATH = "/root/falah-ai-bot/monitor_log.csv"
-if not os.path.exists(BACKUP_LOG_PATH):
-    with open(BACKUP_LOG_PATH, "w") as f:
-        csv.writer(f).writerow([
-            "Timestamp", "Symbol", "Quantity", "AvgPrice", "LTP",
-            "TrailingSL", "RelStrength", "Regime", "AIScore", "Reasons"
-        ])
-
-# 🟢 Main loop
+# 🟢 Main monitoring loop
 def monitor_positions(loop=True):
-    send_telegram("✅ <b>Falāh Monitoring Started</b>\nMonitoring CNC positions.")
-    last_heartbeat = datetime.datetime.now()
+    send_telegram("✅ <b>Falāh Monitoring Started</b>")
+
+    # Track peak equity for drawdown
+    equity_peak = None
 
     while True:
-        now = datetime.datetime.now()
-        if (now - last_heartbeat).seconds >= 3600:
-            send_telegram("💓 Heartbeat: Monitoring script alive.")
-            last_heartbeat = now
-
         print("\n==============================")
-        print(f"🕒 {now.strftime('%Y-%m-%d %H:%M:%S')} - Scanning positions...")
         holdings = kite.holdings()
 
         if not holdings:
-            print("⚠️ No holdings found.")
-            time.sleep(900)
-            continue
+            print("⚠️ No CNC holdings.")
+        else:
+            print(f"✅ Found {len(holdings)} holdings.")
 
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         all_rows = []
-        timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+
+        # Compute portfolio value
+        portfolio_value = sum(h["last_price"] * h["quantity"] for h in holdings)
+        if equity_peak is None:
+            equity_peak = portfolio_value
+
+        drawdown_pct = (equity_peak - portfolio_value) / equity_peak * 100
+        print(f"Current Drawdown: {drawdown_pct:.2f}%")
+
+        if drawdown_pct >= 7:
+            send_telegram(f"❌ <b>Drawdown Limit Breached ({drawdown_pct:.2f}%)</b>. Exiting all positions.")
+            for pos in holdings:
+                kite.place_order(
+                    variety=kite.VARIETY_REGULAR,
+                    exchange=pos["exchange"],
+                    tradingsymbol=pos["tradingsymbol"],
+                    transaction_type=kite.TRANSACTION_TYPE_SELL,
+                    quantity=pos["quantity"],
+                    order_type=kite.ORDER_TYPE_MARKET,
+                    product=kite.PRODUCT_CNC
+                )
+                log_trade_to_sheet(
+                    log_sheet, timestamp, pos["tradingsymbol"], pos["quantity"], pos["last_price"],
+                    "Drawdown Exit", ""
+                )
+            break
 
         for pos in holdings:
             symbol = pos["tradingsymbol"]
             qty = pos["quantity"]
             avg_price = pos["average_price"]
-            exchange = pos["exchange"]
 
-            ltp = kite.ltp(f"{exchange}:{symbol}")[f"{exchange}:{symbol}"]["last_price"]
-            print(f"\n🔍 {symbol}: LTP = ₹{ltp}")
+            ltp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["last_price"]
+            df = pd.read_csv(f"/root/falah-ai-bot/historical_data/{symbol}.csv")
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.sort_values("date").reset_index(drop=True)
 
-            df = load_historical_df(symbol)
-            if df is None:
-                continue
-
-            df["vwap"] = ta.vwap(df["high"], df["low"], df["close"], df["volume"])
             df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
-            rsi_series = ta.rsi(df["close"], length=14)
-
-            regime = detect_market_regime(df)
-            rel_strength = df["close"].iloc[-1] / nifty_df["close"].iloc[-1]
-            rsi_latest = rsi_series.iloc[-1]
-            rsi_percentile = (rsi_latest - rsi_series.min()) / (rsi_series.max() - rsi_series.min())
-
-            adx_val = ta.adx(df["high"], df["low"], df["close"], length=14)["ADX_14"].iloc[-1]
-
-            # Dynamic trailing stop (suggestion #1)
-            atr_multiplier = 1.0 if adx_val > 35 else 1.5
-            trailing_sl = compute_trailing_sl(df, atr_multiplier=atr_multiplier)
-
-            # Target price logic (suggestion #2)
-            target_price = round(avg_price + (avg_price - trailing_sl) * 3, 2)
-
-            rsi_ema = detect_rsi_ema_signals(df)
-            macd_cross = detect_macd_cross(df)
-            three_green = detect_3green_days(df)
-            darvas, _ = detect_darvas_box(df)
+            trailing_sl = compute_trailing_sl(df)
 
             ai_score = 0
             reasons = []
@@ -146,102 +118,45 @@ def monitor_positions(loop=True):
                 ai_score += 15
                 reasons.append("Loss >2%")
 
-            if ltp >= target_price:
-                ai_score += 100
-                reasons.append("Target price hit")
-
-            if regime == "RANGE":
-                ai_score += 10
-                reasons.append("Market RANGE")
-
-            if ltp < df["vwap"].iloc[-1]:
-                ai_score += 10
-                reasons.append("Below VWAP")
-
-            if rel_strength < 0.98:
-                ai_score += 10
-                reasons.append("Weak relative strength")
-
-            if rsi_percentile < 0.2:
-                ai_score += 15
-                reasons.append("RSI oversold")
-            if rsi_percentile > 0.8:
-                ai_score += 15
-                reasons.append("RSI overbought")
-
-            weights = {"rsi_ema": 0.3, "macd_cross": 0.3, "three_green": 0.1, "darvas_box": 0.2}
-            if not rsi_ema:
-                ai_score += 100 * weights["rsi_ema"]
-                reasons.append("RSI/EMA weak")
-            if not macd_cross:
-                ai_score += 100 * weights["macd_cross"]
-                reasons.append("MACD no cross")
-            if not three_green:
-                ai_score += 100 * weights["three_green"]
-                reasons.append("No 3 green days")
-            if not darvas:
-                ai_score += 100 * weights["darvas_box"]
-                reasons.append("Darvas Box absent")
             if ltp < trailing_sl:
-                ai_score += 10
+                ai_score += 20
                 reasons.append("Trailing SL breached")
 
-            print(f"✅ AI Score: {ai_score} | {', '.join(reasons)}")
+            # Dynamic trailing SL adjustment: move up if price advances
+            new_sl = max(trailing_sl, avg_price + df["atr"].iloc[-1])
 
-            # Decide exit
-            exit_qty = qty if ai_score >= 70 else (int(qty * 0.5) if ai_score >= 50 else 0)
+            print(f"✅ {symbol} AI Score: {ai_score}")
+
+            exit_qty = qty if ai_score >= 20 else 0
 
             all_rows.append([
-                timestamp, symbol, qty, avg_price, ltp,
-                trailing_sl, round(rel_strength, 4), regime,
-                ai_score, ", ".join(reasons)
+                timestamp, symbol, qty, avg_price, ltp, trailing_sl,
+                "", ai_score, ", ".join(reasons) if reasons else "Holding"
             ])
 
-            # Local backup log (suggestion #5)
-            with open(BACKUP_LOG_PATH, "a") as f:
-                csv.writer(f).writerow([
-                    timestamp, symbol, qty, avg_price, ltp,
-                    trailing_sl, round(rel_strength, 4), regime,
-                    ai_score, "; ".join(reasons)
-                ])
-
-            # Exit order
             if exit_qty > 0:
                 if is_market_open():
-                    retries = 3
-                    while retries > 0:
-                        try:
-                            kite.place_order(
-                                variety=kite.VARIETY_REGULAR,
-                                exchange=exchange,
-                                tradingsymbol=symbol,
-                                transaction_type=kite.TRANSACTION_TYPE_SELL,
-                                quantity=exit_qty,
-                                order_type=kite.ORDER_TYPE_MARKET,
-                                product=kite.PRODUCT_CNC
-                            )
-                            send_telegram(f"⚠️ <b>Exit Triggered</b>\n{symbol}\nQty:{exit_qty}\nLTP:{ltp}\nReasons:{', '.join(reasons)}")
-                            log_trade_to_sheet(
-                                log_sheet, timestamp, symbol, exit_qty, ltp,
-                                "Exit Triggered", ", ".join(reasons)
-                            )
-                            print(f"✅ Exit order placed for {symbol}.")
-                            break
-                        except Exception as e:
-                            retries -= 1
-                            print(f"Retrying ({3-retries}/3)... {e}")
-                            time.sleep(3)
-                    else:
-                        send_telegram(f"❌ Failed exit after retries for {symbol}")
-                else:
-                    send_telegram(f"⚠️ Exit signal for {symbol}, but market closed.")
+                    kite.place_order(
+                        variety=kite.VARIETY_REGULAR,
+                        exchange="NSE",
+                        tradingsymbol=symbol,
+                        transaction_type=kite.TRANSACTION_TYPE_SELL,
+                        quantity=exit_qty,
+                        order_type=kite.ORDER_TYPE_MARKET,
+                        product=kite.PRODUCT_CNC
+                    )
+                    send_telegram(f"⚠️ Exit {symbol} Qty:{exit_qty} Reason:{', '.join(reasons)}")
+                    log_trade_to_sheet(
+                        log_sheet, timestamp, symbol, exit_qty, ltp,
+                        "Auto Exit", ", ".join(reasons)
+                    )
 
         if all_rows:
             monitor_sheet.append_rows(all_rows, value_input_option="USER_ENTERED")
 
-        print("✅ Monitoring cycle done.\n")
         if not loop:
             break
+
         time.sleep(900)
 
 if __name__ == "__main__":

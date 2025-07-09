@@ -20,6 +20,8 @@ def calculate_atr(df, period=14):
 # Compute Trailing Stop Loss
 # ========================
 def compute_trailing_sl(df, atr_multiplier=1.5, lookback=10):
+    df = df.copy()
+    df.columns = [c.strip().lower() for c in df.columns]
     atr = calculate_atr(df).iloc[-1]
     highest_close = df["close"].rolling(lookback).max().iloc[-1]
     trailing_sl = highest_close - atr * atr_multiplier

@@ -1,9 +1,15 @@
-def compute_confidence_score(stock_data):
+def compute_allocation_weight(confidence_score):
     """
-    Compute a confidence score (0-1) based on various factors.
-    This is a placeholder. You can customize the logic.
+    Return a numeric weight multiplier (e.g., 1.0 to 2.0) based on confidence.
     """
-    score = 0
+    if confidence_score >= 0.9:
+        return 1.5
+    elif confidence_score >= 0.75:
+        return 1.3
+    elif confidence_score >= 0.6:
+        return 1.1
+    else:
+        return 0.8
 
     # Example: Trend strength
     if stock_data["adx"] > 25:

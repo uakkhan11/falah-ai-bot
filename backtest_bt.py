@@ -1,144 +1,185 @@
-import backtrader as bt
+import os
+import argparse
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from ai_engine import calculate_ai_exit_score
 
 # ───── CONFIG ─────────────────────────────────────────────────
-DATA_DIR       = './historical_data'
-SYMBOLS        = ['INFY','TCS','HDFCBANK']
-START_DATE     = datetime(2018,1,1)
-END_DATE       = datetime(2023,12,31)
-INITIAL_CASH   = 1_000_000
-RISK_PER_TRADE = 0.02  # 2%
-SLIPPAGE       = 0.0005
-COMMISSION     = 0.0005
-AI_THRESHOLD   = 70
+DATA_DIR       = "./historical_data"
+INITIAL_EQUITY = 1_000_000
+RISK_PER_TRADE = 0.02    # 2% of current equity
+COMMISSION     = 0.0005  # 0.05%
+SLIPPAGE       = 0.0005  # 0.05%
 
-# ───── STRATEGIES ───────────────────────────────────────────────
-class EMACrossover(bt.Strategy):
-    params = dict(ema1=10, ema2=21, risk=RISK_PER_TRADE)
+# ───── STRATEGY INTERFACE ─────────────────────────────────────
+class BaseStrategy:
+    def generate_signals(self, df):
+        raise NotImplementedError
 
-    def __init__(self):
-        self.ema1 = bt.ind.EMA(self.data.close, period=self.p.ema1)
-        self.ema2 = bt.ind.EMA(self.data.close, period=self.p.ema2)
-        self.order = None
-        self.sl_price = None
-        self.tp_price = None
+# ───── EXAMPLE STRATEGIES ─────────────────────────────────────
+class EMACrossoverStrategy(BaseStrategy):
+    def __init__(self, span_short=10, span_long=21):
+        self.span_short = span_short
+        self.span_long = span_long
 
-    def next(self):
-        if not self.position:
-            if self.ema1[0] > self.ema2[0]:
-                size = self.calc_size(self.data.close[0], self.data.low[-1]*0.98)
-                self.sl_price = self.data.close[0]*0.98
-                self.tp_price = self.data.close[0]*1.06
-                self.order = self.buy(size=size)
-        else:
-            if self.data.close[0] <= self.sl_price or self.data.close[0] >= self.tp_price:
-                self.close()
+    def generate_signals(self, df):
+        df = df.copy()
+        df[f"EMA{self.span_short}"] = df["close"].ewm(span=self.span_short).mean()
+        df[f"EMA{self.span_long}"]  = df["close"].ewm(span=self.span_long).mean()
+        signals, in_trade = [], False
+        for i in range(self.span_long, len(df)):
+            date = df.index[i]
+            price = df["close"].iat[i]
+            ema_s = df[f"EMA{self.span_short}"].iat[i]
+            ema_l = df[f"EMA{self.span_long}"].iat[i]
+            if not in_trade and ema_s > ema_l:
+                sl, tp = price * 0.98, price * 1.06
+                signals.append({"entry_date": date, "entry": price, "sl": sl, "tp": tp})
+                in_trade = True
+            elif in_trade:
+                low, high = df["low"].iat[i], df["high"].iat[i]
+                exit_price = None
+                if low <= signals[-1]["sl"]:
+                    exit_price = signals[-1]["sl"]
+                elif high >= signals[-1]["tp"]:
+                    exit_price = signals[-1]["tp"]
+                if exit_price is not None:
+                    signals[-1].update({"exit_date": date, "exit": exit_price})
+                    in_trade = False
+        return signals
 
-    def calc_size(self, price, stop_price):
-        cash = self.broker.getcash()
-        risk_amount = cash * self.p.risk
-        return int(risk_amount / abs(price - stop_price))
+class RSIStrategy(BaseStrategy):
+    def __init__(self, period=14, entry_thresh=30, exit_thresh=50):
+        self.period = period
+        self.entry = entry_thresh
+        self.exit  = exit_thresh
 
-class RSIStrategy(bt.Strategy):
-    params = dict(period=14, lower=30, upper=50, risk=RISK_PER_TRADE)
+    def generate_signals(self, df):
+        df = df.copy()
+        delta = df["close"].diff()
+        gain = delta.clip(lower=0).rolling(self.period).mean()
+        loss = -delta.clip(upper=0).rolling(self.period).mean()
+        df["RSI"] = 100 - 100/(1 + gain/loss)
+        signals, in_trade = [], False
+        for i in range(self.period, len(df)):
+            date, price, rsi = df.index[i], df["close"].iat[i], df["RSI"].iat[i]
+            if not in_trade and rsi < self.entry:
+                sl, tp = price * 0.98, price * 1.06
+                signals.append({"entry_date": date, "entry": price, "sl": sl, "tp": tp})
+                in_trade = True
+            elif in_trade and rsi > self.exit:
+                signals[-1].update({"exit_date": date, "exit": price})
+                in_trade = False
+        return signals
 
-    def __init__(self):
-        self.rsi = bt.ind.RSI(self.data.close, period=self.p.period)
+class VolumeBreakoutStrategy(BaseStrategy):
+    def __init__(self, lookback=20, vol_multiplier=1.5):
+        self.lookback = lookback
+        self.mult     = vol_multiplier
 
-    def next(self):
-        if not self.position:
-            if self.rsi[0] < self.p.lower:
-                size = self.calc_size(self.data.close[0], self.data.close[0]*0.98)
-                self.buy(size=size)
-        else:
-            if self.rsi[0] > self.p.upper:
-                self.close()
+    def generate_signals(self, df):
+        df = df.copy()
+        df["vol_avg"] = df["volume"].rolling(self.lookback).mean()
+        signals, in_trade = [], False
+        for i in range(self.lookback, len(df)):
+            date = df.index[i]
+            price = df["close"].iat[i]
+            vol, avg = df["volume"].iat[i], df["vol_avg"].iat[i]
+            if not in_trade and vol > self.mult * avg:
+                sl, tp = price * 0.98, price * 1.06
+                signals.append({"entry_date": date, "entry": price, "sl": sl, "tp": tp})
+                in_trade = True
+            elif in_trade:
+                low, high = df["low"].iat[i], df["high"].iat[i]
+                exit_price = None
+                if low <= signals[-1]["sl"]:
+                    exit_price = signals[-1]["sl"]
+                elif high >= signals[-1]["tp"]:
+                    exit_price = signals[-1]["tp"]
+                if exit_price:
+                    signals[-1].update({"exit_date": date, "exit": exit_price})
+                    in_trade = False
+        return signals
 
-    def calc_size(self, price, stop_price):
-        cash = self.broker.getcash()
-        risk_amount = cash * self.p.risk
-        return int(risk_amount / abs(price - stop_price))
+# Placeholder for AI based exit strategy if needed
 
-class VolumeBreakout(bt.Strategy):
-    params = dict(period=20, mult=1.5, risk=RISK_PER_TRADE)
+# ───── BACKTEST ENGINE ────────────────────────────────────────
+def backtest(symbols, start, end, strategies):
+    equity       = INITIAL_EQUITY
+    peak_equity  = equity
+    drawdowns    = []
+    equity_curve = []
+    all_trades   = []
 
-    def __init__(self):
-        self.vol_avg = bt.ind.SimpleMovingAverage(self.data.volume, period=self.p.period)
+    for sym in symbols:
+        path = os.path.join(DATA_DIR, f"{sym}.csv")
+        if not os.path.exists(path):
+            print(f"⚠️ Missing data for {sym}")
+            continue
+        df = pd.read_csv(path, parse_dates=["date"]) 
+        df.set_index("date", inplace=True)
+        df = df.loc[start:end]
 
-    def next(self):
-        if not self.position:
-            if self.data.volume[0] > self.vol_avg[0] * self.p.mult:
-                size = self.calc_size(self.data.close[0], self.data.close[0]*0.98)
-                self.buy(size=size)
-        else:
-            if self.data.close[0] <= self.data.close[0]*0.98:
-                self.close()
+        for strat in strategies:
+            trades = strat.generate_signals(df)
+            for t in trades:
+                entry, sl, tp = t["entry"], t["sl"], t.get("tp")
+                if entry <= sl: continue
+                # position sizing
+                risk_amount = equity * RISK_PER_TRADE
+                qty = int(risk_amount / (entry - sl))
+                if qty < 1: continue
+                # simulate entry
+                buy_price = entry * (1 + SLIPPAGE)
+                cost = buy_price * qty * (1 + COMMISSION)
+                # decide exit
+                exit_price = t.get("exit")
+                if exit_price is None:
+                    idx = df.index.get_loc(t["entry_date"]) + 1
+                    if idx < len(df): exit_price = df["close"].iat[idx]
+                    else: continue
+                sell_price = exit_price * (1 - SLIPPAGE)
+                proceeds = sell_price * qty * (1 - COMMISSION)
+                pnl = proceeds - cost
+                equity += pnl
+                peak_equity = max(peak_equity, equity)
+                drawdowns.append((peak_equity - equity)/peak_equity)
+                equity_curve.append({"date": t["exit_date"], "equity": equity})
+                all_trades.append({
+                    "symbol": sym,
+                    "strategy": strat.__class__.__name__,
+                    **t,
+                    "qty": qty,
+                    "pnl": pnl
+                })
 
-    def calc_size(self, price, stop_price):
-        cash = self.broker.getcash()
-        risk_amount = cash * self.p.risk
-        return int(risk_amount / abs(price - stop_price))
+    # results
+    if not equity_curve:
+        print("⚠️ No equity data to compute metrics.")
+        return
+    ec = pd.DataFrame(equity_curve).set_index("date").sort_index()
+    ec.to_csv("equity_curve.csv")
+    trades_df = pd.DataFrame(all_trades)
+    trades_df.to_csv("all_trades.csv", index=False)
 
-class AIScoreExit(bt.Strategy):
-    params = dict(threshold=AI_THRESHOLD, risk=RISK_PER_TRADE)
+    returns = ec["equity"].pct_change().dropna()
+    days = (ec.index[-1] - ec.index[0]).days / 365.25
+    cagr = (equity / INITIAL_EQUITY)**(1/days) - 1
+    sharpe = returns.mean() / returns.std() * np.sqrt(252) if len(returns)>1 else np.nan
+    max_dd = max(drawdowns)*100 if drawdowns else 0
+    print(f"CAGR: {cagr:.2%} | Sharpe: {sharpe:.2f} | Max DD: {max_dd:.1f}%")
 
-    def __init__(self):
-        self.sma = bt.ind.SimpleMovingAverage(self.data.close, period=20)
-        self.hist = []
+# ───── CLI ENTRYPOINT ─────────────────────────────────────────
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run backtests on multiple strategies.")
+    parser.add_argument("--symbols", nargs="+", default=["INFY"], help="List of symbols to backtest")
+    parser.add_argument("--start", default="2018-01-01", help="Start date YYYY-MM-DD")
+    parser.add_argument("--end",   default="2023-12-31", help="End date YYYY-MM-DD")
+    args = parser.parse_args()
 
-    def next(self):
-        self.hist.append({
-            'date': self.data.datetime.datetime(0),
-            'open': self.data.open[0], 'high': self.data.high[0],
-            'low': self.data.low[0], 'close': self.data.close[0],
-            'volume': self.data.volume[0]
-        })
-        if not self.position:
-            if self.data.close[0] > self.sma[0]:
-                atr = np.mean([h['high']-h['low'] for h in self.hist[-14:]])
-                stop = self.data.close[0] - 1.5*atr
-                size = self.calc_size(self.data.close[0], stop)
-                self.buy(size=size)
-                self.sl = stop
-        else:
-            df = pd.DataFrame(self.hist)
-            ai_score, _ = calculate_ai_exit_score(df, self.sl, self.data.close[0], atr_value=None)
-            if ai_score >= self.p.threshold:
-                self.close()
-
-    def calc_size(self, price, stop_price):
-        cash = self.broker.getcash()
-        risk_amount = cash * self.p.risk
-        return int(risk_amount / abs(price - stop_price))
-
-# ───── RUN BACKTEST ────────────────────────────────────────────
-if __name__ == '__main__':
-    cerebro = bt.Cerebro()
-    cerebro.broker.setcash(INITIAL_CASH)
-    cerebro.broker.setcommission(commission=COMMISSION)
-    cerebro.broker.set_slippage_perc(perc=SLIPPAGE)
-
-    for sym in SYMBOLS:
-        path = os.path.join(DATA_DIR, f'{sym}.csv')
-        data = bt.feeds.GenericCSVData(
-            dataname=path,
-            dtformat='%Y-%m-%d',
-            datetime=0, open=1, high=2, low=3, close=4, volume=5,
-            fromdate=START_DATE, todate=END_DATE,
-            timeframe=bt.TimeFrame.Days
-        )
-        cerebro.adddata(data, name=sym)
-
-    # Add all strategies
-    cerebro.addstrategy(EMACrossover)
-    cerebro.addstrategy(RSIStrategy)
-    cerebro.addstrategy(VolumeBreakout)
-    cerebro.addstrategy(AIScoreExit)
-
-    print('Starting Portfolio Value:', cerebro.broker.getvalue())
-    cerebro.run()
-    print('Final Portfolio Value:', cerebro.broker.getvalue())
-    cerebro.plot()
+    strategies = [
+        EMACrossoverStrategy(),
+        RSIStrategy(),
+        VolumeBreakoutStrategy(),
+    ]
+    backtest(args.symbols, args.start, args.end, strategies)

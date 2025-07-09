@@ -14,18 +14,18 @@ def detect_breakout(df, threshold=1.02):
     if len(df) < 2:
         return False, None
     prev_high = df['High'].iloc[-2]
-    curr_close = df['Close'].iloc[-1]
+    curr_close = df['close'].iloc[-1]
     is_breakout = curr_close > prev_high * threshold
     return is_breakout, round(prev_high * threshold, 2)
 
 def detect_rsi_ema_signals(df, rsi_period=14, ema_period=21, rsi_threshold=60):
     """
-    Returns True if RSI > threshold and Close > EMA.
+    Returns True if RSI > threshold and close > EMA.
     """
     rsi = RSIIndicator(df['close'], window=rsi_period).rsi()
     ema = EMAIndicator(df['close'], window=ema_period).ema_indicator()
     last_rsi = rsi.iloc[-1]
-    last_close = df['Close'].iloc[-1]
+    last_close = df['close'].iloc[-1]
     last_ema = ema.iloc[-1]
     return last_rsi > rsi_threshold and last_close > last_ema
 
@@ -36,7 +36,7 @@ def detect_3green_days(df):
     if len(df) < 3:
         return False
     last_3 = df.iloc[-3:]
-    return all(last_3['Close'] > last_3['Open'])
+    return all(last_3['close'] > last_3['Open'])
 
 def detect_darvas_box(df, lookback=20):
     """
@@ -46,7 +46,7 @@ def detect_darvas_box(df, lookback=20):
     if len(df) < lookback + 1:
         return False, None
     recent_high = df['High'].iloc[-lookback:-1].max()
-    curr_close = df['Close'].iloc[-1]
+    curr_close = df['close'].iloc[-1]
     is_breakout = curr_close > recent_high
     return is_breakout, round(recent_high, 2)
 
@@ -96,7 +96,7 @@ def detect_macd_cross(df):
     """
     if len(df) < 35:
         return False
-    macd = MACD(df['Close'])
+    macd = MACD(df['close'])
     macd_line = macd.macd()
     signal_line = macd.macd_signal()
     if macd_line.iloc[-2] < signal_line.iloc[-2] and macd_line.iloc[-1] > signal_line.iloc[-1]:

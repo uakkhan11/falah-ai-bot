@@ -1,17 +1,10 @@
-def compute_allocation_weight(confidence_score):
+def compute_confidence_score(stock_data):
     """
-    Return a numeric weight multiplier (e.g., 1.0 to 2.0) based on confidence.
+    Compute numeric confidence score (0.0 - 1.0) based on multiple factors.
     """
-    if confidence_score >= 0.9:
-        return 1.5
-    elif confidence_score >= 0.75:
-        return 1.3
-    elif confidence_score >= 0.6:
-        return 1.1
-    else:
-        return 0.8
+    score = 0
 
-    # Example: Trend strength
+    # Trend strength
     if stock_data["adx"] > 25:
         score += 0.3
     else:
@@ -35,7 +28,21 @@ def compute_allocation_weight(confidence_score):
     else:
         score += 0.1
 
-    return min(score, 1)
+    return min(score, 1.0)
+
+
+def compute_allocation_weight(confidence_score):
+    """
+    Return a numeric weight multiplier (e.g., 0.8 to 1.5) based on confidence.
+    """
+    if confidence_score >= 0.9:
+        return 1.5
+    elif confidence_score >= 0.75:
+        return 1.3
+    elif confidence_score >= 0.6:
+        return 1.1
+    else:
+        return 0.8
 
 
 def adjust_capital_based_on_confidence(total_capital, confidence_score):
@@ -46,8 +53,7 @@ def adjust_capital_based_on_confidence(total_capital, confidence_score):
         - confidence 0.7-0.9 => 1.2x base
         - confidence <0.7 => base
     """
-    base = total_capital / 10  # Example base capital per trade
-
+    base = total_capital / 10  # Example: split into 10 parts
     if confidence_score >= 0.9:
         return base * 1.5
     elif confidence_score >= 0.7:

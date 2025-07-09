@@ -1,150 +1,112 @@
-# backtester_full.py
+# backtester.py
 
 import os
 import pandas as pd
 from datetime import datetime
-from credentials import get_kite, validate_kite
-from ai_engine import calculate_ai_exit_score
-from stock_analysis import analyze_stock
 
-# 🟢 Parameters
-symbols = ["INFY", "TCS", "HDFCBANK"]
-initial_capital = 1000000  # ₹10 lakh starting capital
-risk_per_trade_pct = 2  # 2% risk per trade
-rr_ratio = 3  # 1:3 R:R
-atr_multiplier_sl = 1.5
+class Backtester:
+    def __init__(self, data_dir, symbols, initial_capital=100000, slippage_pct=0.002, commission_per_trade=20, risk_per_trade_pct=2):
+        """
+        data_dir: Folder with historical CSVs per symbol
+        symbols: List of symbols to backtest
+        """
+        self.data_dir = data_dir
+        self.symbols = symbols
+        self.initial_capital = initial_capital
+        self.slippage_pct = slippage_pct
+        self.commission_per_trade = commission_per_trade
+        self.risk_per_trade_pct = risk_per_trade_pct
+        self.results = []
 
-# 🟢 Kite
-kite = get_kite()
-if not validate_kite(kite):
-    print("❌ Invalid Kite token.")
-    exit()
+    def load_data(self, symbol):
+        filepath = os.path.join(self.data_dir, f"{symbol}.csv")
+        if not os.path.exists(filepath):
+            print(f"⚠️ Missing data for {symbol}")
+            return None
+        df = pd.read_csv(filepath)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+        return df
 
-results = []
-capital = initial_capital
-equity_curve = []
+    def run(self):
+        equity = self.initial_capital
 
-# 🟢 Backtest each symbol
-for symbol in symbols:
-    print(f"\n🔍 Backtesting {symbol}...")
-
-    # Load historical data
-    hist = kite.historical_data(
-        instrument_token=kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"],
-        from_date="2023-01-01",
-        to_date="2023-12-31",
-        interval="day"
-    )
-    df = pd.DataFrame(hist)
-    df["date"] = pd.to_datetime(df["date"])
-    df.set_index("date", inplace=True)
-
-    # Compute indicators
-    df["SMA20"] = df["close"].rolling(20).mean()
-    df["EMA10"] = df["close"].ewm(span=10).mean()
-    df["EMA21"] = df["close"].ewm(span=21).mean()
-    df["RSI"] = pd.Series(dtype=float)
-
-    import ta
-    df["RSI"] = ta.momentum.rsi(df["close"], window=14)
-    df["ATR"] = ta.volatility.average_true_range(df["high"], df["low"], df["close"], window=14)
-
-    trades = []
-
-    for i in range(21, len(df) - 1):
-        # Entry conditions (example)
-        if (
-            df["close"].iloc[i] > df["SMA20"].iloc[i]
-            and df["EMA10"].iloc[i] > df["EMA21"].iloc[i]
-            and df["RSI"].iloc[i] > 55
-        ):
-            entry_date = df.index[i]
-            entry_price = df["close"].iloc[i]
-            atr = df["ATR"].iloc[i]
-            sl = entry_price - atr * atr_multiplier_sl
-            target = entry_price + (entry_price - sl) * rr_ratio
-
-            # Risk-based sizing
-            per_share_risk = entry_price - sl
-            position_risk = capital * (risk_per_trade_pct / 100)
-            qty = int(position_risk / per_share_risk)
-            if qty <= 0:
+        for symbol in self.symbols:
+            df = self.load_data(symbol)
+            if df is None or len(df) < 30:
                 continue
 
-            # Simulate holding until exit
-            exit_price = None
-            exit_reason = ""
-            for j in range(i + 1, len(df)):
-                date_j = df.index[j]
-                close_j = df["close"].iloc[j]
-                atr_j = df["ATR"].iloc[j]
-                trailing_sl = max(sl, close_j - atr_j * atr_multiplier_sl)
+            trades = []
+            in_position = False
+            entry_price = None
+            sl_price = None
 
-                # AI exit
-                slice_df = df.iloc[:j + 1].reset_index()
-                ai_score, reasons = calculate_ai_exit_score(
-                    stock_data=slice_df,
-                    trailing_sl=trailing_sl,
-                    current_price=close_j
-                )
-                if ai_score >= 70:
-                    exit_price = close_j
-                    exit_reason = "AI Exit"
-                    break
+            for i in range(20, len(df)-1):
+                row = df.iloc[i]
+                next_row = df.iloc[i+1]
+                close = row["close"]
+                atr = df["close"].rolling(14).std().iloc[i]
 
-                # Target hit
-                if close_j >= target:
-                    exit_price = target
-                    exit_reason = "Target Hit"
-                    break
+                # Simple Entry Rule: Close > SMA20
+                sma20 = df["close"].rolling(20).mean().iloc[i]
+                if not in_position and close > sma20:
+                    # Compute quantity by risk per trade
+                    risk_amount = equity * (self.risk_per_trade_pct / 100)
+                    stop_loss = close - atr * 1.5
+                    per_share_risk = close - stop_loss
+                    quantity = int(risk_amount / per_share_risk)
 
-                # Trailing SL hit
-                if close_j <= trailing_sl:
-                    exit_price = trailing_sl
-                    exit_reason = "Stop Loss"
-                    break
+                    if quantity <= 0:
+                        continue
 
-            if not exit_price:
-                # Exit at final candle if never exited
-                exit_price = df["close"].iloc[-1]
-                exit_reason = "End of Data"
+                    entry_price = close * (1 + self.slippage_pct)
+                    sl_price = stop_loss
+                    in_position = True
+                    entry_date = row.name
 
-            profit = (exit_price - entry_price) * qty
-            capital += profit
-            equity_curve.append(capital)
+                elif in_position:
+                    # Check exit: SL hit or Close below SMA20
+                    exit_reason = None
+                    if next_row["low"] <= sl_price:
+                        exit_price = sl_price * (1 - self.slippage_pct)
+                        exit_reason = "Stop Loss"
+                    elif next_row["close"] < sma20:
+                        exit_price = next_row["close"] * (1 - self.slippage_pct)
+                        exit_reason = "Signal Exit"
 
-            print(f"✅ {symbol} Trade: {entry_date.date()} to {date_j.date()} | {exit_reason} | P&L: ₹{profit:.2f}")
-            trades.append({
-                "Entry Date": entry_date,
-                "Exit Date": date_j,
-                "Entry": entry_price,
-                "Exit": exit_price,
-                "Reason": exit_reason,
-                "Qty": qty,
-                "Profit": profit
-            })
+                    if exit_reason:
+                        pnl = (exit_price - entry_price) * quantity - self.commission_per_trade
+                        equity += pnl
 
-    if trades:
-        df_trades = pd.DataFrame(trades)
-        df_trades.to_csv(f"backtest_{symbol}.csv", index=False)
-        win_rate = (df_trades["Profit"] > 0).mean() * 100
-        avg_profit = df_trades["Profit"].mean()
-        results.append({
-            "Symbol": symbol,
-            "Trades": len(df_trades),
-            "Win Rate": win_rate,
-            "Avg Profit": avg_profit
-        })
-    else:
-        print(f"⚠️ No trades triggered for {symbol}.")
+                        trades.append({
+                            "symbol": symbol,
+                            "entry_date": entry_date,
+                            "exit_date": next_row.name,
+                            "entry_price": round(entry_price,2),
+                            "exit_price": round(exit_price,2),
+                            "quantity": quantity,
+                            "pnl": round(pnl,2),
+                            "reason": exit_reason
+                        })
 
-# 🟢 Save equity curve
-equity_df = pd.DataFrame({"Capital": equity_curve})
-equity_df.to_csv("backtest_equity_curve.csv", index=False)
+                        in_position = False
 
-# 🟢 Summary
-summary_df = pd.DataFrame(results)
-summary_df.to_csv("backtest_summary.csv", index=False)
+            # Save results
+            if trades:
+                trade_df = pd.DataFrame(trades)
+                trade_df.to_csv(f"backtest_{symbol}.csv", index=False)
+                win_rate = (trade_df["pnl"] > 0).mean() * 100
+                avg_pnl = trade_df["pnl"].mean()
+                print(f"✅ {symbol}: {len(trade_df)} trades | Win Rate {win_rate:.1f}% | Avg PnL {avg_pnl:.2f}")
+                self.results.extend(trades)
 
-print("\n🎯 Backtest Complete. Results saved:")
-print(summary_df)
+        # Summary
+        self.export_summary()
+
+    def export_summary(self):
+        if not self.results:
+            print("⚠️ No trades executed.")
+            return
+        df = pd.DataFrame(self.results)
+        df.to_csv("backtest_summary.csv", index=False)
+        print("🎯 Backtesting complete. Summary saved to backtest_summary.csv.")

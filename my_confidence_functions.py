@@ -60,3 +60,12 @@ def adjust_capital_based_on_confidence(total_capital, confidence_score):
         return base * 1.2
     else:
         return base
+
+def compute_quantity(allocated_capital, current_price, min_lot_size=1):
+    """
+    Compute quantity to buy based on allocated capital and current price.
+    """
+    qty = int(allocated_capital // current_price)
+    if qty < min_lot_size:
+        return min_lot_size
+    return qty

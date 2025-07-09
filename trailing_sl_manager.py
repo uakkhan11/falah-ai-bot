@@ -6,6 +6,13 @@ from kiteconnect import KiteConnect
 from oauth2client.service_account import ServiceAccountCredentials
 import gspread
 from pytz import timezone
+from trade_helpers import (
+    calculate_atr,
+    compute_trailing_sl,
+    send_telegram,
+    log_trade_to_sheet,
+    is_market_open
+)
 
 # 🟢 Load credentials
 with open("/root/falah-ai-bot/secrets.json", "r") as f:

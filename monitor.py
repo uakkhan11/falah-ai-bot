@@ -125,6 +125,8 @@ def monitor_positions(loop=True):
                 print(f"⚠️ No historical data for {symbol}. Skipping.")
                 continue
 
+            df.columns = [c.lower() for c in df.columns]
+
             df["vwap"] = ta.vwap(df["high"], df["low"], df["close"], df["volume"])
             df["atr"] = ta.atr(df["High"], df["Low"], df["Close"], length=14)
             rsi_series = ta.rsi(df["Close"], length=14)

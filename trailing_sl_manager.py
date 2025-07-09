@@ -2,6 +2,7 @@ import os
 import json
 import time
 from datetime import datetime
+import pandas as pd
 from kiteconnect import KiteConnect
 from oauth2client.service_account import ServiceAccountCredentials
 import gspread

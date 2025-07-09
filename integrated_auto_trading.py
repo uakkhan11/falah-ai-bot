@@ -1,86 +1,125 @@
+# integrated_auto_trading.py
+
 import os
 import json
-import time
-import pandas as pd
+import datetime
 from kiteconnect import KiteConnect
-from datetime import datetime
-from oauth2client.service_account import ServiceAccountCredentials
-import gspread
+import pandas as pd
 
-from stock_analysis import analyze_stock
+# Import helpers
+from data_fetch import fetch_historical_candles, get_live_ltp
+from smart_scanner import run_smart_scan
+from credentials import load_secrets
 from my_confidence_functions import (
     compute_confidence_score,
     compute_allocation_weight,
-    compute_quantity,
-    compute_trailing_stop,
-    check_exposure_limits
+    adjust_capital_based_on_confidence,
+    compute_quantity
+)
+from trade_helpers import (
+    compute_trailing_sl,
+    is_market_open,
+    send_telegram,
+    log_trade_to_sheet
 )
 
-# 🟢 Load credentials
-with open("/root/falah-ai-bot/secrets.json", "r") as f:
-    secrets = json.load(f)
-
+# ====== Load credentials ======
+secrets = load_secrets()
 API_KEY = secrets["zerodha"]["api_key"]
 ACCESS_TOKEN = secrets["zerodha"]["access_token"]
-SPREADSHEET_KEY = secrets["google"]["spreadsheet_key"]
+BOT_TOKEN = secrets["telegram"]["bot_token"]
+CHAT_ID = secrets["telegram"]["chat_id"]
 
-# 🟢 Initialize KiteConnect
+# Initialize KiteConnect
 kite = KiteConnect(api_key=API_KEY)
 kite.set_access_token(ACCESS_TOKEN)
 
-# 🟢 Authenticate Google Sheets
+# ====== Initialize Google Sheets ======
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_name("falah-credentials.json", scope)
 gc = gspread.authorize(creds)
-sheet = gc.open_by_key(SPREADSHEET_KEY)
+sheet = gc.open_by_key(secrets["google"]["spreadsheet_key"])
 log_sheet = sheet.worksheet("TradeLog")
 
-# 🟢 SETTINGS
-TOTAL_CAPITAL = 200000
+# ====== Config ======
+TOTAL_CAPITAL = 100000  # adjust as needed
 MAX_TRADES = 5
-MAX_TOTAL_EXPOSURE = 200000
-MAX_SECTOR_EXPOSURE = 100000
+DRY_RUN = False
 
-# You can define this mapping yourself
-symbol_sector_map = {
-    "INFY": "IT",
-    "TCS": "IT",
-    "HDFCBANK": "Banking",
-    # ...
-}
+# ====== Run Scanner ======
+print("🔍 Running scanner...")
+scan_df = run_smart_scan()
+if scan_df.empty:
+    print("❌ No signals found.")
+    exit(0)
 
-# 🟢 Main Loop
-def auto_trade(symbols):
-    current_exposure = 0
-    sector_exposure = {}
+# ====== Select Top N by confidence ======
+selected_stocks = []
+for idx, row in scan_df.iterrows():
+    symbol = row["Symbol"]
+    try:
+        # Historical data
+        instrument_token = row["Token"] if "Token" in row else kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
+        hist_df = fetch_historical_candles(kite, instrument_token, interval="day", days=60)
 
-    for symbol in symbols:
-        print(f"\n🔍 Analyzing {symbol}")
-        try:
-            result = analyze_stock(kite, symbol)
-        except Exception as e:
-            print(f"❌ Error analyzing {symbol}: {e}")
-            continue
+        # Analyze indicators
+        cmp = get_live_ltp(kite, symbol)
+        analysis = {
+            "adx": row.get("ADX", 25),
+            "rsi": row.get("RSI", 50),
+            "rel_strength": row.get("RelStrength", 1),
+            "backtest_winrate": row.get("WinRate", 60)
+        }
+        confidence = compute_confidence_score(analysis)
+        selected_stocks.append({
+            "symbol": symbol,
+            "token": instrument_token,
+            "cmp": cmp,
+            "confidence": confidence,
+            "hist_df": hist_df
+        })
+    except Exception as e:
+        print(f"❌ Skipping {symbol}: {e}")
 
-        # Compute metrics
-        confidence = compute_confidence_score(result)
-        atr_percent = (result["atr"] / result["cmp"]) * 100
-        allocation_weight = compute_allocation_weight(confidence, atr_percent)
-        qty = compute_quantity(TOTAL_CAPITAL, MAX_TRADES, allocation_weight, result["cmp"])
+# Sort by confidence
+selected_stocks = sorted(selected_stocks, key=lambda x: x["confidence"], reverse=True)[:MAX_TRADES]
 
+# ====== Process each selected stock ======
+for stock in selected_stocks:
+    try:
+        symbol = stock["symbol"]
+        cmp = stock["cmp"]
+        confidence = stock["confidence"]
+        hist_df = stock["hist_df"]
+
+        print(f"\n✅ Processing {symbol} (Confidence: {confidence:.2f})")
+
+        # Compute allocation
+        weight = compute_allocation_weight(confidence)
+        allocation = adjust_capital_based_on_confidence(TOTAL_CAPITAL, confidence)
+
+        # Compute quantity
+        qty = compute_quantity(allocation, cmp)
         if qty <= 0:
-            print(f"⚠️ Skipping {symbol} due to low confidence or sizing.")
+            print(f"❌ Skipping {symbol}: Invalid quantity {qty}")
             continue
 
-        trade_value = qty * result["cmp"]
-        sector = symbol_sector_map.get(symbol, "Unknown")
+        # Compute trailing stop
+        trailing_sl = compute_trailing_sl(hist_df)
 
-        if not check_exposure_limits(current_exposure, trade_value, sector_exposure, sector, MAX_TOTAL_EXPOSURE, MAX_SECTOR_EXPOSURE):
-            print(f"⚠️ Exposure limit exceeded for {symbol}. Skipping.")
+        # Market hours check
+        if not is_market_open():
+            send_telegram(BOT_TOKEN, CHAT_ID, f"Market closed. Skipping {symbol}.")
             continue
 
         # Place order
-        try:
+        if DRY_RUN:
+            print(f"(Dry Run) Would place order: {symbol}, Qty: {qty}, CMP: ₹{cmp}")
+            send_telegram(BOT_TOKEN, CHAT_ID, f"(Dry Run) Prepared order for {symbol}, Qty: {qty}")
+        else:
             kite.place_order(
                 variety=kite.VARIETY_REGULAR,
                 exchange=kite.EXCHANGE_NSE,
@@ -90,26 +129,25 @@ def auto_trade(symbols):
                 order_type=kite.ORDER_TYPE_MARKET,
                 product=kite.PRODUCT_CNC
             )
-            print(f"✅ Order placed: {symbol} Qty: {qty}")
+            send_telegram(BOT_TOKEN, CHAT_ID, f"✅ Order placed for {symbol} Qty: {qty} CMP: ₹{cmp}\nTrailing SL: ₹{trailing_sl}")
 
-            # Update exposure
-            current_exposure += trade_value
-            sector_exposure[sector] = sector_exposure.get(sector, 0) + trade_value
+        # Log to Google Sheets
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_trade_to_sheet(
+            log_sheet,
+            timestamp,
+            symbol,
+            qty,
+            cmp,
+            "Auto Trade Entry",
+            f"Trailing SL: {trailing_sl}, Confidence: {confidence:.2f}"
+        )
 
-            # Compute initial trailing stop
-            trailing_sl = compute_trailing_stop(result["cmp"], result["atr"], result["cmp"])
+        print(f"✅ Completed {symbol}.")
 
-            # Log to Google Sheets
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            log_sheet.append_row([
-                timestamp, symbol, "BUY", qty, result["cmp"], trailing_sl,
-                f"{confidence:.2f}", f"{allocation_weight:.2f}", "Auto-Traded"
-            ])
-            print(f"📝 Logged to Google Sheets.")
-        except Exception as e:
-            print(f"❌ Error placing order for {symbol}: {e}")
+    except Exception as e:
+        msg = f"❌ Error processing {symbol}: {e}"
+        print(msg)
+        send_telegram(BOT_TOKEN, CHAT_ID, msg)
 
-if __name__ == "__main__":
-    # Example symbols (you can load dynamically)
-    candidate_symbols = ["INFY", "TCS", "HDFCBANK", "ICICIBANK", "SBIN"]
-    auto_trade(candidate_symbols)
+print("\n🎯 All trades processed.")

@@ -7,6 +7,7 @@ import json
 from datetime import datetime
 from pytz import timezone
 from kiteconnect import KiteConnect
+from sheets import log_trade_to_sheet
 import joblib
 model = joblib.load("model.pkl")
 

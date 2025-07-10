@@ -109,38 +109,38 @@ def monitor_positions(loop=True):
         print(f"Current Drawdown: {drawdown_pct:.2f}%")
 
         if drawdown_pct >= 7:
-            send_telegram(BOT_TOKEN, CHAT_ID, f"❌ <b>Drawdown Limit Breached ({drawdown_pct:.2f}%)</b>. Exiting all positions.")
-            for pos in merged_positions:
-                kite.place_order(
-                    variety=kite.VARIETY_REGULAR,
-                    exchange=pos["exchange"],
-                    tradingsymbol=pos["tradingsymbol"],
-                    transaction_type=kite.TRANSACTION_TYPE_SELL,
-                    quantity=pos["quantity"],
-                    order_type=kite.ORDER_TYPE_MARKET,
-                    product=kite.PRODUCT_CNC
-                )
-                pnl = (pos["last_price"] - pos["average_price"]) * pos["quantity"]
-outcome = 1 if pnl > 0 else 0
+    send_telegram(BOT_TOKEN, CHAT_ID, f"❌ <b>Drawdown Limit Breached ({drawdown_pct:.2f}%)</b>. Exiting all positions.")
+    for pos in merged_positions:
+        kite.place_order(
+            variety=kite.VARIETY_REGULAR,
+            exchange=pos["exchange"],
+            tradingsymbol=pos["tradingsymbol"],
+            transaction_type=kite.TRANSACTION_TYPE_SELL,
+            quantity=pos["quantity"],
+            order_type=kite.ORDER_TYPE_MARKET,
+            product=kite.PRODUCT_CNC
+        )
+        pnl = (pos["last_price"] - pos["average_price"]) * pos["quantity"]
+        outcome = 1 if pnl > 0 else 0
 
-            log_trade_to_sheet(
-                log_sheet,
-                timestamp,
-                pos["tradingsymbol"],
-                pos["quantity"],
-                pos["average_price"],
-                pos["last_price"],
-                "",
-                "",
-                "",
-                "",
-                "SELL",
-                "Drawdown Exit",
-                pnl,
-                outcome
-            )
-            break
-
+        log_trade_to_sheet(
+            log_sheet,
+            timestamp,
+            pos["tradingsymbol"],
+            pos["quantity"],
+            pos["average_price"],
+            pos["last_price"],
+            "",
+            "",
+            "",
+            "",
+            "SELL",
+            "Drawdown Exit",
+            pnl,
+            outcome
+        )
+    break
+    
         for pos in merged_positions:
             symbol = pos["tradingsymbol"]
             qty = pos["quantity"]
@@ -184,37 +184,37 @@ outcome = 1 if pnl > 0 else 0
             ])
 
             if exit_qty > 0:
-                if is_market_open():
-                    kite.place_order(
-                        variety=kite.VARIETY_REGULAR,
-                        exchange="NSE",
-                        tradingsymbol=symbol,
-                        transaction_type=kite.TRANSACTION_TYPE_SELL,
-                        quantity=exit_qty,
-                        order_type=kite.ORDER_TYPE_MARKET,
-                        product=kite.PRODUCT_CNC
-                    )
-                    send_telegram(BOT_TOKEN, CHAT_ID, f"⚠️ <b>Exit Triggered</b>\n{symbol}\nQty:{exit_qty}\nLTP:{ltp}\nReasons:{', '.join(reasons)}")
-                    pnl = (ltp - avg_price) * exit_qty
-outcome = 1 if pnl > 0 else 0
+    if is_market_open():
+        kite.place_order(
+            variety=kite.VARIETY_REGULAR,
+            exchange="NSE",
+            tradingsymbol=symbol,
+            transaction_type=kite.TRANSACTION_TYPE_SELL,
+            quantity=exit_qty,
+            order_type=kite.ORDER_TYPE_MARKET,
+            product=kite.PRODUCT_CNC
+        )
+        send_telegram(BOT_TOKEN, CHAT_ID, f"⚠️ <b>Exit Triggered</b>\n{symbol}\nQty:{exit_qty}\nLTP:{ltp}\nReasons:{', '.join(reasons)}")
+        pnl = (ltp - avg_price) * exit_qty
+        outcome = 1 if pnl > 0 else 0
 
-                log_trade_to_sheet(
-                    log_sheet,
-                    timestamp,
-                    symbol,
-                    exit_qty,
-                    avg_price,
-                    ltp,
-                    "",
-                    "",
-                    "",
-                    ai_score,
-                    "SELL",
-                    ", ".join(reasons),
-                    pnl,
-                    outcome
-                )
-
+        log_trade_to_sheet(
+            log_sheet,
+            timestamp,
+            symbol,
+            exit_qty,
+            avg_price,
+            ltp,
+            "",
+            "",
+            "",
+            ai_score,
+            "SELL",
+            ", ".join(reasons),
+            pnl,
+            outcome
+        )
+        
         if all_rows:
             monitor_sheet.append_rows(all_rows, value_input_option="USER_ENTERED")
 

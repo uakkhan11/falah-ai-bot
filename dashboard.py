@@ -7,8 +7,19 @@ import json
 from datetime import datetime
 from pytz import timezone
 from kiteconnect import KiteConnect
-from sheets import log_trade_to_sheet
 import joblib
+
+from credentials import load_secrets, get_kite, validate_kite
+from data_fetch import get_live_ltp
+from fetch_historical_batch import fetch_all_historical
+from smart_scanner import run_smart_scan
+from ws_live_prices import start_all_websockets
+from stock_analysis import analyze_stock, get_regime
+from bulk_analysis import analyze_multiple_stocks
+from telegram_utils import send_telegram
+from sheets import log_trade_to_sheet
+
+# Load ML model
 model = joblib.load("model.pkl")
 
 def get_trade_probability(rsi, atr, adx, ai_score):
@@ -21,23 +32,22 @@ def get_trade_probability(rsi, atr, adx, ai_score):
     prob = model.predict_proba(features)[0][1]
     return prob
 
-from credentials import load_secrets, get_kite, validate_kite
-from data_fetch import get_live_ltp
-from fetch_historical_batch import fetch_all_historical
-from smart_scanner import run_smart_scan
-from ws_live_prices import start_all_websockets
-from stock_analysis import analyze_stock, get_regime
-from bulk_analysis import analyze_multiple_stocks
-from telegram_utils import send_telegram
-
 # Helper functions
 def compute_trailing_sl(cmp, atr, atr_multiplier=1.5):
     return round(cmp - atr * atr_multiplier, 2)
 
-def log_trade_to_sheet(sheet, timestamp, symbol, quantity, price, action, note):
-    sheet.append_row([
-        timestamp, symbol, quantity, price, action, note
-    ])
+def calculate_risk_based_quantity(
+    capital: float,
+    risk_per_trade_pct: float,
+    entry_price: float,
+    stoploss_price: float
+) -> int:
+    risk_per_trade_amount = capital * risk_per_trade_pct
+    risk_per_share = entry_price - stoploss_price
+    if risk_per_share <= 0:
+        raise ValueError("Stoploss must be below entry price.")
+    qty = max(int(risk_per_trade_amount / risk_per_share), 1)
+    return qty
 
 def is_market_open():
     india = timezone("Asia/Kolkata")
@@ -106,10 +116,9 @@ with col3:
         subprocess.run(["python3", "monitor_runner.py", "--once"])
         st.success("Monitor cycle complete.")
 
-# ======= Access Token Management =======
+# Access Token Management
 with st.expander("🔑 Access Token Management"):
     st.subheader("Generate New Access Token")
-    secrets = load_secrets()
     api_key = secrets["zerodha"]["api_key"]
     api_secret = secrets["zerodha"]["api_secret"]
 
@@ -127,18 +136,16 @@ with st.expander("🔑 Access Token Management"):
                 data = kite.generate_session(request_token, api_secret=api_secret)
                 access_token = data["access_token"]
 
-                # Save to secrets.json
                 with open("/root/falah-ai-bot/secrets.json", "r") as f:
                     secrets_data = json.load(f)
                 secrets_data["zerodha"]["access_token"] = access_token
                 with open("/root/falah-ai-bot/secrets.json", "w") as f:
                     json.dump(secrets_data, f, indent=2)
 
-                # ✅ Also save to access_token.json (needed by get_kite)
                 with open("/root/falah-ai-bot/access_token.json", "w") as f:
                     json.dump({"access_token": access_token}, f)
 
-                st.success("✅ Access token saved to both secrets.json and access_token.json.")
+                st.success("✅ Access token saved.")
             except Exception as e:
                 st.error(f"Error: {e}")
 
@@ -169,7 +176,6 @@ if st.button("Scan Stocks"):
 if "scanned_data" in st.session_state:
     df = st.session_state["scanned_data"]
 
-    # Automatically select top N stocks based on Score
     top_n = max_trades
     df_top = df.sort_values(by="Score", ascending=False).head(top_n)
     selected_symbols = df_top["Symbol"].tolist()
@@ -186,119 +192,96 @@ if "scanned_data" in st.session_state:
 
         df_top["Weight"] = df_top["Score"] / df_top["Score"].sum()
 
-        # Define the risk-based sizing function (put this near your other helpers if not already done)
-def calculate_risk_based_quantity(
-    capital: float,
-    risk_per_trade_pct: float,
-    entry_price: float,
-    stoploss_price: float
-) -> int:
-    risk_per_trade_amount = capital * risk_per_trade_pct
-    risk_per_share = entry_price - stoploss_price
-    if risk_per_share <= 0:
-        raise ValueError("Stoploss must be below entry price.")
-    qty = max(int(risk_per_trade_amount / risk_per_share), 1)
-    return qty
+        for _, row in df_top.iterrows():
+            sym = row["Symbol"]
+            cmp = get_live_ltp(kite, sym)
+            rsi = row["RSI"]
+            atr = row["ATR"]
+            adx = row["ADX"]
+            ai_score = row["Score"]
 
-# Start the per-stock loop
-for _, row in df_top.iterrows():
-    sym = row["Symbol"]
-    cmp = get_live_ltp(kite, sym)
-    rsi = row["RSI"]
-    atr = row["ATR"]
-    adx = row["ADX"]
-    ai_score = row["Score"]
+            trailing_sl = compute_trailing_sl(cmp, atr)
+            target_price = round(cmp + (cmp - trailing_sl) * 3, 2)
 
-    # Compute trailing stop and target
-    trailing_sl = compute_trailing_sl(cmp, atr)
-    target_price = round(cmp + (cmp - trailing_sl) * 3, 2)
+            confidence = get_trade_probability(rsi, atr, adx, ai_score)
+            st.write(f"Predicted success probability for {sym}: {confidence:.2f}")
 
-    # Predict success probability
-    confidence = get_trade_probability(rsi, atr, adx, ai_score)
-    st.write(f"Predicted success probability for {sym}: {confidence:.2f}")
+            if confidence < 0.6:
+                st.warning(f"Skipping {sym} due to low confidence.")
+                continue
 
-    # Skip low-confidence trades
-    if confidence < 0.6:
-        st.warning(f"Skipping {sym} due to low confidence.")
-        continue
+            try:
+                qty = calculate_risk_based_quantity(
+                    capital=total_capital,
+                    risk_per_trade_pct=risk_per_trade_pct,
+                    entry_price=cmp,
+                    stoploss_price=trailing_sl
+                )
+            except Exception as e:
+                st.error(f"Error calculating quantity: {e}")
+                continue
 
-    # Risk-based quantity
-    try:
-        qty = calculate_risk_based_quantity(
-            capital=total_capital,
-            risk_per_trade_pct=risk_per_trade_pct,
-            entry_price=cmp,
-            stoploss_price=trailing_sl
-        )
-    except Exception as e:
-        st.error(f"Error calculating quantity: {e}")
-        continue
+            if confidence >= 0.8:
+                qty = int(qty * 1.3)
+            elif confidence >= 0.7:
+                qty = int(qty * 1.1)
+            else:
+                qty = int(qty * 0.9)
 
-    # Adjust quantity based on confidence
-    if confidence >= 0.8:
-        qty = int(qty * 1.3)
-    elif confidence >= 0.7:
-        qty = int(qty * 1.1)
-    else:
-        qty = int(qty * 0.9)
-
-    # Compose message
-    msg = (
-        f"🚀 <b>Auto Trade</b>\n"
-        f"{sym}\nQty: {qty}\nEntry: ₹{cmp}\nSL: ₹{trailing_sl}\nTarget: ₹{target_price}\n"
-        f"Confidence: {confidence:.2f}"
-    )
-
-    if dry_run:
-        st.success(f"(Dry Run) {msg}")
-        send_telegram(BOT_TOKEN, CHAT_ID, f"[DRY RUN]\n{msg}")
-    else:
-        if not is_market_open():
-            st.warning("Market closed. Skipping.")
-            continue
-
-        try:
-            kite.place_order(
-                variety=kite.VARIETY_REGULAR,
-                exchange=kite.EXCHANGE_NSE,
-                tradingsymbol=sym,
-                transaction_type=kite.TRANSACTION_TYPE_BUY,
-                quantity=qty,
-                order_type=kite.ORDER_TYPE_MARKET,
-                product=kite.PRODUCT_CNC
-            )
-            st.success(f"✅ Order placed for {sym}")
-            send_telegram(BOT_TOKEN, CHAT_ID, msg)
-
-            # Log entry
-            from gspread import authorize
-            from oauth2client.service_account import ServiceAccountCredentials
-            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            creds = ServiceAccountCredentials.from_json_keyfile_name("falah-credentials.json", scope)
-            gc = authorize(creds)
-            sheet = gc.open_by_key(SPREADSHEET_KEY).worksheet("TradeLog")
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            log_trade_to_sheet(
-                sheet,
-                timestamp,
-                sym,
-                qty,
-                cmp,
-                "",
-                rsi,
-                atr,
-                adx,
-                ai_score,
-                "BUY",
-                "",
-                "",
-                ""
+            msg = (
+                f"🚀 <b>Auto Trade</b>\n"
+                f"{sym}\nQty: {qty}\nEntry: ₹{cmp}\nSL: ₹{trailing_sl}\nTarget: ₹{target_price}\n"
+                f"Confidence: {confidence:.2f}"
             )
 
-        except Exception as e:
-            st.error(f"Error placing order: {e}")
+            if dry_run:
+                st.success(f"(Dry Run) {msg}")
+                send_telegram(BOT_TOKEN, CHAT_ID, f"[DRY RUN]\n{msg}")
+            else:
+                if not is_market_open():
+                    st.warning("Market closed. Skipping.")
+                    continue
 
+                try:
+                    kite.place_order(
+                        variety=kite.VARIETY_REGULAR,
+                        exchange=kite.EXCHANGE_NSE,
+                        tradingsymbol=sym,
+                        transaction_type=kite.TRANSACTION_TYPE_BUY,
+                        quantity=qty,
+                        order_type=kite.ORDER_TYPE_MARKET,
+                        product=kite.PRODUCT_CNC
+                    )
+                    st.success(f"✅ Order placed for {sym}")
+                    send_telegram(BOT_TOKEN, CHAT_ID, msg)
+
+                    from gspread import authorize
+                    from oauth2client.service_account import ServiceAccountCredentials
+                    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+                    creds = ServiceAccountCredentials.from_json_keyfile_name("falah-credentials.json", scope)
+                    gc = authorize(creds)
+                    sheet = gc.open_by_key(SPREADSHEET_KEY).worksheet("TradeLog")
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                    log_trade_to_sheet(
+                        sheet,
+                        timestamp,
+                        sym,
+                        qty,
+                        cmp,
+                        "",
+                        rsi,
+                        atr,
+                        adx,
+                        ai_score,
+                        "BUY",
+                        "",
+                        "",
+                        ""
+                    )
+
+                except Exception as e:
+                    st.error(f"Error placing order: {e}")
 
 # Manual Stock Lookup
 st.subheader("🔍 Manual Stock Lookup")

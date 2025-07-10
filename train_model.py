@@ -8,7 +8,7 @@ import joblib
 df = pd.read_csv("training_data.csv")
 
 # Use available columns
-X = df[["RSI", "EMA10", "EMA21", "ATR", "VolumeChange"]]
+X = df[["RSI", "ATR", "ADX", "AI_Score"]]
 y = df["Target"]
 
 # Train model

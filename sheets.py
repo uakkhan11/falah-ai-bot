@@ -59,7 +59,7 @@ def log_scan_to_sheet(df):
     outcome
 ):
     """
-    Log full trade information to the specified Google Sheet worksheet.
+    Log a trade entry to the sheet.
     """
     sheet.append_row([
         timestamp,
@@ -76,4 +76,6 @@ def log_scan_to_sheet(df):
         pnl,
         outcome
     ], value_input_option="USER_ENTERED")
+    print(f"✅ Logged trade for {symbol}.")
+
 

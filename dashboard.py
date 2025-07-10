@@ -93,6 +93,42 @@ with col3:
         subprocess.run(["python3", "monitor_runner.py", "--once"])
         st.success("Monitor cycle complete.")
 
+# ======= Access Token Management =======
+with st.expander("🔑 Access Token Management"):
+    st.subheader("Generate New Access Token")
+    secrets = load_secrets()
+    api_key = secrets["zerodha"]["api_key"]
+    api_secret = secrets["zerodha"]["api_secret"]
+
+    kite = KiteConnect(api_key=api_key)
+    login_url = kite.login_url()
+
+    st.markdown(f"[🔗 Click here to login to Zerodha]({login_url})")
+    request_token = st.text_input("Paste request_token here")
+
+    if st.button("Generate Access Token"):
+        if not request_token:
+            st.error("Please paste the request_token.")
+        else:
+            try:
+                data = kite.generate_session(request_token, api_secret=api_secret)
+                access_token = data["access_token"]
+
+                # Save to secrets.json
+                with open("/root/falah-ai-bot/secrets.json", "r") as f:
+                    secrets_data = json.load(f)
+                secrets_data["zerodha"]["access_token"] = access_token
+                with open("/root/falah-ai-bot/secrets.json", "w") as f:
+                    json.dump(secrets_data, f, indent=2)
+
+                # ✅ Also save to access_token.json (needed by get_kite)
+                with open("/root/falah-ai-bot/access_token.json", "w") as f:
+                    json.dump({"access_token": access_token}, f)
+
+                st.success("✅ Access token saved to both secrets.json and access_token.json.")
+            except Exception as e:
+                st.error(f"Error: {e}")
+
 # Capital Settings
 st.sidebar.header("⚙️ Capital & Trade Settings")
 total_capital = st.sidebar.number_input("Total Daily Capital (₹)", min_value=1000, value=100000, step=5000)

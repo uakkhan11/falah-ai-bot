@@ -130,9 +130,15 @@ def monitor_positions(loop=True):
             symbol = pos["tradingsymbol"]
             qty = pos["quantity"]
             avg_price = pos["average_price"]
-
+            
+            print(f"📂 Loading historical data for {symbol}")
+            
             ltp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["last_price"]
-            df = pd.read_csv(f"/root/falah-ai-bot/historical_data/{symbol}.csv")
+            try:
+                df = pd.read_csv(f"/root/falah-ai-bot/historical_data/{symbol}.csv")
+            except FileNotFoundError:
+                print(f"⚠️ No historical data for {symbol}. Skipping this position.")
+                continue
             df["date"] = pd.to_datetime(df["date"])
             df = df.sort_values("date").reset_index(drop=True)
 

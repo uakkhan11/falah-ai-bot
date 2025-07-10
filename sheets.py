@@ -41,3 +41,39 @@ def log_scan_to_sheet(df):
 
     ws.append_rows(rows, value_input_option="RAW")
     print(f"✅ Logged {len(rows)} scan results to sheet.")
+
+    def log_trade_to_sheet(
+    sheet,
+    timestamp,
+    symbol,
+    quantity,
+    entry_price,
+    exit_price,
+    rsi,
+    atr,
+    adx,
+    ai_score,
+    action,
+    exit_reason,
+    pnl,
+    outcome
+):
+    """
+    Log full trade information to the specified Google Sheet worksheet.
+    """
+    sheet.append_row([
+        timestamp,
+        symbol,
+        quantity,
+        entry_price,
+        exit_price,
+        rsi,
+        atr,
+        adx,
+        ai_score,
+        action,
+        exit_reason,
+        pnl,
+        outcome
+    ], value_input_option="USER_ENTERED")
+

@@ -120,10 +120,25 @@ def monitor_positions(loop=True):
                     order_type=kite.ORDER_TYPE_MARKET,
                     product=kite.PRODUCT_CNC
                 )
-                log_trade_to_sheet(
-                    log_sheet, timestamp, pos["tradingsymbol"], pos["quantity"], pos["last_price"],
-                    "Drawdown Exit", ""
-                )
+                pnl = (pos["last_price"] - pos["average_price"]) * pos["quantity"]
+outcome = 1 if pnl > 0 else 0
+
+            log_trade_to_sheet(
+                log_sheet,
+                timestamp,
+                pos["tradingsymbol"],
+                pos["quantity"],
+                pos["average_price"],
+                pos["last_price"],
+                "",
+                "",
+                "",
+                "",
+                "SELL",
+                "Drawdown Exit",
+                pnl,
+                outcome
+            )
             break
 
         for pos in merged_positions:
@@ -180,10 +195,25 @@ def monitor_positions(loop=True):
                         product=kite.PRODUCT_CNC
                     )
                     send_telegram(BOT_TOKEN, CHAT_ID, f"⚠️ <b>Exit Triggered</b>\n{symbol}\nQty:{exit_qty}\nLTP:{ltp}\nReasons:{', '.join(reasons)}")
-                    log_trade_to_sheet(
-                        log_sheet, timestamp, symbol, exit_qty, ltp,
-                        "Auto Exit", ", ".join(reasons)
-                    )
+                    pnl = (ltp - avg_price) * exit_qty
+outcome = 1 if pnl > 0 else 0
+
+                log_trade_to_sheet(
+                    log_sheet,
+                    timestamp,
+                    symbol,
+                    exit_qty,
+                    avg_price,
+                    ltp,
+                    "",
+                    "",
+                    "",
+                    ai_score,
+                    "SELL",
+                    ", ".join(reasons),
+                    pnl,
+                    outcome
+                )
 
         if all_rows:
             monitor_sheet.append_rows(all_rows, value_input_option="USER_ENTERED")

@@ -62,18 +62,46 @@ def monitor_positions(loop=True):
 
     while True:
         print("\n==============================")
+        positions = kite.positions()["net"]
         holdings = kite.holdings()
+        merged_positions = []
 
-        if not holdings:
-            print("⚠️ No CNC holdings.")
+        symbols_in_holdings = [x["tradingsymbol"] for x in holdings]
+
+        # Add holdings
+        for h in holdings:
+            merged_positions.append({
+                "tradingsymbol": h["tradingsymbol"],
+                "quantity": h["quantity"],
+                "average_price": h["average_price"],
+                "last_price": h["last_price"],
+                "exchange": h["exchange"],
+                "source": "holdings"
+            })
+
+        # Add positions not already in holdings
+        for p in positions:
+            if p["product"] == "CNC" and p["quantity"] != 0:
+                if p["tradingsymbol"] not in symbols_in_holdings:
+                    merged_positions.append({
+                        "tradingsymbol": p["tradingsymbol"],
+                        "quantity": p["quantity"],
+                        "average_price": p["average_price"],
+                        "last_price": p["last_price"],
+                        "exchange": p["exchange"],
+                        "source": "positions"
+                    })
+
+        if not merged_positions:
+            print("⚠️ No CNC holdings or positions.")
         else:
-            print(f"✅ Found {len(holdings)} holdings.")
+            print(f"✅ Found {len(merged_positions)} positions.")
 
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         all_rows = []
 
         # Compute portfolio value
-        portfolio_value = sum(h["last_price"] * h["quantity"] for h in holdings)
+        portfolio_value = sum(p["last_price"] * p["quantity"] for p in merged_positions)
         if equity_peak is None:
             equity_peak = portfolio_value
 
@@ -81,8 +109,8 @@ def monitor_positions(loop=True):
         print(f"Current Drawdown: {drawdown_pct:.2f}%")
 
         if drawdown_pct >= 7:
-            send_telegram(f"❌ <b>Drawdown Limit Breached ({drawdown_pct:.2f}%)</b>. Exiting all positions.")
-            for pos in holdings:
+            send_telegram(BOT_TOKEN, CHAT_ID, f"❌ <b>Drawdown Limit Breached ({drawdown_pct:.2f}%)</b>. Exiting all positions.")
+            for pos in merged_positions:
                 kite.place_order(
                     variety=kite.VARIETY_REGULAR,
                     exchange=pos["exchange"],
@@ -98,7 +126,7 @@ def monitor_positions(loop=True):
                 )
             break
 
-        for pos in holdings:
+        for pos in merged_positions:
             symbol = pos["tradingsymbol"]
             qty = pos["quantity"]
             avg_price = pos["average_price"]

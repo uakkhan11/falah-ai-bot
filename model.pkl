@@ -1,19 +1,22 @@
-# train_model.py
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 import joblib
 
-# Load your historical dataset
+# Load dataset
 df = pd.read_csv("your_training_data.csv")
 
-# Define features and target
-features = ["RSI", "EMA10", "EMA21", "SMA20", "ATR", "VolumeChange"]
-X = df[features]
-y = df["Target"]
+# Remove incomplete rows
+df = df.dropna(subset=["RSI", "ATR", "ADX", "AI_Score", "Outcome"])
 
-# Train model
+# Define inputs and target
+features = ["RSI", "ATR", "ADX", "AI_Score"]
+X = df[features]
+y = df["Outcome"]
+
+# Train
 model = RandomForestClassifier(n_estimators=100, random_state=42)
 model.fit(X, y)
 
-# Save model
+# Save
 joblib.dump(model, "model.pkl")
+print("✅ Model trained and saved.")

@@ -4,17 +4,18 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 import joblib
 
-INPUT_FILE = "/root/falah-ai-bot/training_data.csv"
-MODEL_FILE = "/root/falah-ai-bot/model.pkl"
+# Load your dataset
+df = pd.read_csv("training_data.csv")
 
-df = pd.read_csv(INPUT_FILE)
-print(f"✅ Loaded {len(df)} training rows.")
-
-X = df[["RSI", "ATR", "ADX", "AI_Score"]]
+# Use available columns
+X = df[["RSI", "EMA10", "EMA21", "ATR", "VolumeChange"]]
 y = df["Target"]
 
-model = RandomForestClassifier(n_estimators=200, max_depth=5, random_state=42)
+# Train model
+model = RandomForestClassifier(n_estimators=100, random_state=42)
 model.fit(X, y)
 
-joblib.dump(model, MODEL_FILE)
-print(f"✅ Model trained and saved to {MODEL_FILE}.")
+# Save model
+joblib.dump(model, "/root/falah-ai-bot/model.pkl")
+print("✅ Model saved as model.pkl")
+

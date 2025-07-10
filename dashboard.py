@@ -7,6 +7,18 @@ import json
 from datetime import datetime
 from pytz import timezone
 from kiteconnect import KiteConnect
+import joblib
+model = joblib.load("model.pkl")
+
+def get_trade_probability(rsi, atr, adx, ai_score):
+    features = pd.DataFrame([{
+        "RSI": rsi,
+        "ATR": atr,
+        "ADX": adx,
+        "AI_Score": ai_score
+    }])
+    prob = model.predict_proba(features)[0][1]
+    return prob
 
 from credentials import load_secrets, get_kite, validate_kite
 from data_fetch import get_live_ltp
@@ -191,9 +203,25 @@ def calculate_risk_based_quantity(
 for _, row in df_top.iterrows():
     sym = row["Symbol"]
     cmp = get_live_ltp(kite, sym)
-    trailing_sl = compute_trailing_sl(cmp, row.get("ATR", 1))
+    rsi = row["RSI"]
+    atr = row["ATR"]
+    adx = row["ADX"]
+    ai_score = row["Score"]
+
+    # Compute trailing stop and target
+    trailing_sl = compute_trailing_sl(cmp, atr)
     target_price = round(cmp + (cmp - trailing_sl) * 3, 2)
 
+    # Predict success probability
+    confidence = get_trade_probability(rsi, atr, adx, ai_score)
+    st.write(f"Predicted success probability for {sym}: {confidence:.2f}")
+
+    # Skip low-confidence trades
+    if confidence < 0.6:
+        st.warning(f"Skipping {sym} due to low confidence.")
+        continue
+
+    # Risk-based quantity
     try:
         qty = calculate_risk_based_quantity(
             capital=total_capital,
@@ -202,12 +230,22 @@ for _, row in df_top.iterrows():
             stoploss_price=trailing_sl
         )
     except Exception as e:
-        st.error(f"Error calculating quantity for {sym}: {e}")
+        st.error(f"Error calculating quantity: {e}")
         continue
 
+    # Adjust quantity based on confidence
+    if confidence >= 0.8:
+        qty = int(qty * 1.3)
+    elif confidence >= 0.7:
+        qty = int(qty * 1.1)
+    else:
+        qty = int(qty * 0.9)
+
+    # Compose message
     msg = (
         f"🚀 <b>Auto Trade</b>\n"
-        f"{sym}\nQty: {qty}\nEntry: ₹{cmp}\nSL: ₹{trailing_sl}\nTarget: ₹{target_price}\nScore: {row['Score']}"
+        f"{sym}\nQty: {qty}\nEntry: ₹{cmp}\nSL: ₹{trailing_sl}\nTarget: ₹{target_price}\n"
+        f"Confidence: {confidence:.2f}"
     )
 
     if dry_run:
@@ -215,8 +253,9 @@ for _, row in df_top.iterrows():
         send_telegram(BOT_TOKEN, CHAT_ID, f"[DRY RUN]\n{msg}")
     else:
         if not is_market_open():
-            st.warning(f"Market closed for {sym}. Skipping.")
+            st.warning("Market closed. Skipping.")
             continue
+
         try:
             kite.place_order(
                 variety=kite.VARIETY_REGULAR,
@@ -230,6 +269,7 @@ for _, row in df_top.iterrows():
             st.success(f"✅ Order placed for {sym}")
             send_telegram(BOT_TOKEN, CHAT_ID, msg)
 
+            # Log entry
             from gspread import authorize
             from oauth2client.service_account import ServiceAccountCredentials
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -237,18 +277,27 @@ for _, row in df_top.iterrows():
             gc = authorize(creds)
             sheet = gc.open_by_key(SPREADSHEET_KEY).worksheet("TradeLog")
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
             log_trade_to_sheet(
                 sheet,
                 timestamp,
                 sym,
                 qty,
                 cmp,
+                "",
+                rsi,
+                atr,
+                adx,
+                ai_score,
                 "BUY",
-                f"SL:{trailing_sl} Target:{target_price}"
+                "",
+                "",
+                ""
             )
 
         except Exception as e:
-            st.error(f"Error placing order for {sym}: {e}")
+            st.error(f"Error placing order: {e}")
+
 
 # Manual Stock Lookup
 st.subheader("🔍 Manual Stock Lookup")

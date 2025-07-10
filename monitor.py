@@ -81,7 +81,7 @@ def monitor_positions(loop=True):
 
         # Add positions not already in holdings
         for p in positions:
-            if p["product"] == "CNC" and p["quantity"] != 0:
+            if p["quantity"] != 0 and p["product"] != "MIS":
                 if p["tradingsymbol"] not in symbols_in_holdings:
                     merged_positions.append({
                         "tradingsymbol": p["tradingsymbol"],

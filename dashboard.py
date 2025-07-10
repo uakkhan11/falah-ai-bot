@@ -20,15 +20,19 @@ from telegram_utils import send_telegram
 from sheets import log_trade_to_sheet
 
 # Load ML model
-model = joblib.load("model.pkl")
 
-def get_trade_probability(rsi, atr, adx, ai_score):
+def get_trade_probability(rsi, atr, ema10, ema21, volume_change):
+    # Load model when function is called
+    model = joblib.load("model.pkl")
+
     features = pd.DataFrame([{
         "RSI": rsi,
+        "EMA10": ema10,
+        "EMA21": ema21,
         "ATR": atr,
-        "ADX": adx,
-        "AI_Score": ai_score
+        "VolumeChange": volume_change
     }])
+
     prob = model.predict_proba(features)[0][1]
     return prob
 

@@ -99,7 +99,6 @@ def run_smart_scan():
             last_daily["RSI"],
             last_daily["EMA10"],
             last_daily["EMA21"],
-            last_daily["SMA20"],
             atr,
             last_daily["volume"] / daily_df["volume"].rolling(10).mean().iloc[-1]
         ]]

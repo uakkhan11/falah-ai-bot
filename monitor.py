@@ -57,7 +57,6 @@ nifty_df = nifty_df.sort_values("date").reset_index(drop=True)
 def monitor_positions(loop=True):
     send_telegram(BOT_TOKEN, CHAT_ID, "✅ <b>Falāh Monitoring Started</b>")
 
-    # Track peak equity for drawdown
     equity_peak = None
 
     while True:
@@ -79,7 +78,7 @@ def monitor_positions(loop=True):
                 "source": "holdings"
             })
 
-        # Add positions not already in holdings
+        # Add positions not in holdings
         for p in positions:
             if p["quantity"] != 0 and p["product"] != "MIS":
                 if p["tradingsymbol"] not in symbols_in_holdings:
@@ -100,7 +99,6 @@ def monitor_positions(loop=True):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         all_rows = []
 
-        # Compute portfolio value
         portfolio_value = sum(p["last_price"] * p["quantity"] for p in merged_positions)
         if equity_peak is None:
             equity_peak = portfolio_value
@@ -109,54 +107,54 @@ def monitor_positions(loop=True):
         print(f"Current Drawdown: {drawdown_pct:.2f}%")
 
         if drawdown_pct >= 7:
-    send_telegram(BOT_TOKEN, CHAT_ID, f"❌ <b>Drawdown Limit Breached ({drawdown_pct:.2f}%)</b>. Exiting all positions.")
-    for pos in merged_positions:
-        kite.place_order(
-            variety=kite.VARIETY_REGULAR,
-            exchange=pos["exchange"],
-            tradingsymbol=pos["tradingsymbol"],
-            transaction_type=kite.TRANSACTION_TYPE_SELL,
-            quantity=pos["quantity"],
-            order_type=kite.ORDER_TYPE_MARKET,
-            product=kite.PRODUCT_CNC
-        )
-        pnl = (pos["last_price"] - pos["average_price"]) * pos["quantity"]
-        outcome = 1 if pnl > 0 else 0
+            send_telegram(BOT_TOKEN, CHAT_ID, f"❌ <b>Drawdown Limit Breached ({drawdown_pct:.2f}%)</b>. Exiting all positions.")
+            for pos in merged_positions:
+                kite.place_order(
+                    variety=kite.VARIETY_REGULAR,
+                    exchange=pos["exchange"],
+                    tradingsymbol=pos["tradingsymbol"],
+                    transaction_type=kite.TRANSACTION_TYPE_SELL,
+                    quantity=pos["quantity"],
+                    order_type=kite.ORDER_TYPE_MARKET,
+                    product=kite.PRODUCT_CNC
+                )
+                pnl = (pos["last_price"] - pos["average_price"]) * pos["quantity"]
+                outcome = 1 if pnl > 0 else 0
 
-        log_trade_to_sheet(
-            log_sheet,
-            timestamp,
-            pos["tradingsymbol"],
-            pos["quantity"],
-            pos["average_price"],
-            pos["last_price"],
-            "",
-            "",
-            "",
-            "",
-            "SELL",
-            "Drawdown Exit",
-            pnl,
-            outcome
-        )
-    break
-    
+                log_trade_to_sheet(
+                    log_sheet,
+                    timestamp,
+                    pos["tradingsymbol"],
+                    pos["quantity"],
+                    pos["average_price"],
+                    pos["last_price"],
+                    "",
+                    "",
+                    "",
+                    "",
+                    "SELL",
+                    "Drawdown Exit",
+                    pnl,
+                    outcome
+                )
+            break
+
         for pos in merged_positions:
             symbol = pos["tradingsymbol"]
             qty = pos["quantity"]
             avg_price = pos["average_price"]
-            
+
             print(f"📂 Loading historical data for {symbol}")
-            
+
             ltp = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["last_price"]
             try:
                 df = pd.read_csv(f"/root/falah-ai-bot/historical_data/{symbol}.csv")
             except FileNotFoundError:
                 print(f"⚠️ No historical data for {symbol}. Skipping this position.")
                 continue
+
             df["date"] = pd.to_datetime(df["date"])
             df = df.sort_values("date").reset_index(drop=True)
-
             df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
             trailing_sl = compute_trailing_sl(df)
 
@@ -171,7 +169,6 @@ def monitor_positions(loop=True):
                 ai_score += 20
                 reasons.append("Trailing SL breached")
 
-            # Dynamic trailing SL adjustment: move up if price advances
             new_sl = max(trailing_sl, avg_price + df["atr"].iloc[-1])
 
             print(f"✅ {symbol} AI Score: {ai_score}")
@@ -184,37 +181,41 @@ def monitor_positions(loop=True):
             ])
 
             if exit_qty > 0:
-    if is_market_open():
-        kite.place_order(
-            variety=kite.VARIETY_REGULAR,
-            exchange="NSE",
-            tradingsymbol=symbol,
-            transaction_type=kite.TRANSACTION_TYPE_SELL,
-            quantity=exit_qty,
-            order_type=kite.ORDER_TYPE_MARKET,
-            product=kite.PRODUCT_CNC
-        )
-        send_telegram(BOT_TOKEN, CHAT_ID, f"⚠️ <b>Exit Triggered</b>\n{symbol}\nQty:{exit_qty}\nLTP:{ltp}\nReasons:{', '.join(reasons)}")
-        pnl = (ltp - avg_price) * exit_qty
-        outcome = 1 if pnl > 0 else 0
+                if is_market_open():
+                    kite.place_order(
+                        variety=kite.VARIETY_REGULAR,
+                        exchange="NSE",
+                        tradingsymbol=symbol,
+                        transaction_type=kite.TRANSACTION_TYPE_SELL,
+                        quantity=exit_qty,
+                        order_type=kite.ORDER_TYPE_MARKET,
+                        product=kite.PRODUCT_CNC
+                    )
+                    send_telegram(
+                        BOT_TOKEN,
+                        CHAT_ID,
+                        f"⚠️ <b>Exit Triggered</b>\n{symbol}\nQty:{exit_qty}\nLTP:{ltp}\nReasons:{', '.join(reasons)}"
+                    )
+                    pnl = (ltp - avg_price) * exit_qty
+                    outcome = 1 if pnl > 0 else 0
 
-        log_trade_to_sheet(
-            log_sheet,
-            timestamp,
-            symbol,
-            exit_qty,
-            avg_price,
-            ltp,
-            "",
-            "",
-            "",
-            ai_score,
-            "SELL",
-            ", ".join(reasons),
-            pnl,
-            outcome
-        )
-        
+                    log_trade_to_sheet(
+                        log_sheet,
+                        timestamp,
+                        symbol,
+                        exit_qty,
+                        avg_price,
+                        ltp,
+                        "",
+                        "",
+                        "",
+                        ai_score,
+                        "SELL",
+                        ", ".join(reasons),
+                        pnl,
+                        outcome
+                    )
+
         if all_rows:
             monitor_sheet.append_rows(all_rows, value_input_option="USER_ENTERED")
 

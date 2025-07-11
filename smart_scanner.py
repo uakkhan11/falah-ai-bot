@@ -9,6 +9,7 @@ from ta.trend import EMAIndicator
 from ta.volatility import AverageTrueRange
 from credentials import get_kite
 import joblib
+import gc
 
 HIST_DIR = "/root/falah-ai-bot/historical_data/"
 
@@ -32,7 +33,10 @@ def run_smart_scan():
 
     results = []
 
-    for token, ltp in live_prices.items():
+    # Limit to first 50 symbols to reduce RAM load
+    items = list(live_prices.items())[:50]
+
+    for token, ltp in items:
         sym = token_to_symbol.get(str(token))
         if not sym:
             print(f"⚠️ No symbol mapping for token {token}")
@@ -124,6 +128,10 @@ def run_smart_scan():
             "Score": round(score, 2),
             "Reasons": ", ".join(reasons)
         })
+
+        # Free memory for this symbol
+        del daily_df
+        gc.collect()
 
     df = pd.DataFrame(results)
 

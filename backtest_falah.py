@@ -94,16 +94,14 @@ for sym, df in all_data.items():
         features_df = pd.DataFrame([[rsi, ema10, ema21, atr, vol_ratio]], columns=FEATURE_NAMES)
         prob = ml_model.predict_proba(features_df)[0][1]
         ai_score = prob * 5.0
-
+        
+        print(
+            f"{date.date()} | {sym} | EMA10: {ema10:.2f} | EMA21: {ema21:.2f} | RSI: {rsi:.2f} | AI Score: {ai_score:.2f}"
+        )
         # Entry criteria
         ema_pass = ema10 > ema21
         rsi_pass = rsi > 45
         ai_pass = ai_score >= 1.5
-
-        print(
-            f"{date.date()} | {sym} | EMA10: {ema10:.2f} | EMA21: {ema21:.2f} | RSI: {rsi:.2f} | AI Score: {ai_score:.2f}"
-        )
-
 
         if ema_pass:
             ema_ok += 1
@@ -114,8 +112,9 @@ for sym, df in all_data.items():
         if ema_pass and rsi_pass and ai_pass:
             all_ok += 1
 
-        entry_signal = ema_pass and rsi_pass and ai_pass
-
+        passed = sum([ema_pass, rsi_pass, ai_pass])
+        entry_signal = passed >= 2
+        
         if not in_trade and entry_signal:
             entry_price = today["close"]
             sl = entry_price - 1.5 * atr

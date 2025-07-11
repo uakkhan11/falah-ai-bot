@@ -11,6 +11,7 @@ creds = secrets["zerodha"]
 
 kite = KiteConnect(api_key=creds["api_key"])
 kite.set_access_token(creds["access_token"])
+print("DEBUG CREDS:", creds)
 
 # Load tokens.json
 with open("/root/falah-ai-bot/tokens.json", "r") as f:

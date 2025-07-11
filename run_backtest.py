@@ -4,7 +4,7 @@ from bt_falah import FalahStrategy
 trades = []
 equity_curve = []
 drawdowns = []
-capital = INITIAL_CAPITAL
+capital = 100000
 
 
 cerebro = bt.Cerebro()

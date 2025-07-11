@@ -122,3 +122,8 @@ class FalahStrategy(bt.Strategy):
             elif self.data.high[0] >= self.tp_price:
                 self.order = self.close()
                 self.log(f"✅ Target hit at {self.tp_price:.2f}")
+
+        def stop(self):
+            if self.position:
+                self.log("🔚 Closing open position at end of backtest")
+                self.close()

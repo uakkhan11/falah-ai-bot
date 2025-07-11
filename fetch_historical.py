@@ -7,8 +7,13 @@ from utils import load_credentials
 
 # Initialize Kite
 secrets = load_credentials()
+if "zerodha" not in secrets:
+    raise KeyError("❌ 'zerodha' section missing in secrets.json. Please fix your credentials file.")
 creds = secrets["zerodha"]
 print("DEBUG CREDS:", creds)
+
+if "api_key" not in creds or "access_token" not in creds:
+    raise KeyError("❌ 'api_key' or 'access_token' missing in 'zerodha' credentials.")
 
 kite = KiteConnect(api_key=creds["api_key"])
 kite.set_access_token(creds["access_token"])

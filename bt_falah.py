@@ -4,6 +4,11 @@ import joblib
 
 model = joblib.load("/root/falah-ai-bot/model.pkl")
 
+# These lists will be visible outside (run_backtest.py will import them)
+trades = []
+equity_curve = []
+drawdowns = []
+
 class FalahStrategy(bt.Strategy):
     params = dict(
         rsi_period=14,
@@ -21,31 +26,45 @@ class FalahStrategy(bt.Strategy):
         self.ema21 = bt.indicators.EMA(self.data.close, period=self.p.ema_long)
         self.atr = bt.indicators.ATR(self.data, period=self.p.atr_period)
         self.order = None
-        self.trades_log = []
-        self.equity_curve = []
+        self.peak = self.broker.getvalue()
 
     def log(self, txt):
         dt = self.data.datetime.date(0)
         print(f"{dt} {txt}")
 
     def notify_trade(self, trade):
-        if trade.isclosed:
-            pnl = trade.pnl
-            self.log(f"💰 Trade closed. P&L: ₹{pnl:.2f}")
-            self.trades_log.append({
-                "date": self.data.datetime.date(0),
-                "pnl": pnl
-            })
+        if not trade.isclosed:
+            return
+
+        pnl = trade.pnl
+        dt = self.data.datetime.date(0)
+        self.log(f"💰 Trade closed. P&L: ₹{pnl:.2f}")
+
+        # Save trade globally
+        trades.append({
+            "date": dt,
+            "symbol": self.data._name,
+            "pnl": pnl,
+            "entry_price": trade.price,
+            "size": trade.size
+        })
 
     def next(self):
         if self.order:
             return
 
         # Save equity curve
-        self.equity_curve.append({
-            "date": self.data.datetime.date(0),
-            "value": self.broker.getvalue()
+        dt = self.data.datetime.date(0)
+        value = self.broker.getvalue()
+        equity_curve.append({
+            "date": dt,
+            "capital": value
         })
+
+        # Update drawdown
+        self.peak = max(self.peak, value)
+        dd = (self.peak - value) / self.peak
+        drawdowns.append(dd)
 
         # Compute AI score safely
         vol_series = pd.Series(self.data.volume.get(size=10))
@@ -80,7 +99,7 @@ class FalahStrategy(bt.Strategy):
         )
 
         if not self.position and entry_signal:
-            risk = self.p.risk_per_trade * self.broker.getvalue()
+            risk = self.p.risk_per_trade * value
             sl = self.data.close[0] - self.p.atr_multiplier * self.atr[0]
             if sl >= self.data.close[0]:
                 self.log("⚠️ Skipping trade: Stoploss >= Entry price")

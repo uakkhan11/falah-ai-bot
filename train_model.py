@@ -6,7 +6,7 @@ import joblib
 df = pd.read_csv("training_data.csv")
 
 # Remove incomplete rows
-df = df.dropna(subset=["RSI", "EMA10", "EMA21", "ATR", "VolumeChange", "Outcome"])
+df = df.dropna(subset=["RSI", "EMA10", "EMA21", "ATR", "VolumeChange", "Target"])
 
 # Define inputs and target
 features = ["RSI", "EMA10", "EMA21", "ATR", "VolumeChange"]

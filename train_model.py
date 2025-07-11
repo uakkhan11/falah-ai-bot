@@ -3,7 +3,7 @@ from sklearn.ensemble import RandomForestClassifier
 import joblib
 
 # Load dataset
-df = pd.read_csv("your_training_data.csv")
+df = pd.read_csv("training_data.csv")
 
 # Remove incomplete rows
 df = df.dropna(subset=["RSI", "EMA10", "EMA21", "ATR", "VolumeChange", "Outcome"])

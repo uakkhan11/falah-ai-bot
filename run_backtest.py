@@ -6,8 +6,8 @@ cerebro.broker.setcash(1_000_000)
 cerebro.broker.setcommission(commission=0.0005)
 
 data = bt.feeds.GenericCSVData(
-    dataname="/root/falah-ai-bot/historical_data/NIFTY.csv",  # or any of your files
-    dtformat="%Y-%m-%d",
+    dataname="/root/falah-ai-bot/historical_data/NIFTY.csv",
+    dtformat="%Y-%m-%d %H:%M:%S%z",
     timeframe=bt.TimeFrame.Days,
     compression=1,
     openinterest=-1

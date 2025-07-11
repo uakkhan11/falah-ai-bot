@@ -11,7 +11,7 @@ df = df.dropna(subset=["RSI", "EMA10", "EMA21", "ATR", "VolumeChange", "Target"]
 # Define inputs and target
 features = ["RSI", "EMA10", "EMA21", "ATR", "VolumeChange"]
 X = df[features]
-y = df["Outcome"]
+y = df["Target"]
 
 # Train the model
 model = RandomForestClassifier(

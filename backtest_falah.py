@@ -3,6 +3,7 @@
 import os
 import glob
 import json
+import numpy as np   # ✅ Fix: import numpy
 import pandas as pd
 from datetime import datetime, timedelta
 from kiteconnect import KiteConnect
@@ -13,7 +14,6 @@ RESULTS_DIR = "./backtest_results"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 # Automatically detect all CSVs in the folder
-DATA_DIR = "/root/falah-ai-bot/historical_data"
 SYMBOLS = [os.path.basename(f).replace(".csv","") for f in glob.glob(f"{DATA_DIR}/*.csv")]
 START_DATE = "2019-01-01"
 END_DATE = "2023-12-31"
@@ -49,6 +49,9 @@ from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator
 from ta.volatility import AverageTrueRange
 
+# ✅ Define feature names to match ML training
+FEATURE_NAMES = ["rsi", "ema10", "ema21", "atr", "vol_ratio"]
+
 print("🚀 Running backtest...")
 for sym, df in all_data.items():
     in_trade = False
@@ -58,26 +61,37 @@ for sym, df in all_data.items():
     for i in range(21, len(df)):
         date = df.index[i]
         today = df.iloc[i]
-        prev = df.iloc[i-1]
 
-        # Compute indicators (replicating smart_scanner)
-        rsi = RSIIndicator(close=df["close"].iloc[:i+1], window=14).rsi().iloc[-1]
-        ema10 = EMAIndicator(close=df["close"].iloc[:i+1], window=10).ema_indicator().iloc[-1]
-        ema21 = EMAIndicator(close=df["close"].iloc[:i+1], window=21).ema_indicator().iloc[-1]
-        atr = AverageTrueRange(
+        # Compute indicators
+        rsi_series = RSIIndicator(close=df["close"].iloc[:i+1], window=14).rsi()
+        rsi = rsi_series.iloc[-1]
+
+        ema10_series = EMAIndicator(close=df["close"].iloc[:i+1], window=10).ema_indicator()
+        ema10 = ema10_series.iloc[-1]
+
+        ema21_series = EMAIndicator(close=df["close"].iloc[:i+1], window=21).ema_indicator()
+        ema21 = ema21_series.iloc[-1]
+
+        atr_series = AverageTrueRange(
             high=df["high"].iloc[:i+1],
             low=df["low"].iloc[:i+1],
             close=df["close"].iloc[:i+1],
             window=14
-        ).average_true_range().iloc[-1]
-        vol_ratio = today["volume"] / df["volume"].iloc[:i+1].rolling(10).mean().iloc[-1]
+        ).average_true_range()
+        atr = atr_series.iloc[-1]
 
-        # ML score
-        features = [[rsi, ema10, ema21, atr, vol_ratio]]
-        prob = ml_model.predict_proba(features)[0][1]
+        rolling_mean = df["volume"].iloc[:i+1].rolling(10).mean().iloc[-1]
+        if pd.isna(rolling_mean) or rolling_mean == 0:
+            continue
+        vol_ratio = today["volume"] / rolling_mean
+
+        # ML features
+        features_df = pd.DataFrame([[rsi, ema10, ema21, atr, vol_ratio]], columns=FEATURE_NAMES)
+
+        prob = ml_model.predict_proba(features_df)[0][1]
         ai_score = prob * 5.0
 
-        # Entry criteria (simple example)
+        # Entry criteria
         entry_signal = (
             ema10 > ema21
             and rsi > 50

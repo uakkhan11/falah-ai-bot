@@ -86,9 +86,12 @@ for sym, df in all_data.items():
         atr = atr_series.iloc[-1]
 
         rolling_mean = df["volume"].iloc[:i+1].rolling(10).mean().iloc[-1]
+        print(
+            f"{date.date()} {sym} DEBUG rolling_mean={rolling_mean}"
+        )
         if pd.isna(rolling_mean) or rolling_mean == 0:
             continue
-        vol_ratio = today["volume"] / rolling_mean
+
 
         # ML features
         features_df = pd.DataFrame([[rsi, ema10, ema21, atr, vol_ratio]], columns=FEATURE_NAMES)

@@ -97,8 +97,13 @@ for sym, df in all_data.items():
 
         # Entry criteria
         ema_pass = ema10 > ema21
-        rsi_pass = rsi > 50
-        ai_pass = ai_score >= 2.5
+        rsi_pass = rsi > 45
+        ai_pass = ai_score >= 1.5
+
+        print(
+            f"{date.date()} | {sym} | EMA10: {ema10:.2f} | EMA21: {ema21:.2f} | RSI: {rsi:.2f} | AI Score: {ai_score:.2f}"
+        )
+
 
         if ema_pass:
             ema_ok += 1

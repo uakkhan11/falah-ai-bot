@@ -19,3 +19,46 @@ print("Starting Portfolio Value:", cerebro.broker.getvalue())
 cerebro.run()
 print("Ending Portfolio Value:", cerebro.broker.getvalue())
 #cerebro.plot()
+
+# ─── SAVE RESULTS ────────────────────────────────────────────────────
+if trades:
+    trades_df = pd.DataFrame(trades)
+    trades_df.to_csv(os.path.join(RESULTS_DIR, "trades.csv"), index=False)
+    print(f"\n✅ Saved {len(trades)} trades to backtest_results/trades.csv")
+
+    # Summarize trades
+    wins = trades_df[trades_df["pnl"] > 0]
+    losses = trades_df[trades_df["pnl"] <= 0]
+    total_pnl = trades_df["pnl"].sum()
+    avg_pnl = trades_df["pnl"].mean()
+    win_rate = len(wins) / len(trades_df) * 100
+
+    print("\n📊 Trade Summary:")
+    print(f"Total Trades: {len(trades_df)}")
+    print(f"Winning Trades: {len(wins)} ({win_rate:.1f}%)")
+    print(f"Losing Trades: {len(losses)}")
+    print(f"Net P&L: ₹{total_pnl:,.2f}")
+    print(f"Average P&L per Trade: ₹{avg_pnl:,.2f}")
+
+else:
+    print("⚠️ No trades recorded. Nothing to report.")
+
+if equity_curve:
+    ec = pd.DataFrame(equity_curve)
+    ec.to_csv(os.path.join(RESULTS_DIR, "equity_curve.csv"), index=False)
+    returns = ec["capital"].pct_change().dropna()
+    cagr = (
+        (capital / INITIAL_CAPITAL) ** (1 / ((ec['date'].iloc[-1] - ec['date'].iloc[0]).days / 365.25))
+    ) - 1 if len(ec) > 1 else 0
+    sharpe = returns.mean() / returns.std() * (252 ** 0.5) if len(returns) > 1 else 0
+    max_dd = max(drawdowns) * 100 if drawdowns else 0
+
+    print("\n🎯 Backtest Performance:")
+    print(f"Final Portfolio Value: ₹{capital:,.2f}")
+    print(f"CAGR: {cagr:.2%}")
+    print(f"Sharpe Ratio: {sharpe:.2f}")
+    print(f"Max Drawdown: {max_dd:.1f}%")
+
+else:
+    print("⚠️ No equity curve data to compute performance metrics.")
+

@@ -9,6 +9,9 @@ from utils import load_credentials
 secrets = load_credentials()
 if "zerodha" not in secrets:
     raise KeyError("❌ 'zerodha' section missing in secrets.json. Please fix your credentials file.")
+
+with open("/root/falah-ai-bot/secrets.json") as f:
+    secrets = json.load(f)
 creds = secrets["zerodha"]
 print("DEBUG CREDS:", creds)
 

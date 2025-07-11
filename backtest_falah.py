@@ -98,7 +98,6 @@ for sym, df in all_data.items():
         ai_score = prob * 5.0
 
         # Entry criteria
-        entry_signal = (
             ema_pass = ema10 > ema21
             rsi_pass = rsi > 50
             ai_pass = ai_score >= 2.5
@@ -113,7 +112,6 @@ for sym, df in all_data.items():
                 all_ok += 1
             
             entry_signal = ema_pass and rsi_pass and ai_pass
-        )
 
         if not in_trade and entry_signal:
             entry_price = today["close"]

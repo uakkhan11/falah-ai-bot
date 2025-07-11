@@ -1,124 +1,92 @@
-import backtrader as bt
+import os
 import pandas as pd
-import joblib
+import backtrader as bt
+from bt_falah import FalahStrategy
 
-model = joblib.load("/root/falah-ai-bot/model.pkl")
+# ─── CONFIG ───────────────────────────────────────────────
+RESULTS_DIR = "./backtest_results"
+os.makedirs(RESULTS_DIR, exist_ok=True)
 
-class FalahStrategy(bt.Strategy):
-    params = dict(
-        rsi_period=14,
-        ema_short=10,
-        ema_long=21,
-        atr_period=14,
-        risk_per_trade=0.02,
-        atr_multiplier=1.5,
-        ai_threshold=0.6
-    )
+# ─── Initialize Cerebro ───────────────────────────────────
+cerebro = bt.Cerebro()
+cerebro.broker.setcash(1_000_000)
+cerebro.broker.setcommission(commission=0.0005)
 
-    def __init__(self):
-        self.rsi = bt.indicators.RSI(self.data.close, period=self.p.rsi_period)
-        self.ema10 = bt.indicators.EMA(self.data.close, period=self.p.ema_short)
-        self.ema21 = bt.indicators.EMA(self.data.close, period=self.p.ema_long)
-        self.atr = bt.indicators.ATR(self.data, period=self.p.atr_period)
-        self.order = None
-        self.trades_log = []
-        self.equity_curve = []
-        self.peak = self.broker.getvalue()
+# ─── Load Data ────────────────────────────────────────────
+data = bt.feeds.GenericCSVData(
+    dataname="/root/falah-ai-bot/historical_data/RELIANCE.csv",
+    dtformat="%Y-%m-%d %H:%M:%S%z",
+    timeframe=bt.TimeFrame.Days,
+    compression=1,
+    openinterest=-1
+)
 
-    def log(self, txt):
-        dt = self.data.datetime.date(0)
-        print(f"{dt} {txt}")
+cerebro.adddata(data)
 
-    def notify_trade(self, trade):
-        if not trade.isclosed:
-            return
+# ─── Add Strategy ────────────────────────────────────────
+cerebro.addstrategy(FalahStrategy)
 
-        pnl = trade.pnl
-        dt = self.data.datetime.date(0)
-        self.log(f"💰 Trade closed. P&L: ₹{pnl:.2f}")
+# ─── Run Backtest ────────────────────────────────────────
+print("Starting Portfolio Value:", cerebro.broker.getvalue())
+results = cerebro.run()
+print("Ending Portfolio Value:", cerebro.broker.getvalue())
 
-        self.trades_log.append({
-            "date": dt,
-            "symbol": self.data._name,
-            "pnl": pnl,
-            "entry_price": trade.price,
-            "size": trade.size
-        })
+# ─── Retrieve Data From Strategy ─────────────────────────
+strategy_instance = results[0]
 
-    def stop(self):
-        print("🟢 STOP method called")
-        if self.position:
-            self.log("🔚 Closing open position at end of backtest")
-            self.close()
+trades = getattr(strategy_instance, "trades_log", [])
+equity_curve = getattr(strategy_instance, "equity_curve", [])
+drawdowns = getattr(strategy_instance, "drawdowns", [])
 
-    def next(self):
-        if self.order:
-            return
+# ─── Save Results ────────────────────────────────────────
+if trades:
+    trades_df = pd.DataFrame(trades)
 
-        dt = self.data.datetime.date(0)
-        value = self.broker.getvalue()
-        self.equity_curve.append({
-            "date": dt,
-            "value": value
-        })
+    # Summarize trades
+    wins = trades_df[trades_df["pnl"] > 0]
+    losses = trades_df[trades_df["pnl"] <= 0]
+    total_pnl = trades_df["pnl"].sum()
+    avg_pnl = trades_df["pnl"].mean()
+    win_rate = len(wins) / len(trades_df) * 100
 
-        self.peak = max(self.peak, value)
-        dd = (self.peak - value) / self.peak
-        # Append drawdown to a global list if you want (or keep internal)
+    print("\n📊 Trade Summary:")
+    print(f"Total Trades: {len(trades_df)}")
+    print(f"Winning Trades: {len(wins)} ({win_rate:.1f}%)")
+    print(f"Losing Trades: {len(losses)}")
+    print(f"Net P&L: ₹{total_pnl:,.2f}")
+    print(f"Average P&L per Trade: ₹{avg_pnl:,.2f}")
 
-        vol_series = pd.Series(self.data.volume.get(size=10))
-        if vol_series.isna().any() or vol_series.mean() == 0:
-            self.log("Skipping due to bad volume")
-            return
+else:
+    print("\n⚠️ No trades recorded. Nothing to report.")
 
-        vol_ratio = self.data.volume[0] / vol_series.mean()
+if equity_curve:
+    ec = pd.DataFrame(equity_curve)
+    ec.to_csv(os.path.join(RESULTS_DIR, "equity_curve.csv"), index=False)
 
-        features = [[
-            self.rsi[0],
-            self.ema10[0],
-            self.ema21[0],
-            self.atr[0],
-            vol_ratio
-        ]]
-        prob = model.predict_proba(pd.DataFrame(
-            features,
-            columns=["RSI","EMA10","EMA21","ATR","VolumeChange"]
-        ))[0][1]
-        ai_score = prob * 5.0
+    if len(ec) > 1:
+        returns = ec["value"].pct_change().dropna()
+        cagr = (
+            (ec['value'].iloc[-1] / ec['value'].iloc[0]) ** (
+                1 / ((ec['date'].iloc[-1] - ec['date'].iloc[0]).days / 365.25)
+            )
+        ) - 1
+        sharpe = returns.mean() / returns.std() * (252 ** 0.5)
+    else:
+        cagr = sharpe = 0
 
-        ema_pass = self.ema10[0] > self.ema21[0]
-        rsi_pass = self.rsi[0] > 45
-        ai_pass = ai_score >= self.p.ai_threshold
+    max_dd = max(drawdowns) * 100 if drawdowns else 0
 
-        passed = sum([ema_pass, rsi_pass, ai_pass])
-        entry_signal = passed >= 2
+    print("\n🎯 Backtest Performance:")
+    print(f"Final Portfolio Value: ₹{ec['value'].iloc[-1]:,.2f}")
+    print(f"CAGR: {cagr:.2%}")
+    print(f"Sharpe Ratio: {sharpe:.2f}")
+    print(f"Max Drawdown: {max_dd:.1f}%")
+else:
+    print("⚠️ No equity curve data to compute performance metrics.")
 
-        self.log(
-            f"EMA10:{self.ema10[0]:.2f} EMA21:{self.ema21[0]:.2f} "
-            f"RSI:{self.rsi[0]:.2f} AI:{ai_score:.2f} Passed:{passed}"
-        )
-
-        if not self.position and entry_signal:
-            risk = self.p.risk_per_trade * value
-            sl = self.data.close[0] - self.p.atr_multiplier * self.atr[0]
-            if sl >= self.data.close[0]:
-                self.log("⚠️ Skipping trade: Stoploss >= Entry price")
-                return
-
-            qty = int(risk / (self.data.close[0] - sl))
-            if qty <= 0:
-                self.log("⚠️ Skipping trade: qty <=0")
-                return
-
-            self.order = self.buy(size=qty)
-            self.sl_price = sl
-            self.tp_price = self.data.close[0] + (self.data.close[0] - sl) * 3
-            self.log(f"✅ Buy order placed: qty={qty} SL={self.sl_price:.2f} TP={self.tp_price:.2f}")
-
-        if self.position:
-            if self.data.low[0] <= self.sl_price:
-                self.order = self.close()
-                self.log(f"🛑 Stop Loss hit at {self.sl_price:.2f}")
-            elif self.data.high[0] >= self.tp_price:
-                self.order = self.close()
-                self.log(f"✅ Target hit at {self.tp_price:.2f}")
+# ─── Show Date Range of CSV ──────────────────────────────
+df = pd.read_csv("/root/falah-ai-bot/historical_data/NIFTY.csv", parse_dates=["date"])
+print("\n🗓️ Data Range:")
+print("First date:", df["date"].min())
+print("Last date:", df["date"].max())
+print("Total rows:", len(df))

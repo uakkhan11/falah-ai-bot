@@ -41,11 +41,19 @@ class FalahStrategy(bt.Strategy):
         # Entry Criteria
         ema_pass = self.ema10[0] > self.ema21[0]
         rsi_pass = self.rsi[0] > 45
-        ai_pass = ai_score >= 1.5
+        ai_pass = ai_score >= 0.9
 
         passed = sum([ema_pass, rsi_pass, ai_pass])
         entry_signal = passed >= 2
 
+        # Debug output to verify each condition
+        print(
+            f"{self.datetime.date()} {self.data._name} "
+            f"EMA10:{self.ema10[0]:.2f} EMA21:{self.ema21[0]:.2f} "
+            f"RSI:{self.rsi[0]:.2f} AI:{ai_score:.2f} "
+            f"EMApass:{ema_pass} RSIpass:{rsi_pass} AIpass:{ai_pass} Passed:{passed}"
+        )
+        
         # Log the signals
         print(f"{self.data.datetime.date(0)} | EMA10:{self.ema10[0]:.2f} EMA21:{self.ema21[0]:.2f} RSI:{self.rsi[0]:.2f} AI:{ai_score:.2f}")
 

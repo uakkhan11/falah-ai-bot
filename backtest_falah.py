@@ -1,6 +1,7 @@
 # backtest_falah.py
 
 import os
+import glob
 import json
 import pandas as pd
 from datetime import datetime, timedelta
@@ -11,7 +12,9 @@ DATA_DIR = "/root/falah-ai-bot/historical_data"
 RESULTS_DIR = "./backtest_results"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-SYMBOLS = ["INFY", "TCS", "HDFCBANK"]
+# Automatically detect all CSVs in the folder
+DATA_DIR = "/root/falah-ai-bot/historical_data"
+SYMBOLS = [os.path.basename(f).replace(".csv","") for f in glob.glob(f"{DATA_DIR}/*.csv")]
 START_DATE = "2019-01-01"
 END_DATE = "2023-12-31"
 INITIAL_CAPITAL = 1_000_000

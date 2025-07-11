@@ -41,8 +41,20 @@ drawdowns = getattr(strategy_instance, "drawdowns", [])
 # ─── Save Results ────────────────────────────────────────
 if trades:
     trades_df = pd.DataFrame(trades)
-    trades_df.to_csv(os.path.join(RESULTS_DIR, "trades.csv"), index=False)
-    print(f"\n✅ Saved {len(trades)} trades to {RESULTS_DIR}/trades.csv")
+
+    # Simple summary
+    total_pnl = trades_df["pnl"].sum()
+    avg_pnl = trades_df["pnl"].mean()
+    win_rate = (trades_df["pnl"] > 0).mean() * 100
+
+    print("\n📊 Trade Summary:")
+    print(f"Total Trades: {len(trades_df)}")
+    print(f"Winning Trades: {(trades_df['pnl'] > 0).sum()} ({win_rate:.1f}%)")
+    print(f"Losing Trades: {(trades_df['pnl'] <= 0).sum()}")
+    print(f"Net P&L: ₹{total_pnl:,.2f}")
+    print(f"Average P&L per Trade: ₹{avg_pnl:,.2f}")
+else:
+    print("\n⚠️ No trades recorded. Nothing to report.")
 
     # Summarize trades
     wins = trades_df[trades_df["pnl"] > 0]

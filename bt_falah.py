@@ -4,11 +4,6 @@ import joblib
 
 model = joblib.load("/root/falah-ai-bot/model.pkl")
 
-# These lists will be visible outside (run_backtest.py will import them)
-trades = []
-equity_curve = []
-drawdowns = []
-
 class FalahStrategy(bt.Strategy):
     params = dict(
         rsi_period=14,
@@ -26,51 +21,75 @@ class FalahStrategy(bt.Strategy):
         self.ema21 = bt.indicators.EMA(self.data.close, period=self.p.ema_long)
         self.atr = bt.indicators.ATR(self.data, period=self.p.atr_period)
         self.order = None
+        self.buyprice = None
+        self.buycomm = None
+        self.trades_log = []
+        self.equity_curve = []
         self.peak = self.broker.getvalue()
 
     def log(self, txt):
         dt = self.data.datetime.date(0)
         print(f"{dt} {txt}")
 
-    def notify_trade(self, trade):
-        if not trade.isclosed:
+    def notify_order(self, order):
+        if order.status in [order.Submitted, order.Accepted]:
             return
 
-        pnl = trade.pnl
-        dt = self.data.datetime.date(0)
-        self.log(f"💰 Trade closed. P&L: ₹{pnl:.2f}")
+        if order.status in [order.Completed]:
+            if order.isbuy():
+                self.buyprice = order.executed.price
+                self.buycomm = order.executed.comm
+                self.log(
+                    f"✅ BUY EXECUTED: Price ₹{self.buyprice:.2f}, Cost ₹{order.executed.value:.2f}, Comm ₹{self.buycomm:.2f}"
+                )
+            elif order.issell():
+                self.log(
+                    f"❌ SELL EXECUTED: Price ₹{order.executed.price:.2f}, Cost ₹{order.executed.value:.2f}, Comm ₹{order.executed.comm:.2f}"
+                )
+            self.bar_executed = len(self)
+        elif order.status in [order.Canceled, order.Margin, order.Rejected]:
+            self.log("⚠️ Order Canceled/Margin/Rejected")
 
-        # Save trade globally
-        trades.append({
-            "date": dt,
-            "symbol": self.data._name,
-            "pnl": pnl,
-            "entry_price": trade.price,
-            "size": trade.size
-        })
+        self.order = None
+
+    def notify_trade(self, trade):
+        if trade.isclosed:
+            pnl = trade.pnl
+            dt = self.data.datetime.date(0)
+            self.log(f"💰 Trade closed. P&L: ₹{pnl:.2f}")
+            self.trades_log.append({
+                "date": dt,
+                "symbol": self.data._name,
+                "pnl": pnl,
+                "entry_price": trade.price,
+                "size": trade.size
+            })
+
+    def stop(self):
+        self.log("🟢 STOP method called.")
+        if self.position:
+            self.log("🔚 Closing open position at end of backtest")
+            self.close()
 
     def next(self):
         if self.order:
             return
 
-        # Save equity curve
         dt = self.data.datetime.date(0)
         value = self.broker.getvalue()
-        equity_curve.append({
+        self.equity_curve.append({
             "date": dt,
-            "capital": value
+            "value": value
         })
 
-        # Update drawdown
         self.peak = max(self.peak, value)
         dd = (self.peak - value) / self.peak
-        drawdowns.append(dd)
 
-        # Compute AI score safely
         vol_series = pd.Series(self.data.volume.get(size=10))
         if vol_series.isna().any() or vol_series.mean() == 0:
             self.log("Skipping due to bad volume")
             return
+
         vol_ratio = self.data.volume[0] / vol_series.mean()
 
         features = [[
@@ -113,17 +132,12 @@ class FalahStrategy(bt.Strategy):
             self.order = self.buy(size=qty)
             self.sl_price = sl
             self.tp_price = self.data.close[0] + (self.data.close[0] - sl) * 3
-            self.log(f"✅ Buy order placed: qty={qty} SL={self.sl_price:.2f} TP={self.tp_price:.2f}")
+            self.log(f"✅ Buy order submitted: qty={qty} SL={self.sl_price:.2f} TP={self.tp_price:.2f}")
 
         if self.position:
             if self.data.low[0] <= self.sl_price:
                 self.order = self.close()
-                self.log(f"🛑 Stop Loss hit at {self.sl_price:.2f}")
+                self.log(f"🛑 Stop Loss triggered at {self.sl_price:.2f}")
             elif self.data.high[0] >= self.tp_price:
                 self.order = self.close()
                 self.log(f"✅ Target hit at {self.tp_price:.2f}")
-
-        def stop(self):
-            if self.position:
-                self.log("🔚 Closing open position at end of backtest")
-                self.close()

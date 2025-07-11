@@ -34,7 +34,7 @@ print("Ending Portfolio Value:", cerebro.broker.getvalue())
 # ─── Retrieve Data From Strategy ─────────────────────────
 strategy_instance = results[0]
 
-trades = getattr(strategy_instance, "trades", [])
+trades = getattr(strategy_instance, "trades_log", [])
 equity_curve = getattr(strategy_instance, "equity_curve", [])
 drawdowns = getattr(strategy_instance, "drawdowns", [])
 
@@ -59,23 +59,6 @@ if trades:
 else:
     print("\n⚠️ No trades recorded. Nothing to report.")
 
-
-    # Summarize trades
-    wins = trades_df[trades_df["pnl"] > 0]
-    losses = trades_df[trades_df["pnl"] <= 0]
-    total_pnl = trades_df["pnl"].sum()
-    avg_pnl = trades_df["pnl"].mean()
-    win_rate = len(wins) / len(trades_df) * 100
-
-    print("\n📊 Trade Summary:")
-    print(f"Total Trades: {len(trades_df)}")
-    print(f"Winning Trades: {len(wins)} ({win_rate:.1f}%)")
-    print(f"Losing Trades: {len(losses)}")
-    print(f"Net P&L: ₹{total_pnl:,.2f}")
-    print(f"Average P&L per Trade: ₹{avg_pnl:,.2f}")
-else:
-    print("\n⚠️ No trades recorded. Nothing to report.")
-
 if equity_curve:
     ec = pd.DataFrame(equity_curve)
     ec.to_csv(os.path.join(RESULTS_DIR, "equity_curve.csv"), index=False)
@@ -83,7 +66,9 @@ if equity_curve:
     if len(ec) > 1:
         returns = ec["value"].pct_change().dropna()
         cagr = (
-            (ec['value'].iloc[-1] / ec['value'].iloc[0]) ** (1 / ((ec['date'].iloc[-1] - ec['date'].iloc[0]).days / 365.25))
+            (ec['value'].iloc[-1] / ec['value'].iloc[0]) ** (
+                1 / ((ec['date'].iloc[-1] - ec['date'].iloc[0]).days / 365.25)
+            )
         ) - 1
         sharpe = returns.mean() / returns.std() * (252 ** 0.5)
     else:

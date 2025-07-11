@@ -2,6 +2,7 @@ import os
 import json
 import time
 import pandas as pd
+from datetime import datetime, timedelta
 from kiteconnect import KiteConnect
 from utils import load_credentials
 
@@ -31,19 +32,23 @@ print(f"✅ Loaded {len(tokens)} tokens.")
 output_dir = "/root/falah-ai-bot/data"
 os.makedirs(output_dir, exist_ok=True)
 
-# For each symbol, fetch historical data
-for symbol, token in tokens.items():
+# Define date range: last 5 years
+to_date = datetime.today()
+from_date = to_date - timedelta(days=5 * 365)
+
+# Main loop
+for idx, (symbol, token) in enumerate(tokens.items(), 1):
     filename = os.path.join(output_dir, f"{symbol}.csv")
     if os.path.exists(filename):
-        print(f"⚠️ {symbol}: File already exists. Skipping.")
+        print(f"⚠️ [{idx}/{len(tokens)}] {symbol}: File already exists. Skipping.")
         continue
 
-    print(f"⬇️ Downloading {symbol}...")
+    print(f"⬇️ [{idx}/{len(tokens)}] Downloading {symbol} ({from_date.date()} to {to_date.date()})...")
     try:
         data = kite.historical_data(
             instrument_token=int(token),
-            from_date="2024-01-01",
-            to_date="2024-12-31",
+            from_date=from_date.strftime("%Y-%m-%d"),
+            to_date=to_date.strftime("%Y-%m-%d"),
             interval="day"
         )
         if not data:

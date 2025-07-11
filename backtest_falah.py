@@ -97,21 +97,22 @@ for sym, df in all_data.items():
         prob = ml_model.predict_proba(features_df)[0][1]
         ai_score = prob * 5.0
 
-        # Entry criteria
-            ema_pass = ema10 > ema21
-            rsi_pass = rsi > 50
-            ai_pass = ai_score >= 2.5
-            
-            if ema_pass:
-                ema_ok += 1
-            if rsi_pass:
-                rsi_ok += 1
-            if ai_pass:
-                ai_ok += 1
-            if ema_pass and rsi_pass and ai_pass:
-                all_ok += 1
-            
-            entry_signal = ema_pass and rsi_pass and ai_pass
+# Entry criteria
+ema_pass = ema10 > ema21
+rsi_pass = rsi > 50
+ai_pass = ai_score >= 2.5
+
+if ema_pass:
+    ema_ok += 1
+if rsi_pass:
+    rsi_ok += 1
+if ai_pass:
+    ai_ok += 1
+if ema_pass and rsi_pass and ai_pass:
+    all_ok += 1
+
+entry_signal = ema_pass and rsi_pass and ai_pass
+
 
         if not in_trade and entry_signal:
             entry_price = today["close"]

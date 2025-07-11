@@ -1,16 +1,21 @@
-from backtester import Backtester
-from strategies import sma_strategy
+import backtrader as bt
+from bt_falah import FalahStrategy
 
-bt = Backtester(
-    data_dir="/root/falah-ai-bot/historical_data",
-    symbols=["INFY","TCS","HDFCBANK"],
-    initial_capital=100000,
-    slippage_pct=0.002,
-    commission_per_trade=20,
-    risk_per_trade_pct=2,
-    walk_forward_train_days=90,
-    walk_forward_test_days=30,
-    strategy_func=sma_strategy
+cerebro = bt.Cerebro()
+cerebro.broker.setcash(1_000_000)
+cerebro.broker.setcommission(commission=0.0005)
+
+data = bt.feeds.GenericCSVData(
+    dataname="/root/falah-ai-bot/historical_data/NIFTY.csv",  # or any of your files
+    dtformat="%Y-%m-%d",
+    timeframe=bt.TimeFrame.Days,
+    compression=1,
+    openinterest=-1
 )
 
-bt.run()
+cerebro.adddata(data)
+cerebro.addstrategy(FalahStrategy)
+print("Starting Portfolio Value:", cerebro.broker.getvalue())
+cerebro.run()
+print("Ending Portfolio Value:", cerebro.broker.getvalue())
+cerebro.plot()

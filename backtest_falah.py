@@ -36,6 +36,12 @@ for sym in SYMBOLS:
     all_data[sym] = df
 print(f"✅ Loaded data for {len(all_data)} symbols.")
 
+ema_ok = 0
+rsi_ok = 0
+ai_ok = 0
+all_ok = 0
+
+
 # ─── MAIN BACKTEST LOOP ──────────────────────────────────────────────
 capital = INITIAL_CAPITAL
 peak = capital
@@ -93,9 +99,20 @@ for sym, df in all_data.items():
 
         # Entry criteria
         entry_signal = (
-            ema10 > ema21
-            and rsi > 50
-            and ai_score >= 2.5
+            ema_pass = ema10 > ema21
+            rsi_pass = rsi > 50
+            ai_pass = ai_score >= 2.5
+            
+            if ema_pass:
+                ema_ok += 1
+            if rsi_pass:
+                rsi_ok += 1
+            if ai_pass:
+                ai_ok += 1
+            if ema_pass and rsi_pass and ai_pass:
+                all_ok += 1
+            
+            entry_signal = ema_pass and rsi_pass and ai_pass
         )
 
         if not in_trade and entry_signal:
@@ -169,3 +186,9 @@ if equity_curve:
     print(f"CAGR: {cagr:.2%}  |  Sharpe: {sharpe:.2f}  |  Max DD: {max_dd:.1f}%")
 else:
     print("⚠️ No equity data to compute performance metrics.")
+
+print(f"\nℹ️  Entry Filter Stats:")
+print(f"EMA Passed: {ema_ok}")
+print(f"RSI Passed: {rsi_ok}")
+print(f"AI Score Passed: {ai_ok}")
+print(f"All Conditions Passed: {all_ok}")

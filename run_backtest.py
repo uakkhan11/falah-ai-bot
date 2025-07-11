@@ -1,6 +1,12 @@
 import backtrader as bt
 from bt_falah import FalahStrategy
 
+trades = []
+equity_curve = []
+drawdowns = []
+capital = INITIAL_CAPITAL
+
+
 cerebro = bt.Cerebro()
 cerebro.broker.setcash(1_000_000)
 cerebro.broker.setcommission(commission=0.0005)

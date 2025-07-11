@@ -67,34 +67,41 @@ def monitor_positions(loop=True):
 
         symbols_in_holdings = [x["tradingsymbol"] for x in holdings]
 
-        # Add holdings
+        # 🟢 Add holdings (T2 + T1 quantities)
         for h in holdings:
+            effective_qty = h["quantity"] + h["t1_quantity"]
+            if effective_qty == 0:
+                continue
             merged_positions.append({
                 "tradingsymbol": h["tradingsymbol"],
-                "quantity": h["quantity"],
+                "quantity": effective_qty,
                 "average_price": h["average_price"],
                 "last_price": h["last_price"],
                 "exchange": h["exchange"],
                 "source": "holdings"
             })
 
-        # Add positions not in holdings
+        # 🟢 Add positions (T0) not already in holdings
         for p in positions:
-            if p["quantity"] != 0 and p["product"] != "MIS":
-                if p["tradingsymbol"] not in symbols_in_holdings:
-                    merged_positions.append({
-                        "tradingsymbol": p["tradingsymbol"],
-                        "quantity": p["quantity"],
-                        "average_price": p["average_price"],
-                        "last_price": p["last_price"],
-                        "exchange": p["exchange"],
-                        "source": "positions"
-                    })
+            if p["quantity"] == 0 or p["product"] == "MIS":
+                continue
+            if p["tradingsymbol"] in symbols_in_holdings:
+                continue
+            merged_positions.append({
+                "tradingsymbol": p["tradingsymbol"],
+                "quantity": p["quantity"],
+                "average_price": p["average_price"],
+                "last_price": p["last_price"],
+                "exchange": p["exchange"],
+                "source": "positions"
+            })
 
         if not merged_positions:
             print("⚠️ No CNC holdings or positions.")
         else:
             print(f"✅ Found {len(merged_positions)} positions.")
+            for pos in merged_positions:
+                print(f"▶️ Monitoring: {pos['tradingsymbol']} | Qty: {pos['quantity']} | Source: {pos['source']}")
 
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         all_rows = []

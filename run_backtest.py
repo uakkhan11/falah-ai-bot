@@ -73,6 +73,13 @@ if equity_curve:
     print("\n🎯 Backtest Performance:")
     print(f"Final Portfolio Value: ₹{capital:,.2f}")
     print(f"CAGR: {cagr:.2%}")
+    import pandas as pd
+
+    df = pd.read_csv("/root/falah-ai-bot/historical_data/NIFTY.csv", parse_dates=["date"])
+    print("First date:", df["date"].min())
+    print("Last date:", df["date"].max())
+    print("Total rows:", len(df))
+
     print(f"Sharpe Ratio: {sharpe:.2f}")
     print(f"Max Drawdown: {max_dd:.1f}%")
 

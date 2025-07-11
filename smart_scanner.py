@@ -33,8 +33,8 @@ def run_smart_scan():
 
     results = []
 
-    # Limit to first 50 symbols to reduce RAM load
-    items = list(live_prices.items())[:50]
+    # Limit to first 25 symbols for safety
+    items = list(live_prices.items())[:25]
 
     for token, ltp in items:
         sym = token_to_symbol.get(str(token))
@@ -111,15 +111,6 @@ def run_smart_scan():
         score += ai_score
         reasons.append(f"AI Score {ai_score:.2f}")
 
-        # Optional sentiment score
-        try:
-            from sentiment import get_sentiment_score
-            sentiment = get_sentiment_score(sym)
-            score += sentiment
-            reasons.append(f"Sentiment {sentiment:+.2f}")
-        except:
-            pass
-
         print(f"👉 {sym} | Score: {score:.2f} | Reasons: {reasons}")
 
         results.append({
@@ -129,10 +120,11 @@ def run_smart_scan():
             "Reasons": ", ".join(reasons)
         })
 
-        # Free memory for this symbol
+        # Immediately free memory
         del daily_df
         gc.collect()
 
+    # Compile final DataFrame
     df = pd.DataFrame(results)
 
     if df.empty:
@@ -143,6 +135,7 @@ def run_smart_scan():
     print("✅ Final scan results:")
     print(df)
 
+    # Save to sheet and telegram (optional)
     try:
         from sheets import log_scan_to_sheet
         log_scan_to_sheet(df)

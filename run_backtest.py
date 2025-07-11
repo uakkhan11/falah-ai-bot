@@ -42,19 +42,23 @@ drawdowns = getattr(strategy_instance, "drawdowns", [])
 if trades:
     trades_df = pd.DataFrame(trades)
 
-    # Simple summary
+    # Summarize trades
+    wins = trades_df[trades_df["pnl"] > 0]
+    losses = trades_df[trades_df["pnl"] <= 0]
     total_pnl = trades_df["pnl"].sum()
     avg_pnl = trades_df["pnl"].mean()
-    win_rate = (trades_df["pnl"] > 0).mean() * 100
+    win_rate = len(wins) / len(trades_df) * 100
 
     print("\n📊 Trade Summary:")
     print(f"Total Trades: {len(trades_df)}")
-    print(f"Winning Trades: {(trades_df['pnl'] > 0).sum()} ({win_rate:.1f}%)")
-    print(f"Losing Trades: {(trades_df['pnl'] <= 0).sum()}")
+    print(f"Winning Trades: {len(wins)} ({win_rate:.1f}%)")
+    print(f"Losing Trades: {len(losses)}")
     print(f"Net P&L: ₹{total_pnl:,.2f}")
     print(f"Average P&L per Trade: ₹{avg_pnl:,.2f}")
+
 else:
     print("\n⚠️ No trades recorded. Nothing to report.")
+
 
     # Summarize trades
     wins = trades_df[trades_df["pnl"] > 0]

@@ -55,7 +55,7 @@ from ta.trend import EMAIndicator
 from ta.volatility import AverageTrueRange
 
 # ✅ Define feature names to match ML training
-FEATURE_NAMES = ["rsi", "ema10", "ema21", "atr", "vol_ratio"]
+FEATURE_NAMES = ["RSI", "EMA10", "EMA21", "ATR", "VolumeChange"]
 
 print("🚀 Running backtest...")
 for sym, df in all_data.items():

@@ -78,7 +78,7 @@ def monitor_positions(loop=True):
                 "average_price": h["average_price"],
                 "last_price": h["last_price"],
                 "exchange": h["exchange"],
-                "source": "holdings"
+                "source": f"holdings (T2:{h['quantity']} T1:{h['t1_quantity']})"
             })
 
         # 🟢 Add positions (T0) not already in holdings

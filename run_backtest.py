@@ -63,10 +63,11 @@ else:
 if equity_curve:
     ec = pd.DataFrame(equity_curve)
     ec.to_csv(os.path.join(RESULTS_DIR, "equity_curve.csv"), index=False)
+
     if len(ec) > 1:
-        returns = ec["capital"].pct_change().dropna()
+        returns = ec["value"].pct_change().dropna()
         cagr = (
-            (capital / INITIAL_CAPITAL) ** (1 / ((ec['date'].iloc[-1] - ec['date'].iloc[0]).days / 365.25))
+            (ec['value'].iloc[-1] / ec['value'].iloc[0]) ** (1 / ((ec['date'].iloc[-1] - ec['date'].iloc[0]).days / 365.25))
         ) - 1
         sharpe = returns.mean() / returns.std() * (252 ** 0.5)
     else:
@@ -75,11 +76,10 @@ if equity_curve:
     max_dd = max(drawdowns) * 100 if drawdowns else 0
 
     print("\n🎯 Backtest Performance:")
-    print(f"Final Portfolio Value: ₹{capital:,.2f}")
+    print(f"Final Portfolio Value: ₹{ec['value'].iloc[-1]:,.2f}")
     print(f"CAGR: {cagr:.2%}")
     print(f"Sharpe Ratio: {sharpe:.2f}")
     print(f"Max Drawdown: {max_dd:.1f}%")
-
 else:
     print("⚠️ No equity curve data to compute performance metrics.")
 

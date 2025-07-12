@@ -37,7 +37,7 @@ for csv_file in csv_files:
     symbol = os.path.basename(csv_file).replace(".csv", "")
     data = bt.feeds.GenericCSVData(
         dataname=csv_file,
-        dtformat="%Y-%m-%d",
+        dtformat="%Y-%m-%d %H:%M:%S%z",
         timeframe=bt.TimeFrame.Days,
         compression=1,
         openinterest=-1

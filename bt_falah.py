@@ -4,7 +4,6 @@ import joblib
 
 model = joblib.load("/root/falah-ai-bot/model.pkl")
 
-# These lists will be visible outside
 trades = []
 equity_curve = []
 drawdowns = []
@@ -54,7 +53,6 @@ class FalahStrategy(bt.Strategy):
         if self.order:
             return
 
-        # Equity tracking
         dt = self.data.datetime.date(0)
         value = self.broker.getvalue()
         equity_curve.append({"date": dt, "capital": value})
@@ -63,12 +61,10 @@ class FalahStrategy(bt.Strategy):
         dd = (self.peak - value) / self.peak
         drawdowns.append(dd)
 
-        # Skip if too low ATR
         if self.atr[0] < self.p.min_atr:
             self.log("Skipping due to low ATR")
             return
 
-        # Compute AI score
         vol_series = pd.Series(self.data.volume.get(size=10))
         if vol_series.isna().any() or vol_series.mean() == 0:
             self.log("Skipping due to bad volume")
@@ -125,20 +121,21 @@ class FalahStrategy(bt.Strategy):
                 self.order = self.close()
                 self.log(f"✅ Target hit at {self.tp_price:.2f}")
 
-        def stop(self):
-            if self.position:
-                dt = self.data.datetime.date(0)
-                exit_price = self.data.close[0]
-                pnl = (exit_price - self.position.price) * self.position.size
-        
-                self.close()
-        
-                self.trades_log.append({
-                    "date": dt,
-                    "symbol": self.data._name,
-                    "pnl": pnl,
-                    "entry_price": self.position.price,
-                    "size": self.position.size
-                })
-        
-                self.log(f"🔚 Closing open position manually. Final P&L: ₹{pnl:.2f}")
+    # 🚨 IMPORTANT: Not nested!
+    def stop(self):
+        if self.position:
+            dt = self.data.datetime.date(0)
+            exit_price = self.data.close[0]
+            pnl = (exit_price - self.position.price) * self.position.size
+
+            self.close()
+
+            self.trades_log.append({
+                "date": dt,
+                "symbol": self.data._name,
+                "pnl": pnl,
+                "entry_price": self.position.price,
+                "size": self.position.size
+            })
+
+            self.log(f"🔚 Closing open position manually. Final P&L: ₹{pnl:.2f}")

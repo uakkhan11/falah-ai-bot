@@ -11,10 +11,10 @@ class FalahStrategy(bt.Strategy):
         ema_long=21,
         atr_period=14,
         risk_per_trade=0.01,       # Slightly higher risk per trade
-        atr_multiplier=1.2,         # Tighter stoploss
-        ai_threshold=0.5,           # Relaxed threshold
-        min_atr=0.1,                # Accept lower volatility
-        exit_bars=12                # Exit after N bars (12 hours)
+        atr_multiplier=2.0,         # Tighter stoploss
+        ai_threshold=0.3,           # Relaxed threshold
+        min_atr=0.05,                # Accept lower volatility
+        exit_bars=6               # Exit after N bars (12 hours)
     )
 
     def __init__(self):
@@ -83,11 +83,11 @@ class FalahStrategy(bt.Strategy):
         ai_score = prob * 5.0
 
         ema_pass = self.ema10[0] > self.ema21[0]
-        rsi_pass = self.rsi[0] > 40
+        rsi_pass = self.rsi[0] > 35
         ai_pass = ai_score >= self.p.ai_threshold
 
         # Entry if AI passes and either RSI or EMA passes
-        entry_signal = ai_pass and (rsi_pass or ema_pass)
+        entry_signal = ai_pass
 
         self.log(
             f"EMA10:{self.ema10[0]:.2f} EMA21:{self.ema21[0]:.2f} "

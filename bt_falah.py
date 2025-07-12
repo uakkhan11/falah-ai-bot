@@ -126,19 +126,19 @@ class FalahStrategy(bt.Strategy):
                 self.log(f"✅ Target hit at {self.tp_price:.2f}")
 
         def stop(self):
-        if self.position:
-            dt = self.data.datetime.date(0)
-            exit_price = self.data.close[0]
-            pnl = (exit_price - self.position.price) * self.position.size
-    
-            self.close()
-    
-            self.trades_log.append({
-                "date": dt,
-                "symbol": self.data._name,
-                "pnl": pnl,
-                "entry_price": self.position.price,
-                "size": self.position.size
-            })
-    
-            self.log(f"🔚 Closing open position manually. Final P&L: ₹{pnl:.2f}")
+            if self.position:
+                dt = self.data.datetime.date(0)
+                exit_price = self.data.close[0]
+                pnl = (exit_price - self.position.price) * self.position.size
+        
+                self.close()
+        
+                self.trades_log.append({
+                    "date": dt,
+                    "symbol": self.data._name,
+                    "pnl": pnl,
+                    "entry_price": self.position.price,
+                    "size": self.position.size
+                })
+        
+                self.log(f"🔚 Closing open position manually. Final P&L: ₹{pnl:.2f}")

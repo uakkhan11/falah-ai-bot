@@ -72,28 +72,26 @@ class FalahStrategy(bt.Strategy):
                 continue
 
             # Time-based exit
-            if pos and (len(self) - self.entry_bars[d]) >= self.p.exit_bars:
+            if pos and (len(self) - self.entry_bars.get(d, 0)) >= self.p.exit_bars:
                 self.close(data=d)
                 self.log(f"{d._name}: ⏳ Time exit after {self.p.exit_bars} bars")
                 continue
 
             # Skip if in position
             if pos:
-                # Stoploss
                 if d.low[0] <= self.sl_prices[d]:
                     self.close(data=d)
                     self.log(f"{d._name}: 🛑 Stop Loss hit at {self.sl_prices[d]:.2f}")
-                # Target
                 elif d.high[0] >= self.tp_prices[d]:
                     self.close(data=d)
                     self.log(f"{d._name}: ✅ Target hit at {self.tp_prices[d]:.2f}")
                 continue
 
-            # Skip if ATR too low
-            # if inds['atr'][0] < self.p.min_atr:
-            #     continue
+            # ATR safety check
+            if inds['atr'][0] <= 0 or pd.isna(inds['atr'][0]):
+                continue
 
-            # Features for AI
+            # AI Features
             vol_ratio = 1.0
             features = [[
                 inds['rsi'][0],
@@ -110,14 +108,12 @@ class FalahStrategy(bt.Strategy):
 
             ema_pass = inds['ema10'][0] > inds['ema21'][0]
             rsi_pass = inds['rsi'][0] > 35
-            ai_pass = ai_score >= self.p.ai_threshold
             entry_signal = ema_pass or rsi_pass
 
             self.log(
                 f"{d._name}: EMA10:{inds['ema10'][0]:.2f} EMA21:{inds['ema21'][0]:.2f} "
                 f"RSI:{inds['rsi'][0]:.2f} ATR:{inds['atr'][0]:.4f} "
-                f"AIraw:{prob:.4f} AIscore:{ai_score:.2f} Entry:{entry_signal} "
-                f"EMApass:{ema_pass} RSIpass:{rsi_pass} AIpass:{ai_pass}"
+                f"AI:{ai_score:.2f} Entry:{entry_signal}"
             )
 
             if entry_signal:
@@ -126,7 +122,7 @@ class FalahStrategy(bt.Strategy):
                 if sl >= d.close[0]:
                     continue
 
-                qty = int(risk / (d.close[0] - sl))
+                qty = int(risk / max(d.close[0] - sl, 1e-6))
                 if qty <= 0:
                     continue
 
@@ -141,7 +137,6 @@ class FalahStrategy(bt.Strategy):
                 self.log(f"{d._name}: ✅ Buy order: qty={qty} SL={sl:.2f} TP={self.tp_prices[d]:.2f}")
 
     def stop(self):
-        # Close any open positions
         for d in self.datas:
             pos = self.getposition(d)
             if pos:

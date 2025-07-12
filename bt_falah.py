@@ -51,7 +51,6 @@ class FalahStrategy(bt.Strategy):
 
     def stop(self):
         global trades  # ✅ Important!
-        def stop(self):
     if self.position:
         dt = self.data.datetime.date(0)
         exit_price = self.data.close[0]

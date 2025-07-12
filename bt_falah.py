@@ -4,7 +4,7 @@ import joblib
 
 model = joblib.load("/root/falah-ai-bot/model.pkl")
 
-# These lists will be visible outside (run_backtest.py will import them)
+# These lists will be visible outside
 trades = []
 equity_curve = []
 drawdowns = []
@@ -17,7 +17,7 @@ class FalahStrategy(bt.Strategy):
         atr_period=14,
         risk_per_trade=0.005,
         atr_multiplier=1.5,
-        ai_threshold=0.8,
+        ai_threshold=1.2,
         min_atr=0.5
     )
 
@@ -49,26 +49,6 @@ class FalahStrategy(bt.Strategy):
             "size": trade.size
         })
 
-    def stop(self):
-        global trades  # ✅ Important!
-    if self.position:
-        dt = self.data.datetime.date(0)
-        exit_price = self.data.close[0]
-        pnl = (exit_price - self.position.price) * self.position.size
-
-        self.close()  # Close the position
-
-        # Manually log this trade
-        trades.append({
-            "date": dt,
-            "symbol": self.data._name,
-            "pnl": pnl,
-            "entry_price": self.position.price,
-            "size": self.position.size
-        })
-
-        self.log(f"🔚 Closing open position manually. Final P&L: ₹{pnl:.2f}")
-
     def next(self):
         if self.order:
             return
@@ -82,10 +62,12 @@ class FalahStrategy(bt.Strategy):
         dd = (self.peak - value) / self.peak
         drawdowns.append(dd)
 
+        # Skip if too low ATR
         if self.atr[0] < self.p.min_atr:
             self.log("Skipping due to low ATR")
             return
 
+        # Compute AI score
         vol_series = pd.Series(self.data.volume.get(size=10))
         if vol_series.isna().any() or vol_series.mean() == 0:
             self.log("Skipping due to bad volume")
@@ -109,12 +91,12 @@ class FalahStrategy(bt.Strategy):
         rsi_pass = self.rsi[0] > 50
         ai_pass = ai_score >= self.p.ai_threshold
 
-        passed = sum([ema_pass, rsi_pass, ai_pass])
-        entry_signal = passed >= 2
+        entry_signal = ema_pass and rsi_pass and ai_pass
 
         self.log(
             f"EMA10:{self.ema10[0]:.2f} EMA21:{self.ema21[0]:.2f} "
-            f"RSI:{self.rsi[0]:.2f} AI:{ai_score:.2f} Entry:{entry_signal}"
+            f"RSI:{self.rsi[0]:.2f} AI:{ai_score:.2f} Entry:{entry_signal} "
+            f"EMApass:{ema_pass} RSIpass:{rsi_pass} AIpass:{ai_pass}"
         )
 
         if not self.position and entry_signal:
@@ -141,3 +123,21 @@ class FalahStrategy(bt.Strategy):
             elif self.data.high[0] >= self.tp_price:
                 self.order = self.close()
                 self.log(f"✅ Target hit at {self.tp_price:.2f}")
+
+    def stop(self):
+        if self.position:
+            dt = self.data.datetime.date(0)
+            exit_price = self.data.close[0]
+            pnl = (exit_price - self.position.price) * self.position.size
+
+            self.close()
+
+            trades.append({
+                "date": dt,
+                "symbol": self.data._name,
+                "pnl": pnl,
+                "entry_price": self.position.price,
+                "size": self.position.size
+            })
+
+            self.log(f"🔚 Closing open position manually. Final P&L: ₹{pnl:.2f}")

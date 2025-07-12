@@ -15,22 +15,43 @@ cerebro.broker.setcash(1_000_000)
 cerebro.broker.setcommission(commission=0.0005)
 
 # ─── Load All Data ────────────────────────────────────────
+import glob
+import os
+
 csv_files = glob.glob(os.path.join(DATA_DIR, "*.csv"))
 if not csv_files:
     raise FileNotFoundError("No CSV files found in historical_data folder.")
 
 print(f"✅ Found {len(csv_files)} CSV files.")
 
+loaded_files = 0
+
 for csv_file in csv_files:
+    # Validate CSV before loading
+    df = pd.read_csv(csv_file)
+    if df.shape[0] < 30:
+        print(f"⚠️ {os.path.basename(csv_file)} skipped (too few rows: {df.shape[0]})")
+        continue
+    if (df["close"].nunique() == 1):
+        print(f"⚠️ {os.path.basename(csv_file)} skipped (constant price)")
+        continue
+    if df["close"].isna().all():
+        print(f"⚠️ {os.path.basename(csv_file)} skipped (all NaNs)")
+        continue
+
     symbol = os.path.basename(csv_file).replace(".csv", "")
     data = bt.feeds.GenericCSVData(
         dataname=csv_file,
-        dtformat="%Y-%m-%d %H:%M:%S%z",
+        dtformat="%Y-%m-%d",
         timeframe=bt.TimeFrame.Days,
         compression=1,
         openinterest=-1
     )
     cerebro.adddata(data, name=symbol)
+    loaded_files += 1
+
+print(f"✅ Loaded {loaded_files} valid CSV files into Backtrader.")
+
 
 # ─── Add Strategy ────────────────────────────────────────
 cerebro.addstrategy(FalahStrategy)

@@ -28,6 +28,7 @@ class FalahStrategy(bt.Strategy):
         self.atr = bt.indicators.ATR(self.data, period=self.p.atr_period)
         self.order = None
         self.peak = self.broker.getvalue()
+        self.trades_log = []
 
     def log(self, txt):
         dt = self.data.datetime.date(0)
@@ -124,15 +125,14 @@ class FalahStrategy(bt.Strategy):
                 self.order = self.close()
                 self.log(f"✅ Target hit at {self.tp_price:.2f}")
 
-    def stop(self):
+        def stop(self):
         if self.position:
             dt = self.data.datetime.date(0)
             exit_price = self.data.close[0]
             pnl = (exit_price - self.position.price) * self.position.size
-
-            self.log(f"🔚 Closing open position manually. Final P&L: ₹{pnl:.2f}")
+    
             self.close()
-
+    
             self.trades_log.append({
                 "date": dt,
                 "symbol": self.data._name,
@@ -140,3 +140,5 @@ class FalahStrategy(bt.Strategy):
                 "entry_price": self.position.price,
                 "size": self.position.size
             })
+    
+            self.log(f"🔚 Closing open position manually. Final P&L: ₹{pnl:.2f}")

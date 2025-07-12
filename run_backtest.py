@@ -26,7 +26,6 @@ loaded_files = 0
 for csv_file in csv_files:
     df = pd.read_csv(csv_file, parse_dates=["date"])
     df["date"] = df["date"].dt.tz_localize(None)
-    )
 
     # Skip empty or bad files
     if df.shape[0] < 100:

@@ -17,33 +17,27 @@ cerebro.broker.setcommission(commission=0.0005)
 # ─── Load All Data ────────────────────────────────────────
 csv_files = glob.glob(os.path.join(DATA_DIR, "*.csv"))
 if not csv_files:
-    raise FileNotFoundError("❌ No CSV files found in historical_data folder.")
+    raise FileNotFoundError("No CSV files found in historical_data folder.")
 
 print(f"✅ Found {len(csv_files)} CSV files.")
 
 loaded_files = 0
-
 for csv_file in csv_files:
     df = pd.read_csv(csv_file)
-
-    # Drop invalid rows (NaNs or <=0)
-    df_clean = df.dropna()
-    df_clean = df_clean[
-        (df_clean[["open", "high", "low", "close", "volume"]] > 0).all(axis=1)
-    ]
-
-    if df_clean.shape[0] < 30:
-        print(f"⚠️ {os.path.basename(csv_file)} skipped (too few clean rows: {df_clean.shape[0]})")
+    if df.shape[0] < 30:
+        print(f"⚠️ {os.path.basename(csv_file)} skipped (too few rows)")
         continue
-
-    # Save cleaned file to temp
-    tmp_cleaned = "/tmp/cleaned.csv"
-    df_clean.to_csv(tmp_cleaned, index=False)
+    if df["close"].nunique() == 1:
+        print(f"⚠️ {os.path.basename(csv_file)} skipped (constant price)")
+        continue
+    if df["close"].isna().all():
+        print(f"⚠️ {os.path.basename(csv_file)} skipped (all NaNs)")
+        continue
 
     symbol = os.path.basename(csv_file).replace(".csv", "")
     data = bt.feeds.GenericCSVData(
-        dataname=tmp_cleaned,
-        dtformat="%Y-%m-%d %H:%M:%S%z",
+        dataname=csv_file,
+        dtformat="%Y-%m-%d",
         timeframe=bt.TimeFrame.Days,
         compression=1,
         openinterest=-1
@@ -51,10 +45,7 @@ for csv_file in csv_files:
     cerebro.adddata(data, name=symbol)
     loaded_files += 1
 
-print(f"✅ Loaded {loaded_files} clean CSV files into Backtrader.")
-
-if loaded_files == 0:
-    raise RuntimeError("❌ No valid CSV files loaded. Please check your data folder.")
+print(f"✅ Loaded {loaded_files} valid CSV files into Backtrader.")
 
 # ─── Add Strategy ────────────────────────────────────────
 cerebro.addstrategy(FalahStrategy)
@@ -65,7 +56,6 @@ print("Starting Portfolio Value:", cerebro.broker.getvalue())
 results = cerebro.run()
 print("Ending Portfolio Value:", cerebro.broker.getvalue())
 
-
 # ─── Retrieve Data From Strategy ─────────────────────────
 strategy_instance = results[0]
 
@@ -73,11 +63,21 @@ trades = getattr(strategy_instance, "trades_log", [])
 equity_curve = getattr(strategy_instance, "equity_curve", [])
 drawdowns = getattr(strategy_instance, "drawdowns", [])
 
-# ─── Save & Summarize Trades ─────────────────────────────
+# ─── Save Results ────────────────────────────────────────
 if trades:
     trades_df = pd.DataFrame(trades)
     trades_df.to_csv(os.path.join(RESULTS_DIR, "trades.csv"), index=False)
 
+    # Per-symbol summary
+    summary = trades_df.groupby("symbol").agg(
+        total_pnl=("pnl","sum"),
+        avg_pnl=("pnl","mean"),
+        trades=("pnl","count"),
+        win_rate=("pnl", lambda x: (x>0).mean()*100)
+    ).reset_index()
+    summary.to_csv(os.path.join(RESULTS_DIR, "symbol_summary.csv"), index=False)
+
+    # Summarize trades
     wins = trades_df[trades_df["pnl"] > 0]
     losses = trades_df[trades_df["pnl"] <= 0]
     total_pnl = trades_df["pnl"].sum()
@@ -90,12 +90,13 @@ if trades:
     print(f"Losing Trades: {len(losses)}")
     print(f"Net P&L: ₹{total_pnl:,.2f}")
     print(f"Average P&L per Trade: ₹{avg_pnl:,.2f}")
+    print("✅ Per-symbol performance saved to symbol_summary.csv")
 else:
     print("\n⚠️ No trades recorded. Nothing to report.")
 
-# ─── Save & Summarize Equity Curve ───────────────────────
 if equity_curve:
     ec = pd.DataFrame(equity_curve)
+    ec["date"] = pd.to_datetime(ec["date"])
     ec.to_csv(os.path.join(RESULTS_DIR, "equity_curve.csv"), index=False)
 
     if len(ec) > 1:

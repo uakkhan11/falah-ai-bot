@@ -25,16 +25,23 @@ loaded_files = 0
 
 for csv_file in csv_files:
     df = pd.read_csv(csv_file)
+    
+    if "close" not in df.columns:
+    print(f"⚠️ {os.path.basename(csv_file)} skipped (missing 'close' column). Columns: {list(df.columns)}")
+    continue
+    
     if df.shape[0] < 100:
         print(f"⚠️ {os.path.basename(csv_file)} skipped (too few rows: {df.shape[0]})")
         continue
+    
     if df["close"].nunique() == 1:
         print(f"⚠️ {os.path.basename(csv_file)} skipped (constant price)")
         continue
+    
     if df["close"].isna().all():
         print(f"⚠️ {os.path.basename(csv_file)} skipped (all NaNs)")
         continue
-
+        
     symbol = os.path.basename(csv_file).replace(".csv", "")
     data = bt.feeds.GenericCSVData(
         dataname=csv_file,

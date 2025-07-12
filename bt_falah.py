@@ -51,19 +51,24 @@ class FalahStrategy(bt.Strategy):
 
     def stop(self):
         global trades  # ✅ Important!
-        if self.position:
-            final_pnl = (self.data.close[0] - self.position.price) * self.position.size
-            self.log(f"🔚 Closing open position manually. Final P&L: ₹{final_pnl:.2f}")
+        def stop(self):
+    if self.position:
+        dt = self.data.datetime.date(0)
+        exit_price = self.data.close[0]
+        pnl = (exit_price - self.position.price) * self.position.size
 
-            trades.append({
-                "date": self.data.datetime.date(0),
-                "symbol": self.data._name,
-                "pnl": final_pnl,
-                "entry_price": self.position.price,
-                "size": self.position.size
-            })
+        self.close()  # Close the position
 
-            self.close()
+        # Manually log this trade
+        trades.append({
+            "date": dt,
+            "symbol": self.data._name,
+            "pnl": pnl,
+            "entry_price": self.position.price,
+            "size": self.position.size
+        })
+
+        self.log(f"🔚 Closing open position manually. Final P&L: ₹{pnl:.2f}")
 
     def next(self):
         if self.order:

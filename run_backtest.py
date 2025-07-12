@@ -64,7 +64,7 @@ print("\n✅ Verifying all feeds before running Backtest...")
 for data in cerebro.datas:
     df = data.p.dataname
     if isinstance(df, pd.DataFrame):
-        first = df.iloc[0]["date"]
+        first = df.index[0]
         if not pd.api.types.is_datetime64_any_dtype(pd.Series([first])):
             print("❌ INVALID DATETIME in", data._name, ":", type(first), first)
         else:

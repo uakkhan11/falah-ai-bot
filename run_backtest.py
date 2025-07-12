@@ -6,7 +6,7 @@ from bt_falah import FalahStrategy
 
 # ─── CONFIG ───────────────────────────────────────────────
 RESULTS_DIR = "./backtest_results"
-DATA_DIR = "./historical_data"
+DATA_DIR = "/root/falah-ai-bot"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 # ─── Initialize Cerebro ───────────────────────────────────

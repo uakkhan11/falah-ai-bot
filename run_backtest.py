@@ -26,22 +26,23 @@ loaded_files = 0
 for csv_file in csv_files:
     df = pd.read_csv(csv_file)
 
-    if df.shape[0] < 30:
-        print(f"⚠️ {os.path.basename(csv_file)} skipped (too few rows: {df.shape[0]})")
+    # Drop invalid rows (NaNs or <=0)
+    df_clean = df.dropna()
+    df_clean = df_clean[
+        (df_clean[["open", "high", "low", "close", "volume"]] > 0).all(axis=1)
+    ]
+
+    if df_clean.shape[0] < 30:
+        print(f"⚠️ {os.path.basename(csv_file)} skipped (too few clean rows: {df_clean.shape[0]})")
         continue
-    if df.isnull().values.any():
-        print(f"⚠️ {os.path.basename(csv_file)} skipped (contains NaNs)")
-        continue
-    if df["close"].nunique() == 1:
-        print(f"⚠️ {os.path.basename(csv_file)} skipped (constant close price)")
-        continue
-    if (df[["open","high","low","close","volume"]] <= 0).any().any():
-        print(f"⚠️ {os.path.basename(csv_file)} skipped (zero or negative prices/volume)")
-        continue
+
+    # Save cleaned file to temp
+    tmp_cleaned = "/tmp/cleaned.csv"
+    df_clean.to_csv(tmp_cleaned, index=False)
 
     symbol = os.path.basename(csv_file).replace(".csv", "")
     data = bt.feeds.GenericCSVData(
-        dataname=csv_file,
+        dataname=tmp_cleaned,
         dtformat="%Y-%m-%d %H:%M:%S%z",
         timeframe=bt.TimeFrame.Days,
         compression=1,
@@ -50,7 +51,7 @@ for csv_file in csv_files:
     cerebro.adddata(data, name=symbol)
     loaded_files += 1
 
-print(f"✅ Loaded {loaded_files} valid CSV files into Backtrader.")
+print(f"✅ Loaded {loaded_files} clean CSV files into Backtrader.")
 
 if loaded_files == 0:
     raise RuntimeError("❌ No valid CSV files loaded. Please check your data folder.")

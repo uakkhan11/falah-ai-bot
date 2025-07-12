@@ -1,70 +1,72 @@
+# fetch_historical.py
+
 import os
 import json
-import time
 import pandas as pd
-from datetime import datetime, timedelta
+import time
 from kiteconnect import KiteConnect
-from utils import load_credentials
+from datetime import datetime, timedelta
+from credentials import load_secrets
+from utils import get_halal_list
 
-# Initialize Kite
-secrets = load_credentials()
-if "zerodha" not in secrets:
-    raise KeyError("❌ 'zerodha' section missing in secrets.json. Please fix your credentials file.")
+OUTPUT_DIR = "/root/falah-ai-bot/historical_data/"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-with open("/root/falah-ai-bot/secrets.json") as f:
-    secrets = json.load(f)
-creds = secrets["zerodha"]
-print("DEBUG CREDS:", creds)
+def fetch_all_historical():
+    # Load credentials
+    secrets = load_secrets()
+    creds = secrets["zerodha"]
 
-if "api_key" not in creds or "access_token" not in creds:
-    raise KeyError("❌ 'api_key' or 'access_token' missing in 'zerodha' credentials.")
+    kite = KiteConnect(api_key=creds["api_key"])
+    kite.set_access_token(creds["access_token"])
 
-kite = KiteConnect(api_key=creds["api_key"])
-kite.set_access_token(creds["access_token"])
+    with open("/root/falah-ai-bot/tokens.json") as f:
+        token_map = json.load(f)
 
-# Load tokens.json
-with open("/root/falah-ai-bot/tokens.json", "r") as f:
-    tokens = json.load(f)
+    symbols = get_halal_list("1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c")
+    print(f"✅ Loaded {len(symbols)} symbols.")
 
-print(f"✅ Loaded {len(tokens)} tokens.")
+    to_date = datetime.today()
+    from_date = to_date - timedelta(days=5*365)   # Fetch last 5 years
+    BATCH_SIZE = 20
 
-# Create output directory
-output_dir = "/root/falah-ai-bot/data"
-os.makedirs(output_dir, exist_ok=True)
+    for i in range(0, len(symbols), BATCH_SIZE):
+        batch = symbols[i:i+BATCH_SIZE]
+        print(f"\n🚀 Batch {i//BATCH_SIZE + 1}")
 
-# Define date range: last 5 years
-to_date = datetime.today()
-from_date = to_date - timedelta(days=5 * 365)
+        for sym in batch:
+            token = token_map.get(sym)
+            if not token:
+                print(f"⚠️ No token for {sym}")
+                continue
 
-# Main loop
-for idx, (symbol, token) in enumerate(tokens.items(), 1):
-    filename = os.path.join(output_dir, f"{symbol}.csv")
-    if os.path.exists(filename):
-        print(f"⚠️ [{idx}/{len(tokens)}] {symbol}: File already exists. Skipping.")
-        continue
+            outfile = os.path.join(OUTPUT_DIR, f"{sym}.csv")
 
-    print(f"⬇️ [{idx}/{len(tokens)}] Downloading {symbol} ({from_date.date()} to {to_date.date()})...")
-    try:
-        data = kite.historical_data(
-            instrument_token=int(token),
-            from_date=from_date.strftime("%Y-%m-%d"),
-            to_date=to_date.strftime("%Y-%m-%d"),
-            interval="day"
-        )
-        if not data:
-            print(f"❌ No data returned for {symbol}. Skipping.")
-            continue
+            # ALWAYS overwrite existing files
+            if os.path.exists(outfile):
+                os.remove(outfile)
 
-        df = pd.DataFrame(data)
-        df.to_csv(filename, index=False)
-        print(f"✅ Saved {symbol} ({len(df)} rows).")
+            try:
+                print(f"⬇️ Downloading {sym} from {from_date.date()} to {to_date.date()}")
+                candles = kite.historical_data(
+                    instrument_token=token,
+                    from_date=from_date,
+                    to_date=to_date,
+                    interval="day"
+                )
 
-        time.sleep(0.3)  # Respect rate limits
+                if not candles:
+                    print(f"⚠️ No data for {sym}")
+                    continue
 
-    except Exception as e:
-        print(f"❌ Failed to fetch {symbol}: {e}")
+                df = pd.DataFrame(candles)
+                df.to_csv(outfile, index=False)
+                print(f"✅ Saved {sym} ({len(df)} rows).")
 
-print("✅ All symbols processed.")
+            except Exception as e:
+                print(f"❌ Failed {sym}: {e}")
 
-with open("/root/falah-ai-bot/last_fetch.txt", "w") as f:
-    f.write(datetime.now().isoformat())
+            time.sleep(0.3)  # Rate limit
+
+if __name__ == "__main__":
+    fetch_all_historical()

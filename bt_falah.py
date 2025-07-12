@@ -4,20 +4,15 @@ import joblib
 
 model = joblib.load("/root/falah-ai-bot/model.pkl")
 
-# Global logs
-trades = []
-equity_curve = []
-drawdowns = []
-
 class FalahStrategy(bt.Strategy):
     params = dict(
         rsi_period=14,
         ema_short=10,
         ema_long=21,
         atr_period=14,
-        risk_per_trade=0.01,     # 1% per trade
+        risk_per_trade=0.01,
         atr_multiplier=1.5,
-        ai_threshold=0.6,        # relaxed threshold
+        ai_threshold=0.6,
         min_atr=0.5
     )
 
@@ -29,6 +24,11 @@ class FalahStrategy(bt.Strategy):
         self.order = None
         self.peak = self.broker.getvalue()
 
+        # ✅ These are now **instance attributes**:
+        self.trades_log = []
+        self.equity_curve = []
+        self.drawdowns = []
+
     def log(self, txt):
         dt = self.data.datetime.date(0)
         print(f"{dt} {txt}")
@@ -36,10 +36,12 @@ class FalahStrategy(bt.Strategy):
     def notify_trade(self, trade):
         if not trade.isclosed:
             return
+
         pnl = trade.pnl
         dt = self.data.datetime.date(0)
         self.log(f"💰 Trade closed. P&L: ₹{pnl:.2f}")
-        trades.append({
+
+        self.trades_log.append({
             "date": dt,
             "symbol": self.data._name,
             "pnl": pnl,
@@ -53,10 +55,11 @@ class FalahStrategy(bt.Strategy):
 
         dt = self.data.datetime.date(0)
         value = self.broker.getvalue()
-        equity_curve.append({"date": dt, "capital": value})
+        self.equity_curve.append({"date": dt, "value": value})
+
         self.peak = max(self.peak, value)
         dd = (self.peak - value) / self.peak
-        drawdowns.append(dd)
+        self.drawdowns.append(dd)
 
         if self.atr[0] < self.p.min_atr:
             self.log("Skipping due to low ATR")
@@ -66,6 +69,7 @@ class FalahStrategy(bt.Strategy):
         if vol_series.isna().any() or vol_series.mean() == 0:
             self.log("Skipping due to bad volume")
             return
+
         vol_ratio = self.data.volume[0] / vol_series.mean()
 
         features = [[
@@ -85,7 +89,6 @@ class FalahStrategy(bt.Strategy):
         rsi_pass = self.rsi[0] > 45
         ai_pass = ai_score >= self.p.ai_threshold
 
-        # ✅ Allow 2 out of 3 conditions
         passed = sum([ema_pass, rsi_pass, ai_pass])
         entry_signal = passed >= 2
 

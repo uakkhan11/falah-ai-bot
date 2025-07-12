@@ -4,35 +4,23 @@ import joblib
 
 model = joblib.load("/root/falah-ai-bot/model.pkl")
 
+# These lists will be visible outside (run_backtest.py will import them)
+trades = []
+equity_curve = []
+drawdowns = []
+
 class FalahStrategy(bt.Strategy):
     params = dict(
         rsi_period=14,
         ema_short=10,
         ema_long=21,
         atr_period=14,
-        risk_per_trade=0.01,
+        risk_per_trade=0.005,
         atr_multiplier=1.5,
-        ai_threshold=0.6,
+        ai_threshold=1.2,
         min_atr=0.5
     )
 
-        def stop(self):
-        global trades  # ✅ Add this so it can see your global `trades` list
-        if self.position:
-            # Save the final P&L manually
-            final_pnl = (self.data.close[0] - self.position.price) * self.position.size
-            self.log(f"🔚 Closing open position manually. Final P&L: ₹{final_pnl:.2f}")
-
-            trades.append({
-                "date": self.data.datetime.date(0),
-                "symbol": self.data._name,
-                "pnl": final_pnl,
-                "entry_price": self.position.price,
-                "size": self.position.size
-            })
-
-            self.close()
-            
     def __init__(self):
         self.rsi = bt.indicators.RSI(self.data.close, period=self.p.rsi_period)
         self.ema10 = bt.indicators.EMA(self.data.close, period=self.p.ema_short)
@@ -40,11 +28,6 @@ class FalahStrategy(bt.Strategy):
         self.atr = bt.indicators.ATR(self.data, period=self.p.atr_period)
         self.order = None
         self.peak = self.broker.getvalue()
-
-        # ✅ These are now **instance attributes**:
-        self.trades_log = []
-        self.equity_curve = []
-        self.drawdowns = []
 
     def log(self, txt):
         dt = self.data.datetime.date(0)
@@ -58,7 +41,7 @@ class FalahStrategy(bt.Strategy):
         dt = self.data.datetime.date(0)
         self.log(f"💰 Trade closed. P&L: ₹{pnl:.2f}")
 
-        self.trades_log.append({
+        trades.append({
             "date": dt,
             "symbol": self.data._name,
             "pnl": pnl,
@@ -66,17 +49,34 @@ class FalahStrategy(bt.Strategy):
             "size": trade.size
         })
 
+    def stop(self):
+        global trades  # ✅ Important!
+        if self.position:
+            final_pnl = (self.data.close[0] - self.position.price) * self.position.size
+            self.log(f"🔚 Closing open position manually. Final P&L: ₹{final_pnl:.2f}")
+
+            trades.append({
+                "date": self.data.datetime.date(0),
+                "symbol": self.data._name,
+                "pnl": final_pnl,
+                "entry_price": self.position.price,
+                "size": self.position.size
+            })
+
+            self.close()
+
     def next(self):
         if self.order:
             return
 
+        # Equity tracking
         dt = self.data.datetime.date(0)
         value = self.broker.getvalue()
-        self.equity_curve.append({"date": dt, "value": value})
+        equity_curve.append({"date": dt, "capital": value})
 
         self.peak = max(self.peak, value)
         dd = (self.peak - value) / self.peak
-        self.drawdowns.append(dd)
+        drawdowns.append(dd)
 
         if self.atr[0] < self.p.min_atr:
             self.log("Skipping due to low ATR")
@@ -88,7 +88,6 @@ class FalahStrategy(bt.Strategy):
             return
 
         vol_ratio = self.data.volume[0] / vol_series.mean()
-
         features = [[
             self.rsi[0],
             self.ema10[0],
@@ -103,15 +102,14 @@ class FalahStrategy(bt.Strategy):
         ai_score = prob * 5.0
 
         ema_pass = self.ema10[0] > self.ema21[0]
-        rsi_pass = self.rsi[0] > 45
+        rsi_pass = self.rsi[0] > 50
         ai_pass = ai_score >= self.p.ai_threshold
 
-        passed = sum([ema_pass, rsi_pass, ai_pass])
-        entry_signal = passed >= 2
+        entry_signal = ema_pass and rsi_pass and ai_pass
 
         self.log(
             f"EMA10:{self.ema10[0]:.2f} EMA21:{self.ema21[0]:.2f} "
-            f"RSI:{self.rsi[0]:.2f} AI:{ai_score:.2f} Passed:{passed}"
+            f"RSI:{self.rsi[0]:.2f} AI:{ai_score:.2f} Entry:{entry_signal}"
         )
 
         if not self.position and entry_signal:

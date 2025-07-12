@@ -2,7 +2,7 @@ import os
 import glob
 import pandas as pd
 import backtrader as bt
-from bt_falah import FalahStrategy
+from bt_falah import FalahSanityStrategy
 
 # ─── CONFIG ───────────────────────────────────────────────
 RESULTS_DIR = "./backtest_results"
@@ -57,7 +57,7 @@ print(f"✅ Loaded {loaded_files} valid CSV files into Backtrader.")
 print("🚀 Starting Backtest...")
 
 # ─── Add Strategy ────────────────────────────────────────
-cerebro.addstrategy(FalahStrategy)
+cerebro.addstrategy(FalahSanityStrategy)
 
 # ─── Run Backtest ────────────────────────────────────────
 print("Starting Portfolio Value:", cerebro.broker.getvalue())

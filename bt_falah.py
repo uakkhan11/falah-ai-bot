@@ -4,7 +4,7 @@ import joblib
 
 model = joblib.load("/root/falah-ai-bot/model.pkl")
 
-# Shared lists to collect results
+# Global logs
 trades = []
 equity_curve = []
 drawdowns = []
@@ -15,10 +15,10 @@ class FalahStrategy(bt.Strategy):
         ema_short=10,
         ema_long=21,
         atr_period=14,
-        risk_per_trade=0.02,        # Moderate risk
-        atr_multiplier=1.5,          # ATR stop multiplier
-        ai_threshold=0.8,            # Relaxed AI threshold for more signals
-        min_atr=0.2                  # Lower minimum ATR to allow more trades
+        risk_per_trade=0.01,     # 1% per trade
+        atr_multiplier=1.5,
+        ai_threshold=0.6,        # relaxed threshold
+        min_atr=0.5
     )
 
     def __init__(self):
@@ -36,11 +36,9 @@ class FalahStrategy(bt.Strategy):
     def notify_trade(self, trade):
         if not trade.isclosed:
             return
-
         pnl = trade.pnl
         dt = self.data.datetime.date(0)
         self.log(f"💰 Trade closed. P&L: ₹{pnl:.2f}")
-
         trades.append({
             "date": dt,
             "symbol": self.data._name,
@@ -53,27 +51,21 @@ class FalahStrategy(bt.Strategy):
         if self.order:
             return
 
-        # Record equity
         dt = self.data.datetime.date(0)
         value = self.broker.getvalue()
         equity_curve.append({"date": dt, "capital": value})
-
-        # Update drawdowns
         self.peak = max(self.peak, value)
         dd = (self.peak - value) / self.peak
         drawdowns.append(dd)
 
-        # Minimum ATR check
         if self.atr[0] < self.p.min_atr:
-            self.log(f"Skipping (low ATR: {self.atr[0]:.2f})")
+            self.log("Skipping due to low ATR")
             return
 
-        # AI score
         vol_series = pd.Series(self.data.volume.get(size=10))
         if vol_series.isna().any() or vol_series.mean() == 0:
             self.log("Skipping due to bad volume")
             return
-
         vol_ratio = self.data.volume[0] / vol_series.mean()
 
         features = [[
@@ -85,7 +77,7 @@ class FalahStrategy(bt.Strategy):
         ]]
         prob = model.predict_proba(pd.DataFrame(
             features,
-            columns=["RSI", "EMA10", "EMA21", "ATR", "VolumeChange"]
+            columns=["RSI","EMA10","EMA21","ATR","VolumeChange"]
         ))[0][1]
         ai_score = prob * 5.0
 
@@ -93,19 +85,15 @@ class FalahStrategy(bt.Strategy):
         rsi_pass = self.rsi[0] > 45
         ai_pass = ai_score >= self.p.ai_threshold
 
-        # Entry signal: at least 2 conditions must pass
-        passed_count = sum([ema_pass, rsi_pass, ai_pass])
-        entry_signal = passed_count >= 2
+        # ✅ Allow 2 out of 3 conditions
+        passed = sum([ema_pass, rsi_pass, ai_pass])
+        entry_signal = passed >= 2
 
-        # Detailed log
         self.log(
             f"EMA10:{self.ema10[0]:.2f} EMA21:{self.ema21[0]:.2f} "
-            f"RSI:{self.rsi[0]:.2f} AI:{ai_score:.2f} "
-            f"EMApass:{ema_pass} RSIpass:{rsi_pass} AIpass:{ai_pass} "
-            f"Passed:{passed_count}"
+            f"RSI:{self.rsi[0]:.2f} AI:{ai_score:.2f} Passed:{passed}"
         )
 
-        # Entry
         if not self.position and entry_signal:
             risk = self.p.risk_per_trade * value
             sl = self.data.close[0] - self.p.atr_multiplier * self.atr[0]
@@ -115,15 +103,14 @@ class FalahStrategy(bt.Strategy):
 
             qty = int(risk / (self.data.close[0] - sl))
             if qty <= 0:
-                self.log("⚠️ Skipping: qty <= 0")
+                self.log("⚠️ Skipping: qty <=0")
                 return
 
             self.order = self.buy(size=qty)
             self.sl_price = sl
             self.tp_price = self.data.close[0] + (self.data.close[0] - sl) * 3
-            self.log(f"✅ Buy order placed: qty={qty} SL={self.sl_price:.2f} TP={self.tp_price:.2f}")
+            self.log(f"✅ Buy order: qty={qty} SL={self.sl_price:.2f} TP={self.tp_price:.2f}")
 
-        # Exits
         if self.position:
             if self.data.low[0] <= self.sl_price:
                 self.order = self.close()

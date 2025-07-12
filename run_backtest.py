@@ -24,24 +24,19 @@ print(f"✅ Found {len(csv_files)} CSV files.")
 loaded_files = 0
 
 for csv_file in csv_files:
-    # Validate CSV before loading
     df = pd.read_csv(csv_file)
 
-    # Basic checks
     if df.shape[0] < 30:
         print(f"⚠️ {os.path.basename(csv_file)} skipped (too few rows: {df.shape[0]})")
         continue
-    if df["close"].isna().all():
-        print(f"⚠️ {os.path.basename(csv_file)} skipped (all NaNs)")
+    if df.isnull().values.any():
+        print(f"⚠️ {os.path.basename(csv_file)} skipped (contains NaNs)")
         continue
     if df["close"].nunique() == 1:
         print(f"⚠️ {os.path.basename(csv_file)} skipped (constant close price)")
         continue
-    if (df[["open","high","low","close","volume"]] == 0).any().any():
-        print(f"⚠️ {os.path.basename(csv_file)} skipped (zeros in price/volume)")
-        continue
-    if df.isnull().values.any():
-        print(f"⚠️ {os.path.basename(csv_file)} skipped (contains NaNs)")
+    if (df[["open","high","low","close","volume"]] <= 0).any().any():
+        print(f"⚠️ {os.path.basename(csv_file)} skipped (zero or negative prices/volume)")
         continue
 
     symbol = os.path.basename(csv_file).replace(".csv", "")
@@ -68,6 +63,7 @@ print("🚀 Starting Backtest...")
 print("Starting Portfolio Value:", cerebro.broker.getvalue())
 results = cerebro.run()
 print("Ending Portfolio Value:", cerebro.broker.getvalue())
+
 
 # ─── Retrieve Data From Strategy ─────────────────────────
 strategy_instance = results[0]

@@ -61,16 +61,16 @@ class FalahStrategy(bt.Strategy):
         if self.order:
             return
 
-        if self.atr[0] < self.p.min_atr:
-            self.log(f"⛔ Skipped: ATR too low ({self.atr[0]:.4f})")
-            return
+        #if self.atr[0] < self.p.min_atr:
+        #   self.log(f"⛔ Skipped: ATR too low ({self.atr[0]:.4f})")
+        #    return
 
         vol_series = pd.Series(self.data.volume.get(size=10))
         if vol_series.isna().any() or vol_series.mean() == 0:
             self.log(f"⛔ Skipped: Invalid volume (mean={vol_series.mean():.2f})")
             return
 
-        vol_ratio = self.data.volume[0] / vol_series.mean()
+        vol_ratio = 1.0
 
         # Compute AI prediction
         features = [[

@@ -6,7 +6,7 @@ from bt_falah import FalahStrategy
 
 # ─── CONFIG ───────────────────────────────────────────────
 RESULTS_DIR = "./backtest_results"
-DATA_DIR = "/root/falah-ai-bot"
+DATA_DIR = "/root/falah-ai-bot/historical_data"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 # ─── Initialize Cerebro ───────────────────────────────────
@@ -27,9 +27,9 @@ for csv_file in csv_files:
     df = pd.read_csv(csv_file)
     
     if "close" not in df.columns:
-    print(f"⚠️ {os.path.basename(csv_file)} skipped (missing 'close' column). Columns: {list(df.columns)}")
-    continue
-    
+        print(f"⚠️ {os.path.basename(csv_file)} skipped (missing 'close' column). Columns: {list(df.columns)}")
+        continue
+
     if df.shape[0] < 100:
         print(f"⚠️ {os.path.basename(csv_file)} skipped (too few rows: {df.shape[0]})")
         continue
@@ -62,7 +62,7 @@ cerebro.addstrategy(FalahStrategy)
 # ─── Run Backtest ────────────────────────────────────────
 print("Starting Portfolio Value:", cerebro.broker.getvalue())
 results = cerebro.run()
-print("Ending Portfolio Value:", cerebro.broker.getvalue() )
+print("Ending Portfolio Value:", cerebro.broker.getvalue())
 
 # ─── Retrieve Data From Strategy ─────────────────────────
 strategy_instance = results[0]

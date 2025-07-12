@@ -18,8 +18,19 @@ class FalahStrategy(bt.Strategy):
 
     def stop(self):
         if self.position:
+            # Save the final P&L manually
+            final_pnl = (self.data.close[0] - self.position.price) * self.position.size
+            self.log(f"🔚 Closing open position manually. Final P&L: ₹{final_pnl:.2f}")
+
+            trades.append({
+                "date": self.data.datetime.date(0),
+                "symbol": self.data._name,
+                "pnl": final_pnl,
+                "entry_price": self.position.price,
+                "size": self.position.size
+            })
+
             self.close()
-            self.log("🔚 Closing open position at end of backtest")
 
     def __init__(self):
         self.rsi = bt.indicators.RSI(self.data.close, period=self.p.rsi_period)

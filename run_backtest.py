@@ -52,7 +52,10 @@ for csv_file in csv_files:
     )
     cerebro.adddata(data, name=symbol)
     loaded_files += 1
-
+    
+print("📊 Checking loaded data bar counts...")
+for d in cerebro.datas:
+    print(f"{d._name} :: {len(d.lines[0])} bars")
 print(f"✅ Loaded {loaded_files} valid CSV files into Backtrader.")
 print("🚀 Starting Backtest...")
 

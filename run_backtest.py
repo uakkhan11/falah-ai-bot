@@ -24,12 +24,8 @@ print(f"✅ Found {len(csv_files)} CSV files.")
 loaded_files = 0
 
 for csv_file in csv_files:
-    df = pd.read_csv(
-        csv_file,
-        names=["datetime", "open", "high", "low", "close", "volume"],
-        header=None,
-        parse_dates=["datetime"],
-        date_parser=lambda x: pd.to_datetime(x).tz_localize(None)  # remove timezone
+    df = pd.read_csv(csv_file, parse_dates=["date"])
+    df["date"] = df["date"].dt.tz_localize(None)
     )
 
     # Skip empty or bad files

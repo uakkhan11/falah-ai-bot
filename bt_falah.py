@@ -1,8 +1,17 @@
 import os
 import glob
 import pandas as pd
+import joblib
 import backtrader as bt
-from bt_falah import FalahStrategy
+
+model = joblib.load("/root/falah-ai-bot/model.pkl")
+
+trades = []
+equity_curve = []
+drawdowns = []
+
+class FalahStrategy(bt.Strategy):
+
 
 # ─── CONFIG ───────────────────────────────────────────────
 RESULTS_DIR = "./backtest_results"

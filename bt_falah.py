@@ -18,39 +18,44 @@ class FalahStrategy(bt.Strategy):
     )
 
     def __init__(self):
-        self.rsi = bt.indicators.RSI(self.data.close, period=self.p.rsi_period)
-        self.ema10 = bt.indicators.EMA(self.data.close, period=self.p.ema_short)
-        self.ema21 = bt.indicators.EMA(self.data.close, period=self.p.ema_long)
-        self.atr = bt.indicators.ATR(self.data, period=self.p.atr_period)
-        self.order = None
-        self.entry_bar = None
+        self.orders = dict()
+        self.entry_bars = dict()
         self.trades_log = []
         self.equity_curve = []
         self.drawdowns = []
         self.peak = self.broker.getvalue()
 
+        # Prepare indicators per data
+        self.inds = {}
+        for d in self.datas:
+            self.inds[d] = dict(
+                ema10=bt.ind.EMA(d.close, period=self.p.ema_short),
+                ema21=bt.ind.EMA(d.close, period=self.p.ema_long),
+                rsi=bt.ind.RSI(d.close, period=self.p.rsi_period),
+                atr=bt.ind.ATR(d, period=self.p.atr_period)
+            )
+
     def log(self, txt):
-        dt = self.data.datetime.datetime(0)
-        print(f"{dt} {self.data._name}: {txt}")
+        dt = self.datas[0].datetime.datetime(0)
+        print(f"{dt}: {txt}")
 
     def notify_trade(self, trade):
         if not trade.isclosed:
             return
 
         pnl = trade.pnl
-        dt = self.data.datetime.datetime(0)
-        self.log(f"💰 Trade closed. P&L: ₹{pnl:.2f}")
-
+        dt = trade.data.datetime.datetime(0)
         self.trades_log.append({
             "date": dt,
-            "symbol": self.data._name,
+            "symbol": trade.data._name,
             "pnl": pnl,
             "entry_price": trade.price,
             "size": trade.size
         })
+        self.log(f"{trade.data._name}: 💰 Trade closed. P&L: ₹{pnl:.2f}")
 
     def next(self):
-        dt = self.data.datetime.datetime(0)
+        dt = self.datas[0].datetime.datetime(0)
         value = self.broker.getvalue()
         self.equity_curve.append({"date": dt, "capital": value})
 
@@ -58,88 +63,97 @@ class FalahStrategy(bt.Strategy):
         dd = (self.peak - value) / self.peak
         self.drawdowns.append(dd)
 
-        if self.order:
-            return
+        for d in self.datas:
+            pos = self.getposition(d)
+            inds = self.inds[d]
 
-        #if self.atr[0] < self.p.min_atr:
-        #   self.log(f"⛔ Skipped: ATR too low ({self.atr[0]:.4f})")
-        #    return
+            # Skip if already have open order
+            if d in self.orders and self.orders[d]:
+                continue
 
-        vol_series = pd.Series(self.data.volume.get(size=10))
-        #if vol_series.isna().any() or vol_series.mean() == 0:
-        #    self.log(f"⛔ Skipped: Invalid volume (mean={vol_series.mean():.2f})")
-         #   return
+            # Time-based exit
+            if pos and (len(self) - self.entry_bars[d]) >= self.p.exit_bars:
+                self.close(data=d)
+                self.log(f"{d._name}: ⏳ Time exit after {self.p.exit_bars} bars")
+                continue
 
-        vol_ratio = 1.0
+            # Skip if in position
+            if pos:
+                # Stoploss
+                if d.low[0] <= self.sl_prices[d]:
+                    self.close(data=d)
+                    self.log(f"{d._name}: 🛑 Stop Loss hit at {self.sl_prices[d]:.2f}")
+                # Target
+                elif d.high[0] >= self.tp_prices[d]:
+                    self.close(data=d)
+                    self.log(f"{d._name}: ✅ Target hit at {self.tp_prices[d]:.2f}")
+                continue
 
-        # Compute AI prediction
-        features = [[
-            self.rsi[0],
-            self.ema10[0],
-            self.ema21[0],
-            self.atr[0],
-            vol_ratio
-        ]]
-        prob = model.predict_proba(pd.DataFrame(
-            features,
-            columns=["RSI", "EMA10", "EMA21", "ATR", "VolumeChange"]
-        ))[0][1]
-        ai_score = prob * 5.0
+            # Skip if ATR too low
+            # if inds['atr'][0] < self.p.min_atr:
+            #     continue
 
-        ema_pass = self.ema10[0] > self.ema21[0]
-        rsi_pass = self.rsi[0] > 35
-        ai_pass = ai_score >= self.p.ai_threshold
-        entry_signal = entry_signal = (ema_pass or rsi_pass)
+            # Features for AI
+            vol_ratio = 1.0
+            features = [[
+                inds['rsi'][0],
+                inds['ema10'][0],
+                inds['ema21'][0],
+                inds['atr'][0],
+                vol_ratio
+            ]]
+            prob = model.predict_proba(pd.DataFrame(
+                features,
+                columns=["RSI","EMA10","EMA21","ATR","VolumeChange"]
+            ))[0][1]
+            ai_score = prob * 5.0
 
-        # Log all factors
-        self.log(
-            f"EMA10:{self.ema10[0]:.2f} EMA21:{self.ema21[0]:.2f} "
-            f"RSI:{self.rsi[0]:.2f} ATR:{self.atr[0]:.4f} "
-            f"VolMean:{vol_series.mean():.2f} VolRatio:{vol_ratio:.2f} "
-            f"AIraw:{prob:.4f} AIscore:{ai_score:.2f} "
-            f"Entry:{entry_signal} EMApass:{ema_pass} RSIpass:{rsi_pass} AIpass:{ai_pass}"
-        )
+            ema_pass = inds['ema10'][0] > inds['ema21'][0]
+            rsi_pass = inds['rsi'][0] > 35
+            ai_pass = ai_score >= self.p.ai_threshold
+            entry_signal = ema_pass or rsi_pass
 
-        if not self.position and entry_signal:
-            risk = self.p.risk_per_trade * value
-            sl = self.data.close[0] - self.p.atr_multiplier * self.atr[0]
-            if sl >= self.data.close[0]:
-                self.log(f"⛔ Skipped: SL >= Entry price ({sl:.2f} >= {self.data.close[0]:.2f})")
-                return
+            self.log(
+                f"{d._name}: EMA10:{inds['ema10'][0]:.2f} EMA21:{inds['ema21'][0]:.2f} "
+                f"RSI:{inds['rsi'][0]:.2f} ATR:{inds['atr'][0]:.4f} "
+                f"AIraw:{prob:.4f} AIscore:{ai_score:.2f} Entry:{entry_signal} "
+                f"EMApass:{ema_pass} RSIpass:{rsi_pass} AIpass:{ai_pass}"
+            )
 
-            qty = int(risk / (self.data.close[0] - sl))
-            if qty <= 0:
-                self.log("⛔ Skipped: qty <=0")
-                return
+            if entry_signal:
+                risk = self.p.risk_per_trade * value
+                sl = d.close[0] - self.p.atr_multiplier * inds['atr'][0]
+                if sl >= d.close[0]:
+                    continue
 
-            self.order = self.buy(size=qty)
-            self.sl_price = sl
-            self.tp_price = self.data.close[0] + (self.data.close[0] - sl) * 2.0
-            self.entry_bar = len(self)
-            self.log(f"✅ Buy order: qty={qty} SL={self.sl_price:.2f} TP={self.tp_price:.2f}")
+                qty = int(risk / (d.close[0] - sl))
+                if qty <= 0:
+                    continue
 
-        if self.position:
-            if self.data.low[0] <= self.sl_price:
-                self.order = self.close()
-                self.log(f"🛑 Stop Loss hit at {self.sl_price:.2f}")
-            elif self.data.high[0] >= self.tp_price:
-                self.order = self.close()
-                self.log(f"✅ Target hit at {self.tp_price:.2f}")
-            elif len(self) - self.entry_bar >= self.p.exit_bars:
-                self.order = self.close()
-                self.log(f"⏳ Time exit after {self.p.exit_bars} bars")
+                o = self.buy(data=d, size=qty)
+                self.orders[d] = o
+                self.entry_bars[d] = len(self)
+                if not hasattr(self, "sl_prices"):
+                    self.sl_prices = dict()
+                    self.tp_prices = dict()
+                self.sl_prices[d] = sl
+                self.tp_prices[d] = d.close[0] + (d.close[0] - sl) * 2.0
+                self.log(f"{d._name}: ✅ Buy order: qty={qty} SL={sl:.2f} TP={self.tp_prices[d]:.2f}")
 
     def stop(self):
-        if self.position:
-            dt = self.data.datetime.datetime(0)
-            exit_price = self.data.close[0]
-            pnl = (exit_price - self.position.price) * self.position.size
-            self.close()
-            self.trades_log.append({
-                "date": dt,
-                "symbol": self.data._name,
-                "pnl": pnl,
-                "entry_price": self.position.price,
-                "size": self.position.size
-            })
-            self.log(f"🔚 Closing open position manually. Final P&L: ₹{pnl:.2f}")
+        # Close any open positions
+        for d in self.datas:
+            pos = self.getposition(d)
+            if pos:
+                dt = d.datetime.datetime(0)
+                exit_price = d.close[0]
+                pnl = (exit_price - pos.price) * pos.size
+                self.close(data=d)
+                self.trades_log.append({
+                    "date": dt,
+                    "symbol": d._name,
+                    "pnl": pnl,
+                    "entry_price": pos.price,
+                    "size": pos.size
+                })
+                self.log(f"{d._name}: 🔚 Closing open position manually. Final P&L: ₹{pnl:.2f}")

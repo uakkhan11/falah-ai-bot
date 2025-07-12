@@ -50,76 +50,80 @@ class FalahStrategy(bt.Strategy):
         })
 
     def next(self):
-        if self.order:
+    if self.order:
+        return
+
+    # Equity tracking
+    dt = self.data.datetime.date(0)
+    value = self.broker.getvalue()
+    equity_curve.append({"date": dt, "capital": value})
+
+    self.peak = max(self.peak, value)
+    dd = (self.peak - value) / self.peak
+    drawdowns.append(dd)
+
+    # Skip if too low ATR
+    if self.atr[0] < self.p.min_atr:
+        self.log("Skipping due to low ATR")
+        return
+
+    # Compute AI score
+    vol_series = pd.Series(self.data.volume.get(size=10))
+    if vol_series.isna().any() or vol_series.mean() == 0:
+        self.log("Skipping due to bad volume")
+        return
+
+    vol_ratio = self.data.volume[0] / vol_series.mean()
+    features = [[
+        self.rsi[0],
+        self.ema10[0],
+        self.ema21[0],
+        self.atr[0],
+        vol_ratio
+    ]]
+    prob = model.predict_proba(pd.DataFrame(
+        features,
+        columns=["RSI","EMA10","EMA21","ATR","VolumeChange"]
+    ))[0][1]
+    ai_score = prob * 5.0
+
+    ema_pass = self.ema10[0] > self.ema21[0]
+    rsi_pass = self.rsi[0] > 45
+    ai_pass = ai_score >= 0.6
+
+    # New relaxed logic
+    entry_signal = ai_pass and (ema_pass or rsi_pass)
+
+    self.log(
+        f"EMA10:{self.ema10[0]:.2f} EMA21:{self.ema21[0]:.2f} "
+        f"RSI:{self.rsi[0]:.2f} AI:{ai_score:.2f} Entry:{entry_signal} "
+        f"EMApass:{ema_pass} RSIpass:{rsi_pass} AIpass:{ai_pass}"
+    )
+
+    if not self.position and entry_signal:
+        risk = self.p.risk_per_trade * value
+        sl = self.data.close[0] - self.p.atr_multiplier * self.atr[0]
+        if sl >= self.data.close[0]:
+            self.log("⚠️ Skipping: Stoploss >= Entry price")
             return
 
-        dt = self.data.datetime.date(0)
-        value = self.broker.getvalue()
-        equity_curve.append({"date": dt, "capital": value})
-
-        self.peak = max(self.peak, value)
-        dd = (self.peak - value) / self.peak
-        drawdowns.append(dd)
-
-        if self.atr[0] < self.p.min_atr:
-            self.log("Skipping due to low ATR")
+        qty = int(risk / (self.data.close[0] - sl))
+        if qty <= 0:
+            self.log("⚠️ Skipping: qty <=0")
             return
 
-        vol_series = pd.Series(self.data.volume.get(size=10))
-        if vol_series.isna().any() or vol_series.mean() == 0:
-            self.log("Skipping due to bad volume")
-            return
+        self.order = self.buy(size=qty)
+        self.sl_price = sl
+        self.tp_price = self.data.close[0] + (self.data.close[0] - sl) * 3
+        self.log(f"✅ Buy order: qty={qty} SL={self.sl_price:.2f} TP={self.tp_price:.2f}")
 
-        vol_ratio = self.data.volume[0] / vol_series.mean()
-        features = [[
-            self.rsi[0],
-            self.ema10[0],
-            self.ema21[0],
-            self.atr[0],
-            vol_ratio
-        ]]
-        prob = model.predict_proba(pd.DataFrame(
-            features,
-            columns=["RSI","EMA10","EMA21","ATR","VolumeChange"]
-        ))[0][1]
-        ai_score = prob * 5.0
-
-        ema_pass = self.ema10[0] > self.ema21[0]
-        rsi_pass = self.rsi[0] > 50
-        ai_pass = ai_score >= self.p.ai_threshold
-
-        entry_signal = ema_pass and rsi_pass and ai_pass
-
-        self.log(
-            f"EMA10:{self.ema10[0]:.2f} EMA21:{self.ema21[0]:.2f} "
-            f"RSI:{self.rsi[0]:.2f} AI:{ai_score:.2f} Entry:{entry_signal} "
-            f"EMApass:{ema_pass} RSIpass:{rsi_pass} AIpass:{ai_pass}"
-        )
-
-        if not self.position and entry_signal:
-            risk = self.p.risk_per_trade * value
-            sl = self.data.close[0] - self.p.atr_multiplier * self.atr[0]
-            if sl >= self.data.close[0]:
-                self.log("⚠️ Skipping: Stoploss >= Entry price")
-                return
-
-            qty = int(risk / (self.data.close[0] - sl))
-            if qty <= 0:
-                self.log("⚠️ Skipping: qty <=0")
-                return
-
-            self.order = self.buy(size=qty)
-            self.sl_price = sl
-            self.tp_price = self.data.close[0] + (self.data.close[0] - sl) * 3
-            self.log(f"✅ Buy order: qty={qty} SL={self.sl_price:.2f} TP={self.tp_price:.2f}")
-
-        if self.position:
-            if self.data.low[0] <= self.sl_price:
-                self.order = self.close()
-                self.log(f"🛑 Stop Loss hit at {self.sl_price:.2f}")
-            elif self.data.high[0] >= self.tp_price:
-                self.order = self.close()
-                self.log(f"✅ Target hit at {self.tp_price:.2f}")
+    if self.position:
+        if self.data.low[0] <= self.sl_price:
+            self.order = self.close()
+            self.log(f"🛑 Stop Loss hit at {self.sl_price:.2f}")
+        elif self.data.high[0] >= self.tp_price:
+            self.order = self.close()
+            self.log(f"✅ Target hit at {self.tp_price:.2f}")
 
     # 🚨 IMPORTANT: Not nested!
     def stop(self):

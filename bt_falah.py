@@ -97,6 +97,7 @@ class FalahStrategy(bt.Strategy):
         self.log(
             f"EMA10:{self.ema10[0]:.2f} EMA21:{self.ema21[0]:.2f} "
             f"RSI:{self.rsi[0]:.2f} AI:{ai_score:.2f} Entry:{entry_signal}"
+            f"EMApass:{ema_pass} RSIpass:{rsi_pass} AIpass:{ai_pass}"
         )
 
         if not self.position and entry_signal:

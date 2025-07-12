@@ -21,6 +21,21 @@ class FalahStrategy(bt.Strategy):
         min_atr=0.5
     )
 
+    def stop(self):
+    if self.position:
+        final_pnl = (self.data.close[0] - self.position.price) * self.position.size
+        self.log(f"🔚 Closing open position manually. Final P&L: ₹{final_pnl:.2f}")
+        self.close()
+
+        # Append to trades list
+        trades.append({
+            "date": self.data.datetime.date(0),
+            "symbol": self.data._name,
+            "pnl": final_pnl,
+            "entry_price": self.position.price,
+            "size": self.position.size
+        })
+        
     def __init__(self):
         self.rsi = bt.indicators.RSI(self.data.close, period=self.p.rsi_period)
         self.ema10 = bt.indicators.EMA(self.data.close, period=self.p.ema_short)

@@ -16,8 +16,8 @@ class FalahStrategy(bt.Strategy):
         atr_period=14,
         risk_per_trade=0.005,
         atr_multiplier=1.5,
-        ai_threshold=0.6,
-        min_atr=0.3
+        ai_threshold=0.4,
+        min_atr=0.1
     )
 
     def __init__(self):
@@ -92,7 +92,8 @@ class FalahStrategy(bt.Strategy):
         ai_pass = ai_score >= 0.6
     
         # New relaxed logic
-        entry_signal = ai_pass and (ema_pass or rsi_pass)
+        passed = sum([ema_pass, rsi_pass, ai_pass])
+        entry_signal = passed >= 2
     
         self.log(
             f"EMA10:{self.ema10[0]:.2f} EMA21:{self.ema21[0]:.2f} "

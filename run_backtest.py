@@ -9,17 +9,6 @@ RESULTS_DIR = "./backtest_results"
 DATA_DIR = "/root/falah-ai-bot/historical_data"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-print("\n✅ Verifying all feeds before running Backtest...")
-for data in cerebro.datas:
-    df = data.p.dataname
-    if isinstance(df, pd.DataFrame):
-        first = df.iloc[0]["date"]
-        if not pd.api.types.is_datetime64_any_dtype(pd.Series([first])):
-            print("❌ INVALID DATETIME in", data._name, ":", type(first), first)
-        else:
-            print("✅", data._name, "ok.")
-
-
 # ─── Initialize Cerebro ───────────────────────────────────
 cerebro = bt.Cerebro()
 cerebro.broker.setcash(1_000_000)
@@ -80,6 +69,17 @@ print("🚀 Starting Backtest...")
 
 # ─── Add Strategy ────────────────────────────────────────
 cerebro.addstrategy(FalahStrategy)
+
+print("\n✅ Verifying all feeds before running Backtest...")
+for data in cerebro.datas:
+    df = data.p.dataname
+    if isinstance(df, pd.DataFrame):
+        first = df.iloc[0]["date"]
+        if not pd.api.types.is_datetime64_any_dtype(pd.Series([first])):
+            print("❌ INVALID DATETIME in", data._name, ":", type(first), first)
+        else:
+            print("✅", data._name, "ok.")
+
 
 # ─── Run Backtest ────────────────────────────────────────
 print("Starting Portfolio Value:", cerebro.broker.getvalue())

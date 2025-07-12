@@ -85,7 +85,7 @@ else:
     print("⚠️ No equity curve data to compute performance metrics.")
 
 # ─── Show Date Range of CSV ──────────────────────────────
-df = pd.read_csv("/root/falah-ai-bot/historical_data/NIFTY.csv", parse_dates=["date"])
+df = pd.read_csv("/root/falah-ai-bot/historical_data/INFY.csv", parse_dates=["date"])
 print("\n🗓️ Data Range:")
 print("First date:", df["date"].min())
 print("Last date:", df["date"].max())

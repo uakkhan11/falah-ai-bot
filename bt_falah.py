@@ -17,7 +17,7 @@ class FalahStrategy(bt.Strategy):
         atr_period=14,
         risk_per_trade=0.005,
         atr_multiplier=1.5,
-        ai_threshold=1.2,
+        ai_threshold=0.8,
         min_atr=0.5
     )
 
@@ -91,8 +91,9 @@ class FalahStrategy(bt.Strategy):
         rsi_pass = self.rsi[0] > 50
         ai_pass = ai_score >= self.p.ai_threshold
 
-        entry_signal = ema_pass and rsi_pass and ai_pass
-
+        passed = sum([ema_pass, rsi_pass, ai_pass])
+        entry_signal = passed >= 2
+        
         self.log(
             f"EMA10:{self.ema10[0]:.2f} EMA21:{self.ema21[0]:.2f} "
             f"RSI:{self.rsi[0]:.2f} AI:{ai_score:.2f} Entry:{entry_signal} "

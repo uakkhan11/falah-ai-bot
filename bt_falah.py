@@ -16,6 +16,11 @@ class FalahStrategy(bt.Strategy):
         min_atr=0.5
     )
 
+    def stop(self):
+        if self.position:
+            self.close()
+            self.log("🔚 Closing open position at end of backtest")
+
     def __init__(self):
         self.rsi = bt.indicators.RSI(self.data.close, period=self.p.rsi_period)
         self.ema10 = bt.indicators.EMA(self.data.close, period=self.p.ema_short)

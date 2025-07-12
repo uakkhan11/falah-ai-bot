@@ -105,7 +105,8 @@ class FalahStrategy(bt.Strategy):
         rsi_pass = self.rsi[0] > 50
         ai_pass = ai_score >= self.p.ai_threshold
 
-        entry_signal = ema_pass and rsi_pass and ai_pass
+        passed = sum([ema_pass, rsi_pass, ai_pass])
+        entry_signal = passed >= 2
 
         self.log(
             f"EMA10:{self.ema10[0]:.2f} EMA21:{self.ema21[0]:.2f} "

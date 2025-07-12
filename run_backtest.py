@@ -6,7 +6,7 @@ from bt_falah import FalahStrategy
 
 # ─── CONFIG ───────────────────────────────────────────────
 RESULTS_DIR = "./backtest_results"
-DATA_DIR = "fetch_intraday_1hour_batched.py"
+DATA_DIR = "./historical_data"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 # ─── Initialize Cerebro ───────────────────────────────────

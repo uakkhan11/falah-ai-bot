@@ -38,7 +38,7 @@ for csv_file in csv_files:
         print(f"⚠️ {os.path.basename(csv_file)} skipped (all NaNs)")
         continue
 
-    df = df.sort_values("datetime")
+    df = df.sort_values("date")
 
     data = bt.feeds.PandasData(
         dataname=df,

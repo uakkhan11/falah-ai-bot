@@ -41,7 +41,7 @@ class FalahStrategy(bt.Strategy):
         dt = self.data.datetime.date(0)
         self.log(f"💰 Trade closed. P&L: ₹{pnl:.2f}")
 
-        trades.append({
+        self.trades_log.append({
             "date": dt,
             "symbol": self.data._name,
             "pnl": pnl,
@@ -133,7 +133,7 @@ class FalahStrategy(bt.Strategy):
             self.log(f"🔚 Closing open position manually. Final P&L: ₹{pnl:.2f}")
             self.close()
 
-            trades.append({
+            self.trades_log.append({
                 "date": dt,
                 "symbol": self.data._name,
                 "pnl": pnl,

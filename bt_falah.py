@@ -16,7 +16,8 @@ class FalahStrategy(bt.Strategy):
         min_atr=0.5
     )
 
-    def stop(self):
+        def stop(self):
+        global trades  # ✅ Add this so it can see your global `trades` list
         if self.position:
             # Save the final P&L manually
             final_pnl = (self.data.close[0] - self.position.price) * self.position.size
@@ -31,7 +32,7 @@ class FalahStrategy(bt.Strategy):
             })
 
             self.close()
-
+            
     def __init__(self):
         self.rsi = bt.indicators.RSI(self.data.close, period=self.p.rsi_period)
         self.ema10 = bt.indicators.EMA(self.data.close, period=self.p.ema_short)

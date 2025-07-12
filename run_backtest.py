@@ -24,8 +24,19 @@ print(f"✅ Found {len(csv_files)} CSV files.")
 loaded_files = 0
 
 for csv_file in csv_files:
-    df = pd.read_csv(csv_file, parse_dates=["date"])
-    df["date"] = df["date"].dt.tz_localize(None)
+    df = pd.read_csv(csv_file)
+
+    # Force datetime parsing
+    try:
+        df["date"] = pd.to_datetime(df["date"], utc=True, errors="raise").dt.tz_localize(None)
+    except Exception as e:
+        print(f"❌ {os.path.basename(csv_file)} skipped (date parse error): {e}")
+        continue
+
+    # Confirm dtype
+    if not pd.api.types.is_datetime64_any_dtype(df["date"]):
+        print(f"❌ {os.path.basename(csv_file)} skipped (date column not datetime after parsing)")
+        continue
 
     # Skip empty or bad files
     if df.shape[0] < 100:
@@ -39,6 +50,9 @@ for csv_file in csv_files:
         continue
 
     df = df.sort_values("date")
+
+    # Debug the first few rows
+    print(f"✅ {os.path.basename(csv_file)} date sample: {df['date'].head(2).to_list()}")
 
     data = bt.feeds.PandasData(
         dataname=df,

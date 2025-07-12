@@ -10,11 +10,11 @@ class FalahStrategy(bt.Strategy):
         ema_short=10,
         ema_long=21,
         atr_period=14,
-        risk_per_trade=0.01,       # Slightly higher risk per trade
-        atr_multiplier=2.0,         # Tighter stoploss
-        ai_threshold=0.3,           # Relaxed threshold
-        min_atr=0.05,                # Accept lower volatility
-        exit_bars=6               # Exit after N bars (12 hours)
+        risk_per_trade=0.01,
+        atr_multiplier=2.0,
+        ai_threshold=0.3,
+        min_atr=0.05,
+        exit_bars=6
     )
 
     def __init__(self):
@@ -62,13 +62,17 @@ class FalahStrategy(bt.Strategy):
             return
 
         if self.atr[0] < self.p.min_atr:
+            self.log(f"⛔ Skipped: ATR too low ({self.atr[0]:.4f})")
             return
 
         vol_series = pd.Series(self.data.volume.get(size=10))
         if vol_series.isna().any() or vol_series.mean() == 0:
+            self.log(f"⛔ Skipped: Invalid volume (mean={vol_series.mean():.2f})")
             return
 
         vol_ratio = self.data.volume[0] / vol_series.mean()
+
+        # Compute AI prediction
         features = [[
             self.rsi[0],
             self.ema10[0],
@@ -85,24 +89,27 @@ class FalahStrategy(bt.Strategy):
         ema_pass = self.ema10[0] > self.ema21[0]
         rsi_pass = self.rsi[0] > 35
         ai_pass = ai_score >= self.p.ai_threshold
-
-        # Entry if AI passes and either RSI or EMA passes
         entry_signal = ai_pass
 
+        # Log all factors
         self.log(
             f"EMA10:{self.ema10[0]:.2f} EMA21:{self.ema21[0]:.2f} "
-            f"RSI:{self.rsi[0]:.2f} AI:{ai_score:.2f} Entry:{entry_signal} "
-            f"EMApass:{ema_pass} RSIpass:{rsi_pass} AIpass:{ai_pass}"
+            f"RSI:{self.rsi[0]:.2f} ATR:{self.atr[0]:.4f} "
+            f"VolMean:{vol_series.mean():.2f} VolRatio:{vol_ratio:.2f} "
+            f"AIraw:{prob:.4f} AIscore:{ai_score:.2f} "
+            f"Entry:{entry_signal} EMApass:{ema_pass} RSIpass:{rsi_pass} AIpass:{ai_pass}"
         )
 
         if not self.position and entry_signal:
             risk = self.p.risk_per_trade * value
             sl = self.data.close[0] - self.p.atr_multiplier * self.atr[0]
             if sl >= self.data.close[0]:
+                self.log(f"⛔ Skipped: SL >= Entry price ({sl:.2f} >= {self.data.close[0]:.2f})")
                 return
 
             qty = int(risk / (self.data.close[0] - sl))
             if qty <= 0:
+                self.log("⛔ Skipped: qty <=0")
                 return
 
             self.order = self.buy(size=qty)
@@ -112,15 +119,12 @@ class FalahStrategy(bt.Strategy):
             self.log(f"✅ Buy order: qty={qty} SL={self.sl_price:.2f} TP={self.tp_price:.2f}")
 
         if self.position:
-            # Stoploss
             if self.data.low[0] <= self.sl_price:
                 self.order = self.close()
                 self.log(f"🛑 Stop Loss hit at {self.sl_price:.2f}")
-            # Target
             elif self.data.high[0] >= self.tp_price:
                 self.order = self.close()
                 self.log(f"✅ Target hit at {self.tp_price:.2f}")
-            # Time-based exit
             elif len(self) - self.entry_bar >= self.p.exit_bars:
                 self.order = self.close()
                 self.log(f"⏳ Time exit after {self.p.exit_bars} bars")

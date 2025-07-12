@@ -66,9 +66,9 @@ class FalahStrategy(bt.Strategy):
         #    return
 
         vol_series = pd.Series(self.data.volume.get(size=10))
-        if vol_series.isna().any() or vol_series.mean() == 0:
-            self.log(f"⛔ Skipped: Invalid volume (mean={vol_series.mean():.2f})")
-            return
+        #if vol_series.isna().any() or vol_series.mean() == 0:
+        #    self.log(f"⛔ Skipped: Invalid volume (mean={vol_series.mean():.2f})")
+         #   return
 
         vol_ratio = 1.0
 

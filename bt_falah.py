@@ -17,7 +17,7 @@ class FalahStrategy(bt.Strategy):
         atr_period=14,
         risk_per_trade=0.005,
         atr_multiplier=1.5,
-        ai_threshold=1.2,
+        ai_threshold=0.8,
         min_atr=0.5
     )
 

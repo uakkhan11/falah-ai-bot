@@ -24,19 +24,8 @@ print(f"✅ Found {len(csv_files)} CSV files.")
 loaded_files = 0
 
 for csv_file in csv_files:
-    df = pd.read_csv(csv_file)
-
-    # Force datetime parsing
-    try:
-        df["date"] = pd.to_datetime(df["date"], utc=True, errors="raise").dt.tz_localize(None)
-    except Exception as e:
-        print(f"❌ {os.path.basename(csv_file)} skipped (date parse error): {e}")
-        continue
-
-    # Confirm dtype
-    if not pd.api.types.is_datetime64_any_dtype(df["date"]):
-        print(f"❌ {os.path.basename(csv_file)} skipped (date column not datetime after parsing)")
-        continue
+    df = pd.read_csv(csv_file, parse_dates=["date"])
+    df["date"] = df["date"].dt.tz_localize(None)
 
     # Skip empty or bad files
     if df.shape[0] < 100:
@@ -51,8 +40,8 @@ for csv_file in csv_files:
 
     df = df.sort_values("date")
 
-    # Debug the first few rows
-    print(f"✅ {os.path.basename(csv_file)} date sample: {df['date'].head(2).to_list()}")
+    # 🚀 Set date as index (THIS IS THE FIX)
+    df = df.set_index("date")
 
     data = bt.feeds.PandasData(
         dataname=df,
@@ -63,6 +52,7 @@ for csv_file in csv_files:
     symbol = os.path.basename(csv_file).replace(".csv", "")
     cerebro.adddata(data, name=symbol)
     loaded_files += 1
+
 
 print(f"✅ Loaded {loaded_files} valid DataFrames into Backtrader.")
 print("🚀 Starting Backtest...")

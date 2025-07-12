@@ -14,7 +14,7 @@ cerebro = bt.Cerebro()
 cerebro.broker.setcash(1_000_000)
 cerebro.broker.setcommission(commission=0.0005)
 
-# ─── Load All Data ────────────────────────────────────────
+# ─── Load All Data in 1-hour Timeframe ────────────────────
 csv_files = glob.glob(os.path.join(DATA_DIR, "*.csv"))
 if not csv_files:
     raise FileNotFoundError("No CSV files found in historical_data folder.")
@@ -22,10 +22,11 @@ if not csv_files:
 print(f"✅ Found {len(csv_files)} CSV files.")
 
 loaded_files = 0
+
 for csv_file in csv_files:
     df = pd.read_csv(csv_file)
-    if df.shape[0] < 30:
-        print(f"⚠️ {os.path.basename(csv_file)} skipped (too few rows)")
+    if df.shape[0] < 100:
+        print(f"⚠️ {os.path.basename(csv_file)} skipped (too few rows: {df.shape[0]})")
         continue
     if df["close"].nunique() == 1:
         print(f"⚠️ {os.path.basename(csv_file)} skipped (constant price)")
@@ -38,23 +39,23 @@ for csv_file in csv_files:
     data = bt.feeds.GenericCSVData(
         dataname=csv_file,
         dtformat="%Y-%m-%d %H:%M:%S%z",
-        timeframe=bt.TimeFrame.Days,
-        compression=1,
+        timeframe=bt.TimeFrame.Minutes,
+        compression=60,  # 1-hour bars
         openinterest=-1
     )
     cerebro.adddata(data, name=symbol)
     loaded_files += 1
 
 print(f"✅ Loaded {loaded_files} valid CSV files into Backtrader.")
+print("🚀 Starting Backtest...")
 
 # ─── Add Strategy ────────────────────────────────────────
 cerebro.addstrategy(FalahStrategy)
 
 # ─── Run Backtest ────────────────────────────────────────
-print("🚀 Starting Backtest...")
 print("Starting Portfolio Value:", cerebro.broker.getvalue())
 results = cerebro.run()
-print("Ending Portfolio Value:", cerebro.broker.getvalue())
+print("Ending Portfolio Value:", cerebro.broker.getvalue() )
 
 # ─── Retrieve Data From Strategy ─────────────────────────
 strategy_instance = results[0]
@@ -68,16 +69,6 @@ if trades:
     trades_df = pd.DataFrame(trades)
     trades_df.to_csv(os.path.join(RESULTS_DIR, "trades.csv"), index=False)
 
-    # Per-symbol summary
-    summary = trades_df.groupby("symbol").agg(
-        total_pnl=("pnl","sum"),
-        avg_pnl=("pnl","mean"),
-        trades=("pnl","count"),
-        win_rate=("pnl", lambda x: (x>0).mean()*100)
-    ).reset_index()
-    summary.to_csv(os.path.join(RESULTS_DIR, "symbol_summary.csv"), index=False)
-
-    # Summarize trades
     wins = trades_df[trades_df["pnl"] > 0]
     losses = trades_df[trades_df["pnl"] <= 0]
     total_pnl = trades_df["pnl"].sum()
@@ -90,20 +81,18 @@ if trades:
     print(f"Losing Trades: {len(losses)}")
     print(f"Net P&L: ₹{total_pnl:,.2f}")
     print(f"Average P&L per Trade: ₹{avg_pnl:,.2f}")
-    print("✅ Per-symbol performance saved to symbol_summary.csv")
 else:
     print("\n⚠️ No trades recorded. Nothing to report.")
 
 if equity_curve:
     ec = pd.DataFrame(equity_curve)
-    ec["date"] = pd.to_datetime(ec["date"])
     ec.to_csv(os.path.join(RESULTS_DIR, "equity_curve.csv"), index=False)
 
     if len(ec) > 1:
         returns = ec["capital"].pct_change().dropna()
         cagr = (
-            (ec['capital'].iloc[-1] / ec['capital'].iloc[0]) ** (
-                1 / ((ec['date'].iloc[-1] - ec['date'].iloc[0]).days / 365.25)
+            (ec["capital"].iloc[-1] / ec["capital"].iloc[0]) ** (
+                1 / ((ec["date"].iloc[-1] - ec["date"].iloc[0]).days / 365.25)
             )
         ) - 1
         sharpe = returns.mean() / returns.std() * (252 ** 0.5)

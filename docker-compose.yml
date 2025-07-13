@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  falah-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: falah-bot
+    ports:
+      - "8501:8501"
+    restart: always
+    volumes:
+      - ./backtest_results:/app/backtest_results
+      - ./model.pkl:/app/model.pkl
+      - ./secrets.json:/app/secrets.json
+      - ./falah-credentials.json:/app/falah-credentials.json
+    environment:
+      - PYTHONUNBUFFERED=1

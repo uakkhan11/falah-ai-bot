@@ -48,13 +48,39 @@ class FalahStrategy(bt.Strategy):
         })
 
     def next(self):
-        dt = self.data.datetime.datetime(0)
-        value = self.broker.getvalue()
-        self.equity_curve.append({"date": dt, "capital": value})
-        self.peak = max(self.peak, value)
-        dd = (self.peak - value) / self.peak
-        self.drawdowns.append(dd)
+    dt = self.datas[0].datetime.datetime(0).strftime("%Y-%m-%d %H:%M")
+    symbol = self.datas[0]._name
+    close = self.datas[0].close[0]
+    ema10_val = self.ema10[0]
+    ema21_val = self.ema21[0]
+    rsi_val = self.rsi[0]
+    atr_val = self.atr[0]
 
+        # Simulated AI score
+    ai_raw = random.uniform(0, 1)
+    ai_score = round(ai_raw * 5, 2)  # Scale to 0–5
+
+
+    # Entry conditions
+    ema_pass = ema10_val > ema21_val
+    rsi_pass = rsi_val > 50
+    ai_pass = ai_score >= 1.0
+    entry_signal = ema_pass and rsi_pass and ai_pass
+
+    # 🖨️ Print diagnostics for each symbol
+    print(f"{dt} {symbol}: EMA10:{ema10_val:.2f} EMA21:{ema21_val:.2f} RSI:{rsi_val:.2f} "
+          f"ATR:{atr_val:.2f} AIraw:{ai_raw:.4f} AIscore:{ai_score:.2f} "
+          f"Entry:{entry_signal} EMApass:{ema_pass} RSIpass:{rsi_pass} AIpass:{ai_pass}")
+    
+    # Only act if entry signal passes
+    if entry_signal and not self.position:
+        sl = close * 0.98
+        tp = close * 1.04
+        qty = 100  # placeholder
+        print(f"{dt} {symbol}: ✅ Buy order: qty={qty} SL={sl:.2f} TP={tp:.2f}")
+        self.buy_price = close
+        self.buy(size=qty)
+        
         if self.order:
             return
 

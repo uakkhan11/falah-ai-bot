@@ -68,5 +68,24 @@ def fetch_all_historical():
 
             time.sleep(0.3)  # Rate limit
 
+
+import yfinance as yf
+import os
+
+# Define Yahoo Finance symbol for NIFTY 50 index
+nifty_symbol = "^NSEI"
+
+# Download daily historical data (adjust date as needed)
+df = yf.download(nifty_symbol, start="2023-01-01", interval="1d")
+
+# Create directory if not exists
+os.makedirs("historical_data", exist_ok=True)
+
+# Save to CSV
+csv_path = "historical_data/NIFTY.csv"
+df.to_csv(csv_path)
+
+print(f"✅ NIFTY index data saved to: {csv_path}")
+
 if __name__ == "__main__":
     fetch_all_historical()

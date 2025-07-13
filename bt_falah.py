@@ -3,7 +3,7 @@ import pandas as pd
 import random
 import joblib
 
-# Load model once globally (optional)
+# Load AI model globally
 MODEL = joblib.load("/root/falah-ai-bot/model.pkl")
 
 class FalahStrategy(bt.Strategy):
@@ -20,21 +20,22 @@ class FalahStrategy(bt.Strategy):
     )
 
     def __init__(self):
-        self.order = None
-        self.entry_bar = None
-        self.buy_price = None
-        self.sl_price = None
-        self.tp_price = None
         self.trades_log = []
+        self.indicators = {}
+        self.state = {}
 
-        # Initialize indicators for each data feed
-        self.indicators = dict()
         for d in self.datas:
             self.indicators[d._name] = {
                 "rsi": bt.ind.RSI(d.close, period=self.p.rsi_period),
                 "ema10": bt.ind.EMA(d.close, period=self.p.ema_short),
                 "ema21": bt.ind.EMA(d.close, period=self.p.ema_long),
                 "atr": bt.ind.ATR(d, period=self.p.atr_period),
+            }
+            self.state[d._name] = {
+                "entry_bar": None,
+                "buy_price": None,
+                "sl_price": None,
+                "tp_price": None,
             }
 
     def log(self, txt, dt=None):
@@ -44,43 +45,45 @@ class FalahStrategy(bt.Strategy):
     def next(self):
         for d in self.datas:
             symbol = d._name
-            ind = self.indicators[d._name]
+            ind = self.indicators[symbol]
+            s = self.state[symbol]
+
+            # Skip if indicators are not ready
             if any([
                 pd.isna(ind["rsi"][0]),
                 pd.isna(ind["ema10"][0]),
                 pd.isna(ind["ema21"][0]),
-                pd.isna(ind["atr"][0])
+                pd.isna(ind["atr"][0]),
             ]):
                 continue
 
             close = d.close[0]
-            rsi = self.indicators[symbol]["rsi"][0]
-            ema10 = self.indicators[symbol]["ema10"][0]
-            ema21 = self.indicators[symbol]["ema21"][0]
-            atr = self.indicators[symbol]["atr"][0]
+            rsi = ind["rsi"][0]
+            ema10 = ind["ema10"][0]
+            ema21 = ind["ema21"][0]
+            atr = ind["atr"][0]
             dt = d.datetime.datetime(0)
 
-            if pd.isna(close) or pd.isna(rsi) or pd.isna(ema10) or pd.isna(ema21) or pd.isna(atr):
-                continue  # skip incomplete data
+            if atr < self.p.min_atr:
+                continue
 
-            # Simulated AI score or use model (you can replace this logic)
+            # AI score simulation (replace this with real model if needed)
             ai_raw = random.uniform(0, 1)
-            ai_score = round(ai_raw * 5, 2)  # Scale to 0–5
+            ai_score = round(ai_raw * 5, 2)
 
-            # Entry Conditions
             ema_pass = ema10 > ema21
             rsi_pass = rsi > 50
             ai_pass = ai_score >= 1.0
             entry_signal = ema_pass and rsi_pass and ai_pass
 
-            # 🔍 Print status for every symbol and bar
+            # 🔍 Full diagnostics
             print(
                 f"{dt} {symbol}: EMA10:{ema10:.2f} EMA21:{ema21:.2f} RSI:{rsi:.2f} ATR:{atr:.4f} "
                 f"AIraw:{ai_raw:.4f} AIscore:{ai_score:.2f} "
                 f"Entry:{entry_signal} EMApass:{ema_pass} RSIpass:{rsi_pass} AIpass:{ai_pass}"
             )
 
-            # Execute Buy
+            # Entry logic
             if entry_signal and not self.getposition(d).size:
                 sl = close - self.p.atr_multiplier * atr
                 tp = close + self.p.atr_multiplier * atr * 2
@@ -93,21 +96,21 @@ class FalahStrategy(bt.Strategy):
                     continue
 
                 self.buy(data=d, size=qty)
-                self.buy_price = close
-                self.sl_price = sl
-                self.tp_price = tp
-                self.entry_bar = len(self)
+                s["buy_price"] = close
+                s["sl_price"] = sl
+                s["tp_price"] = tp
+                s["entry_bar"] = len(self)
                 self.log(f"{symbol}: ✅ Buy order: qty={qty} SL={sl:.2f} TP={tp:.2f}")
 
-            # Manage open position
+            # Exit logic
             if self.getposition(d).size:
-                if d.low[0] <= self.sl_price:
+                if d.low[0] <= s["sl_price"]:
                     self.close(data=d)
-                    self.log(f"{symbol}: 🛑 Stop Loss hit at {self.sl_price:.2f}")
-                elif d.high[0] >= self.tp_price:
+                    self.log(f"{symbol}: 🛑 Stop Loss hit at {s['sl_price']:.2f}")
+                elif d.high[0] >= s["tp_price"]:
                     self.close(data=d)
-                    self.log(f"{symbol}: ✅ Target hit at {self.tp_price:.2f}")
-                elif len(self) - self.entry_bar >= self.p.exit_bars:
+                    self.log(f"{symbol}: ✅ Target hit at {s['tp_price']:.2f}")
+                elif len(self) - s["entry_bar"] >= self.p.exit_bars:
                     self.close(data=d)
                     self.log(f"{symbol}: ⏳ Time exit after {self.p.exit_bars} bars")
 

@@ -48,13 +48,13 @@ class FalahStrategy(bt.Strategy):
         })
 
     def next(self):
-    dt = self.datas[0].datetime.datetime(0).strftime("%Y-%m-%d %H:%M")
-    symbol = self.datas[0]._name
-    close = self.datas[0].close[0]
-    ema10_val = self.ema10[0]
-    ema21_val = self.ema21[0]
-    rsi_val = self.rsi[0]
-    atr_val = self.atr[0]
+        dt = self.datas[0].datetime.datetime(0).strftime("%Y-%m-%d %H:%M")
+        symbol = self.datas[0]._name
+        close = self.datas[0].close[0]
+        ema10_val = self.ema10[0]
+        ema21_val = self.ema21[0]
+        rsi_val = self.rsi[0]
+        atr_val = self.atr[0]
 
         # Simulated AI score
     ai_raw = random.uniform(0, 1)

@@ -8,6 +8,7 @@ from datetime import datetime
 from pytz import timezone
 from kiteconnect import KiteConnect
 import joblib
+import base64
 
 from credentials import load_secrets, get_kite, validate_kite
 from data_fetch import get_live_ltp
@@ -19,12 +20,85 @@ from bulk_analysis import analyze_multiple_stocks
 from telegram_utils import send_telegram
 from sheets import log_trade_to_sheet
 
+# ── Page Setup with Logo and Theme ─────────────────────────────
+
+def set_bg(image_path):
+    with open(image_path, "rb") as img_file:
+        encoded = base64.b64encode(img_file.read()).decode()
+    css = f"""
+    <style>
+    .stApp {{
+        background-image: url("data:image/png;base64,{encoded}");
+        background-size: 40%;
+        background-position: top right;
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+        background-color: #fdf9f2;
+    }}
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
+
+set_bg("icon-512.png")
+
+st.set_page_config(page_title="Falāh Bot Dashboard", layout="wide", page_icon="🌙")
+
+st.markdown("""
+    <style>
+    html, body, [class*="css"]  {
+        font-family: 'Georgia', serif;
+        color: #064e3b;
+    }
+    .stButton > button {
+        background-color: #f59e0b;
+        color: white;
+        font-weight: bold;
+        border-radius: 10px;
+        border: none;
+    }
+    .stButton > button:hover {
+        background-color: #d97706;
+    }
+    .stSidebar, .css-1d391kg, .css-6qob1r {
+        background-color: #fefce8 !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+    <div style='text-align: center; margin-top: -30px;'>
+        <h1>🟢 <b>Falāh Trading Bot</b></h1>
+        <h4 style='color: #6b7280;'>Ethical • Intelligent • Profitable</h4>
+    </div>
+""", unsafe_allow_html=True)
+
+def inject_pwa():
+    st.markdown("""
+        <!-- Manifest -->
+        <link rel="manifest" href="/static/manifest.json">
+        <meta name="theme-color" content="#064e3b">
+
+        <!-- iOS -->
+        <link rel="apple-touch-icon" href="/icon-512.png">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+        <!-- Register Service Worker -->
+        <script>
+        if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.register("/static/sw.js")
+                .then(reg => console.log("✅ Service worker registered."))
+                .catch(err => console.error("Service worker failed:", err));
+        }
+        </script>
+    """, unsafe_allow_html=True)
+
+inject_pwa()
+
 # Load ML model
 
 def get_trade_probability(rsi, atr, ema10, ema21, volume_change):
-    # Load model when function is called
     model = joblib.load("model.pkl")
-
     features = pd.DataFrame([{
         "RSI": rsi,
         "EMA10": ema10,
@@ -32,20 +106,15 @@ def get_trade_probability(rsi, atr, ema10, ema21, volume_change):
         "ATR": atr,
         "VolumeChange": volume_change
     }])
-
     prob = model.predict_proba(features)[0][1]
     return prob
 
 # Helper functions
+
 def compute_trailing_sl(cmp, atr, atr_multiplier=1.5):
     return round(cmp - atr * atr_multiplier, 2)
 
-def calculate_risk_based_quantity(
-    capital: float,
-    risk_per_trade_pct: float,
-    entry_price: float,
-    stoploss_price: float
-) -> int:
+def calculate_risk_based_quantity(capital: float, risk_per_trade_pct: float, entry_price: float, stoploss_price: float) -> int:
     risk_per_trade_amount = capital * risk_per_trade_pct
     risk_per_share = entry_price - stoploss_price
     if risk_per_share <= 0:
@@ -56,13 +125,9 @@ def calculate_risk_based_quantity(
 def is_market_open():
     india = timezone("Asia/Kolkata")
     now = datetime.now(india)
-    return (
-        now.weekday() < 5 and
-        now.hour >= 9 and
-        (now.hour < 15 or (now.hour == 15 and now.minute <= 30))
-    )
+    return now.weekday() < 5 and now.hour >= 9 and (now.hour < 15 or (now.hour == 15 and now.minute <= 30))
 
-# Initialize
+# Secrets
 secrets = load_secrets()
 BOT_TOKEN = secrets["telegram"]["bot_token"]
 CHAT_ID = secrets["telegram"]["chat_id"]

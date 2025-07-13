@@ -44,7 +44,13 @@ class FalahStrategy(bt.Strategy):
     def next(self):
         for d in self.datas:
             symbol = d._name
-            if not d._maystart:  # skip if not enough bars
+            ind = self.indicators[d._name]
+            if any([
+                pd.isna(ind["rsi"][0]),
+                pd.isna(ind["ema10"][0]),
+                pd.isna(ind["ema21"][0]),
+                pd.isna(ind["atr"][0])
+            ]):
                 continue
 
             close = d.close[0]

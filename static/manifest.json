@@ -1,0 +1,16 @@
+{
+  "name": "Falāh Bot Dashboard",
+  "short_name": "Falāh Bot",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fdf9f2",
+  "theme_color": "#064e3b",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

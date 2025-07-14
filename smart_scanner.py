@@ -5,7 +5,7 @@ import json
 import pandas as pd
 import glob
 from ta.momentum import RSIIndicator
-from ta.trend import EMAIndicator
+from ta.trend import EMAIndicator, ADXIndicator
 from ta.volatility import AverageTrueRange
 from credentials import get_kite
 import joblib
@@ -107,12 +107,21 @@ def run_smart_scan():
         daily_df["EMA10"] = EMAIndicator(close=daily_df["close"], window=10).ema_indicator()
         daily_df["EMA21"] = EMAIndicator(close=daily_df["close"], window=21).ema_indicator()
         daily_df["RSI"] = RSIIndicator(close=daily_df["close"], window=14).rsi()
+
         atr = AverageTrueRange(
             high=daily_df["high"],
             low=daily_df["low"],
             close=daily_df["close"],
             window=14
         ).average_true_range().iloc[-1]
+
+        adx_indicator = ADXIndicator(
+            high=daily_df["high"],
+            low=daily_df["low"],
+            close=daily_df["close"],
+            window=14
+        )
+        daily_df["ADX"] = adx_indicator.adx()
 
         last_daily = daily_df.iloc[-1]
         score, reasons = 0, []
@@ -133,16 +142,9 @@ def run_smart_scan():
             score += 1.0
             reasons.append(f"ATR {atr:.2f}")
 
-        from ta.trend import ADXIndicator
-
-            adx_indicator = ADXIndicator(
-                high=daily_df["high"],
-                low=daily_df["low"],
-                close=daily_df["close"],
-                window=14
-            )
-            daily_df["ADX"] = adx_indicator.adx()
-
+        if last_daily["ADX"] < 20:
+            score -= 1.0
+            reasons.append(f"Weak trend (ADX {last_daily['ADX']:.1f})")
 
         if last_daily["volume"] > 1.2 * daily_df["volume"].rolling(10).mean().iloc[-1]:
             score += 2.0
@@ -173,6 +175,7 @@ def run_smart_scan():
             "CMP": ltp,
             "RSI": round(last_daily["RSI"], 2),
             "ATR": round(atr, 2),
+            "ADX": round(last_daily["ADX"], 2),
             "EMA10": round(last_daily["EMA10"], 2),
             "EMA21": round(last_daily["EMA21"], 2),
             "Score": round(score, 2),

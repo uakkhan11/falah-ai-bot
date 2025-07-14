@@ -8,50 +8,52 @@ from datetime import datetime
 from io import BytesIO
 import camelot
 
-PDF_URL = "https://www.amfiindia.com/Themes/Theme1/downloads/AverageMarketCapitalization30Jun2025.pdf"
-PDF_PATH = "/root/falah-ai-bot/amfi_large_midcap.pdf"
 OUTPUT_JSON = "/root/falah-ai-bot/large_mid_cap.json"
+PDF_URL = "https://www.amfiindia.com/spages/AMFI%20Large%20Mid%20Cap%20Funds.pdf"
+TEMP_PDF = "/root/falah-ai-bot/amfi_large_midcap.pdf"
 
 def fetch_amfi_pdf():
     print("✅ Downloading AMFI Large & Mid Cap PDF...")
     response = requests.get(PDF_URL)
-    if response.status_code != 200 or b"%PDF" not in response.content[:10]:
-        raise Exception("Failed to download a valid AMFI PDF")
-    with open(PDF_PATH, "wb") as f:
+    if response.status_code != 200 or not response.content.startswith(b"%PDF"):
+        raise Exception("❌ Invalid PDF content from AMFI site.")
+    with open(TEMP_PDF, "wb") as f:
         f.write(response.content)
-    print(f"✅ PDF saved at {PDF_PATH}")
+    print(f"✅ PDF saved at {TEMP_PDF}")
+    return TEMP_PDF
 
-def parse_pdf_to_symbols():
+def parse_pdf_to_symbols(file_path):
     print("✅ Parsing PDF using Camelot...")
-    tables = camelot.read_pdf(PDF_PATH, pages="all", flavor="stream")
+    tables = camelot.read_pdf(file_path, pages='all', flavor='stream')
 
     symbols = set()
     for table in tables:
         df = table.df
-        if df.shape[0] < 2:
+        # skip empty tables
+        if df.empty or df.shape[0] < 2:
             continue
-        df.columns = df.iloc[0].str.strip()
-        df = df.iloc[1:]
+        # Clean column headers
+        df.columns = [str(c).strip() for c in df.iloc[0]]
+        df = df.iloc[1:].reset_index(drop=True)
+        # Search all columns for valid NSE symbols
         for col in df.columns:
-            matches = df[col].dropna().unique()
-            for m in matches:
-                m = str(m).strip()
-                if m.isupper() and m.isalpha() and 2 <= len(m) <= 12:
-                    symbols.add(m)
+            for val in df[col].dropna():
+                val = str(val).strip()
+                if val.isupper() and val.isalpha() and 2 <= len(val) <= 12:
+                    symbols.add(val)
+    print(f"✅ Found {len(symbols)} unique Large/Mid Cap symbols.")
+    return sorted(list(symbols))
 
-    print(f"✅ Found {len(symbols)} unique Large/Mid Cap NSE symbols.")
-    return sorted(symbols)
-
-def save_symbols(symbols):
+def save_to_json(symbols):
     with open(OUTPUT_JSON, "w") as f:
         json.dump(symbols, f, indent=2)
-    print(f"✅ Saved Large/Mid Cap list to {OUTPUT_JSON}")
+    print(f"✅ Saved to {OUTPUT_JSON}")
 
 if __name__ == "__main__":
     try:
-        fetch_amfi_pdf()
-        symbols = parse_pdf_to_symbols()
-        save_symbols(symbols)
+        pdf_path = fetch_amfi_pdf()
+        symbols = parse_pdf_to_symbols(pdf_path)
+        save_to_json(symbols)
         print(f"✅ Large/Mid Cap list successfully updated on {datetime.now().strftime('%Y-%m-%d')}")
     except Exception as e:
         print(f"❌ Error: {e}")

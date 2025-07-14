@@ -50,6 +50,7 @@ monitor_sheet = sheet.worksheet("MonitoredStocks")
 
 # 🟢 Load Nifty for relative strength
 nifty_df = pd.read_csv("/root/falah-ai-bot/historical_data/NIFTY.csv")
+nifty_df.rename(columns={"Date": "date"}, inplace=True)
 nifty_df["date"] = pd.to_datetime(nifty_df["date"])
 nifty_df = nifty_df.sort_values("date").reset_index(drop=True)
 

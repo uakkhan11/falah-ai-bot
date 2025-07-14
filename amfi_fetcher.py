@@ -9,7 +9,7 @@ from io import BytesIO
 import camelot
 
 OUTPUT_JSON = "/root/falah-ai-bot/large_mid_cap.json"
-PDF_URL = "https://www.amfiindia.com/spages/AMFI%20Large%20Mid%20Cap%20Funds.pdf"
+PDF_URL = "https://www.amfiindia.com/Themes/Theme1/downloads/AverageMarketCapitalization30Jun2025.pdf"
 TEMP_PDF = "/root/falah-ai-bot/amfi_large_midcap.pdf"
 
 def fetch_amfi_pdf():

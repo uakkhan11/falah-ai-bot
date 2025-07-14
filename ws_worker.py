@@ -1,86 +1,99 @@
+from datetime import datetime
+
+code = f"""
 # ws_worker.py
 
 import json
-import time
 import os
+import time
 from kiteconnect import KiteTicker
+from threading import Timer
 
-# CONFIGURATION
-SECRETS_PATH = "/root/falah-ai-bot/secrets.json"
-TOKENS_PATH = "/root/falah-ai-bot/tokens.json"
-OUTPUT_PATH = "/tmp/live_prices_{batch_id}.json"
-BATCH_ID = os.getenv("BATCH_ID", "default")  # Allow optional batch separation
-WRITE_INTERVAL = 3  # seconds
+api_key = ""
+access_token = ""
+tokens = []
 
-# LOAD SECRETS
-with open(SECRETS_PATH) as f:
+# Load credentials
+with open("/root/falah-ai-bot/secrets.json") as f:
     secrets = json.load(f)
-
 api_key = secrets["zerodha"]["api_key"]
 access_token = secrets["zerodha"]["access_token"]
 
-# LOAD TOKENS
-with open(TOKENS_PATH) as f:
+# Load tokens
+with open("/root/falah-ai-bot/tokens.json") as f:
     token_map = json.load(f)
-
 tokens = [int(t) for t in token_map.values()]
-print(f"✅ Loaded {len(tokens)} tokens.")
 
-# SHARED PRICE STORE
-live_prices = {}
+# Output file
+output_file = "/tmp/live_prices_batch.json"
 
-# FILE WRITE HANDLER
-def save_live_prices():
-    temp_path = f"{OUTPUT_PATH.format(batch_id=BATCH_ID)}.tmp"
-    final_path = OUTPUT_PATH.format(batch_id=BATCH_ID)
-    with open(temp_path, "w") as f:
-        json.dump(live_prices, f)
-    os.replace(temp_path, final_path)  # atomic write
-    print(f"💾 Updated {final_path} with {len(live_prices)} prices.")
-
-# KITE TICKER
+# Setup KiteTicker
 kws = KiteTicker(api_key, access_token)
+live_data = {{}}
+last_write_time = time.time()
 
-def on_connect(ws, response):
-    print("✅ Connected to WebSocket, subscribing...")
-    ws.subscribe(tokens)
-    ws.set_mode(ws.MODE_QUOTE, tokens)
+def write_to_file():
+    global last_write_time
+    with open(output_file, "w") as f:
+        json.dump(live_data, f)
+    last_write_time = time.time()
+    print(f"[{{datetime.now()}}] ✅ Live prices written: {{len(live_data)}} symbols.")
+
+def clean_old_files():
+    now = time.time()
+    for f in os.listdir("/tmp"):
+        if f.startswith("live_prices_") and f.endswith(".json"):
+            f_path = os.path.join("/tmp", f)
+            if now - os.path.getmtime(f_path) > 600:
+                try:
+                    os.remove(f_path)
+                    print(f"[{{datetime.now()}}] 🗑️ Removed stale file: {{f}}")
+                except Exception as e:
+                    print(f"[{{datetime.now()}}] ⚠️ Error removing {{f}}: {{e}}")
+
+def schedule_cleanup():
+    clean_old_files()
+    Timer(600, schedule_cleanup).start()
 
 def on_ticks(ws, ticks):
-    for tick in ticks:
-        token = tick["instrument_token"]
-        ltp = tick["last_price"]
-        live_prices[str(token)] = ltp
-    # Throttled file write
-    global last_write
-    now = time.time()
-    if now - last_write > WRITE_INTERVAL:
-        save_live_prices()
-        last_write = now
+    global live_data
+    for t in ticks:
+        live_data[t["instrument_token"]] = t["last_price"]
+    if time.time() - last_write_time > 2:
+        write_to_file()
+
+def on_connect(ws, response):
+    print(f"[{{datetime.now()}}] ✅ Connected to WebSocket. Subscribing {{len(tokens)}} tokens.")
+    ws.subscribe(tokens)
+    ws.set_mode(ws.MODE_FULL, tokens)
 
 def on_close(ws, code, reason):
-    print(f"🔴 WebSocket closed. Code={code}, Reason={reason}")
-    save_live_prices()
+    print(f"[{{datetime.now()}}] 🔴 WebSocket closed: {{reason}}. Reconnecting in 5s...")
+    time.sleep(5)
+    reconnect()
 
 def on_error(ws, code, reason):
-    print(f"⚠️ WebSocket error: Code={code}, Reason={reason}")
+    print(f"[{{datetime.now()}}] ⚠️ WebSocket error: {{reason}}")
 
-def on_order_update(ws, data):
-    pass  # Optional, unused
+def reconnect():
+    global kws
+    kws.close()
+    time.sleep(2)
+    kws = KiteTicker(api_key, access_token)
+    kws.on_ticks = on_ticks
+    kws.on_connect = on_connect
+    kws.on_close = on_close
+    kws.on_error = on_error
+    kws.connect(threaded=False)
 
-# ATTACH HANDLERS
-kws.on_connect = on_connect
 kws.on_ticks = on_ticks
+kws.on_connect = on_connect
 kws.on_close = on_close
 kws.on_error = on_error
-kws.on_order_update = on_order_update
 
-# MAIN LOOP
-if __name__ == "__main__":
-    last_write = time.time()
-    try:
-        print("🔄 Starting WebSocket connection...")
-        kws.connect(threaded=False)
-    except Exception as e:
-        print(f"❌ Exception: {e}")
-        save_live_prices()
+print(f"[{{datetime.now()}}] 🔄 Starting WebSocket worker...")
+schedule_cleanup()
+kws.connect(threaded=False)
+"""
+
+print(code)

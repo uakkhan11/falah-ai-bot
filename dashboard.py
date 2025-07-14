@@ -267,7 +267,10 @@ if "scanned_data" in st.session_state:
             rsi = row["RSI"]
             atr = row["ATR"]
             adx = row["ADX"]
-            ai_score = row["Score"]
+            ema10 = row["EMA10"]
+            ema21 = row["EMA21"]
+            volume_change = row["VolumeChange"]
+
 
             trailing_sl = compute_trailing_sl(cmp, atr)
             target_price = round(cmp + (cmp - trailing_sl) * 3, 2)

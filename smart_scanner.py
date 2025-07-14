@@ -176,7 +176,7 @@ def run_smart_scan():
             "ADX": round(adx, 2),
             "EMA10": round(last_daily["EMA10"], 2),
             "EMA21": round(last_daily["EMA21"], 2),
-            "VolumeChange": round(volume_change, 2),
+            "VolumeChange": round(last_daily["volume"] / daily_df["volume"].rolling(10).mean().iloc[-1], 2),
             "Score": round(score, 2),
             "Reasons": ", ".join(reasons)
         })

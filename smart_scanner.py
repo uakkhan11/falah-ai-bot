@@ -116,6 +116,10 @@ def run_smart_scan():
         results.append({
             "Symbol": sym,
             "CMP": ltp,
+            "RSI": round(last_daily["RSI"], 2),
+            "ATR": round(atr, 2),
+            "EMA10": round(last_daily["EMA10"], 2),
+            "EMA21": round(last_daily["EMA21"], 2),
             "Score": round(score, 2),
             "Reasons": ", ".join(reasons)
         })

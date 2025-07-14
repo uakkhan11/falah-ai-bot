@@ -14,10 +14,12 @@ import gc
 HIST_DIR = "/root/falah-ai-bot/historical_data/"
 
 def load_all_live_prices():
-    live = {}
-    for f in glob.glob("/tmp/live_prices_*.json"):
-        with open(f) as fd:
-            live.update(json.load(fd))
+    live_file = "/tmp/live_prices_batch.json"
+    if not os.path.exists(live_file):
+        print("⚠️ Live price file not found.")
+        return {}
+    with open(live_file) as fd:
+        live = json.load(fd)
     return live
 
 # Load model once

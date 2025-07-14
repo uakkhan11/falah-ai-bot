@@ -1,50 +1,25 @@
 # amfi_fetcher.py
 
 import pandas as pd
-import requests
 import json
-import os
-from datetime import datetime
 
-AMFI_URL = "https://www.amfiindia.com/spages/NAVAll.txt"
-OUTPUT_FILE = "/root/falah-ai-bot/large_mid_cap.json"
-REFRESH_MONTH = datetime.now().strftime("%Y-%m")
+# ✅ Static CSV File containing 'Symbol', 'Company Name', 'Category' (Large/Mid)
+CSV_FILE = "/root/falah-ai-bot/amfi_large_mid_cap.csv"
+OUTPUT_JSON = "/root/falah-ai-bot/large_mid_cap.json"
 
-def fetch_amfi_data():
-    print("✅ Fetching AMFI data...")
-    response = requests.get(AMFI_URL)
-    response.raise_for_status()
+def load_large_mid_caps():
+    df = pd.read_csv(CSV_FILE)
+    df = df[df['Category'].isin(['Large Cap', 'Mid Cap'])]
+    symbols = df['Symbol'].dropna().unique().tolist()
+    print(f"✅ Found {len(symbols)} unique Large and Mid Cap stocks.")
+    with open(OUTPUT_JSON, "w") as f:
+        json.dump(symbols, f, indent=2)
+    print(f"✅ Saved Large/Mid Cap stocks to {OUTPUT_JSON}")
 
-    data = response.text
-    lines = data.splitlines()
-
-    large_mid_cap_stocks = set()
-    current_category = None
-
-    for line in lines:
-        if "##" in line:
-            category = line.replace("##", "").strip()
-            if "Large Cap" in category or "Mid Cap" in category:
-                current_category = category
-            else:
-                current_category = None
-        elif current_category and line and not line.startswith("Scheme Code"):
-            parts = line.split(";")
-            if len(parts) >= 4:
-                stock_name = parts[3].strip()
-                if stock_name:
-                    large_mid_cap_stocks.add(stock_name.upper())
-
-    print(f"✅ Found {len(large_mid_cap_stocks)} unique Large and Mid Cap stocks.")
-
-    # Save to JSON
-    with open(OUTPUT_FILE, "w") as f:
-        json.dump({
-            "updated_on": REFRESH_MONTH,
-            "stocks": sorted(list(large_mid_cap_stocks))
-        }, f, indent=2)
-
-    print(f"✅ Saved Large/Mid Cap stocks to {OUTPUT_FILE}")
+def get_large_mid_caps():
+    with open(OUTPUT_JSON) as f:
+        return json.load(f)
 
 if __name__ == "__main__":
-    fetch_amfi_data()
+    print("✅ Loading Large/Mid Cap symbols from static CSV...")
+    load_large_mid_caps()

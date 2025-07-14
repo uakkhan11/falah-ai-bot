@@ -16,24 +16,15 @@ HIST_DIR = "/root/falah-ai-bot/historical_data/"
 def load_all_live_prices():
     live = {}
     files = glob.glob("/tmp/live_prices_*.json")
-    if files:
-        for f in files:
+    if not files:
+        print("⚠️ Live price file not found.")
+        return live
+    for f in files:
+        try:
             with open(f) as fd:
                 live.update(json.load(fd))
-        print(f"✅ Loaded {len(live)} live prices.")
-    else:
-        print("⚠️ Live prices not found. Loading last close prices from historical files.")
-        with open("/root/falah-ai-bot/tokens.json") as f:
-            tokens = json.load(f)
-        for sym in tokens.keys():
-            daily_file = os.path.join(HIST_DIR, f"{sym}.csv")
-            if os.path.exists(daily_file):
-                df = pd.read_csv(daily_file)
-                if not df.empty:
-                    last_close = df.iloc[-1]["close"]
-                    token = str(tokens[sym])
-                    live[token] = last_close
-        print(f"✅ Loaded {len(live)} fallback prices from historical files.")
+        except Exception as e:
+            print(f"⚠️ Error reading {f}: {e}")
     return live
 
 # Load model once
@@ -42,14 +33,20 @@ model = joblib.load("/root/falah-ai-bot/model.pkl")
 def run_smart_scan():
     kite = get_kite()
     live_prices = load_all_live_prices()
+
     with open("/root/falah-ai-bot/tokens.json") as f:
         tokens = json.load(f)
     token_to_symbol = {str(v): k for k, v in tokens.items()}
+
     print(f"\n✅ Loaded {len(live_prices)} live prices.")
+
+    if not live_prices:
+        print("⚠️ No live prices available, exiting scan.")
+        return pd.DataFrame()
 
     results = []
 
-    # Limit to first 25 symbols for safety
+    # Process up to first 25 symbols
     items = list(live_prices.items())[:25]
 
     for token, ltp in items:
@@ -67,10 +64,9 @@ def run_smart_scan():
 
         daily_df = pd.read_csv(daily_file)
         if len(daily_df) < 21:
-            print(f"⚠️ Not enough rows in {sym} historical data.")
+            print(f"⚠️ Not enough historical data for {sym}")
             continue
 
-        # Compute indicators
         daily_df["SMA20"] = daily_df["close"].rolling(20).mean()
         daily_df["EMA10"] = EMAIndicator(close=daily_df["close"], window=10).ema_indicator()
         daily_df["EMA21"] = EMAIndicator(close=daily_df["close"], window=21).ema_indicator()
@@ -83,10 +79,7 @@ def run_smart_scan():
         ).average_true_range().iloc[-1]
 
         last_daily = daily_df.iloc[-1]
-
-        # Heuristic scoring
-        score = 0
-        reasons = []
+        score, reasons = 0, []
 
         if ltp > last_daily["SMA20"]:
             score += 1.5
@@ -96,7 +89,7 @@ def run_smart_scan():
             score += 1.2
             reasons.append("EMA10 > EMA21")
 
-        if last_daily["RSI"] and last_daily["RSI"] > 55:
+        if last_daily["RSI"] > 55:
             score += 0.8
             reasons.append(f"RSI {last_daily['RSI']:.1f}")
 
@@ -114,7 +107,6 @@ def run_smart_scan():
             score += 1.5
             reasons.append("Gap up")
 
-        # ML model score
         features = [[
             last_daily["RSI"],
             last_daily["EMA10"],
@@ -129,14 +121,9 @@ def run_smart_scan():
 
         print(f"👉 {sym} | Score: {score:.2f} | Reasons: {reasons}")
 
-        last_price_date = meta_info.get(str(token), "Live")
-
-        print(f"\n🔍 {sym} - Evaluating... Last Price Date: {last_price_date}")
-
         results.append({
             "Symbol": sym,
             "CMP": ltp,
-            "Last Price Date": last_price_date,
             "RSI": round(last_daily["RSI"], 2),
             "ATR": round(atr, 2),
             "EMA10": round(last_daily["EMA10"], 2),
@@ -145,13 +132,10 @@ def run_smart_scan():
             "Reasons": ", ".join(reasons)
         })
 
-        # Immediately free memory
         del daily_df
         gc.collect()
 
-    # Compile final DataFrame
     df = pd.DataFrame(results)
-
     if df.empty:
         print("⚠️ No stocks matched ANY criteria.")
         return df
@@ -160,7 +144,6 @@ def run_smart_scan():
     print("✅ Final scan results:")
     print(df)
 
-    # Save to sheet and telegram (optional)
     try:
         from sheets import log_scan_to_sheet
         log_scan_to_sheet(df)

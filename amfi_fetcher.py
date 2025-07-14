@@ -3,54 +3,46 @@ import pandas as pd
 import os
 import json
 from datetime import datetime
-from io import BytesIO
 import camelot
 
-file_path = "/root/falah-ai-bot/amfi_large_midcap.pdf"
-tables = camelot.read_pdf(file_path, pages="all")
-
-# Output JSON file
-OUTPUT_JSON = "/root/falah-ai-bot/large_mid_cap.json"
-
-# AMFI Large Midcap PDF URL (updated every 6 months by SEBI)
 PDF_URL = "https://www.amfiindia.com/spages/AMFI%20Large%20Mid%20Cap%20Funds.pdf"
+PDF_FILE = "/root/falah-ai-bot/amfi_large_midcap.pdf"
+OUTPUT_JSON = "/root/falah-ai-bot/large_mid_cap.json"
 
 def fetch_amfi_pdf():
     print("✅ Downloading AMFI Large & Mid Cap PDF...")
     response = requests.get(PDF_URL)
     if response.status_code != 200:
-        raise Exception("Failed to download AMFI PDF")
-    return BytesIO(response.content)
+        raise Exception(f"Failed to download PDF, status code {response.status_code}")
+    with open(PDF_FILE, "wb") as f:
+        f.write(response.content)
+    print(f"✅ PDF saved at {PDF_FILE}")
 
-def parse_pdf_to_symbols(pdf_data):
+def parse_pdf_to_symbols(file_path):
     print("✅ Parsing PDF using Camelot...")
-    tables = camelot.read_pdf(filepath_or_buffer=pdf_data, pages='all', flavor='stream')
+    tables = camelot.read_pdf(file_path, pages='all', flavor='stream')
 
     symbols = set()
     for table in tables:
         df = table.df
-        # Clean all columns
-        df.columns = [c.strip() for c in df.iloc[0]]
-        df = df.iloc[1:]
-        for col in df.columns:
-            matches = df[col].dropna().unique()
-            for m in matches:
-                m = str(m).strip()
-                # Extract NSE symbol assumption (all caps, no spaces)
-                if m.isupper() and m.isalpha() and len(m) <= 12:
-                    symbols.add(m)
-    print(f"✅ Found {len(symbols)} unique Large/Mid Cap symbols from PDF.")
-    return sorted(list(symbols))
+        for row in df.values:
+            for cell in row:
+                cell = str(cell).strip()
+                if cell.isupper() and cell.isalpha() and len(cell) <= 12:
+                    symbols.add(cell)
+
+    print(f"✅ Found {len(symbols)} unique Large/Mid Cap symbols.")
+    return sorted(symbols)
 
 def save_to_json(symbols):
     with open(OUTPUT_JSON, "w") as f:
         json.dump(symbols, f, indent=2)
-    print(f"✅ Saved to {OUTPUT_JSON}")
+    print(f"✅ Saved symbols to {OUTPUT_JSON}")
 
 if __name__ == "__main__":
     try:
-        pdf_data = fetch_amfi_pdf()
-        symbols = parse_pdf_to_symbols(pdf_data)
+        fetch_amfi_pdf()
+        symbols = parse_pdf_to_symbols(PDF_FILE)
         save_to_json(symbols)
         print(f"✅ Large/Mid Cap list successfully updated on {datetime.now().strftime('%Y-%m-%d')}")
     except Exception as e:

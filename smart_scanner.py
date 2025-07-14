@@ -133,6 +133,17 @@ def run_smart_scan():
             score += 1.0
             reasons.append(f"ATR {atr:.2f}")
 
+        from ta.trend import ADXIndicator
+
+            adx_indicator = ADXIndicator(
+                high=daily_df["high"],
+                low=daily_df["low"],
+                close=daily_df["close"],
+                window=14
+            )
+            daily_df["ADX"] = adx_indicator.adx()
+
+
         if last_daily["volume"] > 1.2 * daily_df["volume"].rolling(10).mean().iloc[-1]:
             score += 2.0
             reasons.append("Volume breakout")

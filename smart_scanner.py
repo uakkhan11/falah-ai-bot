@@ -129,9 +129,14 @@ def run_smart_scan():
 
         print(f"👉 {sym} | Score: {score:.2f} | Reasons: {reasons}")
 
+        last_price_date = meta_info.get(str(token), "Live")
+
+        print(f"\n🔍 {sym} - Evaluating... Last Price Date: {last_price_date}")
+
         results.append({
             "Symbol": sym,
             "CMP": ltp,
+            "Last Price Date": last_price_date,
             "RSI": round(last_daily["RSI"], 2),
             "ATR": round(atr, 2),
             "EMA10": round(last_daily["EMA10"], 2),

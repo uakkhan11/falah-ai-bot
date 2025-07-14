@@ -15,34 +15,17 @@ HIST_DIR = "/root/falah-ai-bot/historical_data/"
 
 def load_all_live_prices():
     live = {}
-    meta_info = {}
     files = glob.glob("/tmp/live_prices_*.json")
-    if files:
-        for f in files:
+    if not files:
+        print("⚠️ Live price file not found.")
+        return live
+    for f in files:
+        try:
             with open(f) as fd:
                 live.update(json.load(fd))
-        print(f"✅ Loaded {len(live)} live prices from WebSocket.")
-        meta_info["source"] = "live"
-        meta_info["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    else:
-        print("⚠️ Live prices not found. Falling back to last close prices from historical data.")
-        with open("/root/falah-ai-bot/tokens.json") as f:
-            tokens = json.load(f)
-        for sym in tokens.keys():
-            daily_file = os.path.join(HIST_DIR, f"{sym}.csv")
-            if os.path.exists(daily_file):
-                df = pd.read_csv(daily_file)
-                if not df.empty:
-                    last_row = df.iloc[-1]
-                    last_close = last_row["close"]
-                    last_date = last_row["date"] if "date" in last_row else "N/A"
-                    token = str(tokens[sym])
-                    live[token] = last_close
-                    meta_info[token] = last_date
-        print(f"✅ Loaded {len(live)} fallback prices from historical files (with date).")
-        meta_info["source"] = "fallback"
-
-    return live, meta_info
+        except Exception as e:
+            print(f"⚠️ Error reading {f}: {e}")
+    return live
 
 # Load model once
 model = joblib.load("/root/falah-ai-bot/model.pkl")

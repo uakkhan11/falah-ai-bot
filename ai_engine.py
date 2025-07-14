@@ -1,12 +1,24 @@
 from datetime import datetime
 import pytz
+from ta.trend import ADXIndicator
 
 def calculate_ai_exit_score(stock_data, trailing_sl, current_price, atr_value=None):
     score = 0
     reasons = []
 
-    last = stock_data.iloc[-1]
+    
+    # --- Step 1: Calculate ADX dynamically ---
+    if "ADX" not in stock_data.columns:
+        adx_indicator = ADXIndicator(
+            high=stock_data["high"],
+            low=stock_data["low"],
+            close=stock_data["close"],
+            window=14
+        )
+        stock_data["ADX"] = adx_indicator.adx()
 
+    last = stock_data.iloc[-1]
+    
     # Use lowercase volume if needed
     volume_col = "Volume" if "Volume" in stock_data.columns else "volume"
     recent_vol = last[volume_col]

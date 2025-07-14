@@ -36,8 +36,27 @@ def load_all_live_prices():
         print(f"✅ Loaded {len(live)} fallback prices from historical files.")
     return live
 
+def get_current_holdings_positions_symbols(kite):
+    symbols = set()
+    try:
+        positions = kite.positions()
+        holdings = kite.holdings()
 
-# Load model once
+        # Extract symbols from positions
+        for p in positions['day'] + positions['net']:
+            if p['quantity'] != 0:
+                symbols.add(p['tradingsymbol'])
+
+        # Extract symbols from holdings
+        for h in holdings:
+            symbols.add(h['tradingsymbol'])
+
+        print(f"🚫 Skipping {len(symbols)} stocks already in positions/holdings.")
+    except Exception as e:
+        print(f"⚠️ Error fetching holdings/positions: {e}")
+
+    return symbols
+
 model = joblib.load("/root/falah-ai-bot/model.pkl")
 
 def run_smart_scan():
@@ -48,6 +67,8 @@ def run_smart_scan():
         tokens = json.load(f)
     token_to_symbol = {str(v): k for k, v in tokens.items()}
 
+    skip_symbols = get_current_holdings_positions_symbols(kite)
+
     print(f"\n✅ Loaded {len(live_prices)} live prices.")
 
     if not live_prices:
@@ -56,25 +77,23 @@ def run_smart_scan():
 
     results = []
 
-    # Process up to first 25 symbols
-    items = list(live_prices.items())[:25]
+    items = list(live_prices.items())
 
     for token, ltp in items:
         sym = token_to_symbol.get(str(token))
         if not sym:
-            print(f"⚠️ No symbol mapping for token {token}")
             continue
 
-        print(f"\n🔍 {sym} - Evaluating...")
+        if sym in skip_symbols:
+            print(f"🚫 {sym} skipped (already in portfolio).")
+            continue
 
         daily_file = os.path.join(HIST_DIR, f"{sym}.csv")
         if not os.path.exists(daily_file):
-            print(f"⚠️ Missing historical file for {sym}")
             continue
 
         daily_df = pd.read_csv(daily_file)
         if len(daily_df) < 21:
-            print(f"⚠️ Not enough historical data for {sym}")
             continue
 
         daily_df["SMA20"] = daily_df["close"].rolling(20).mean()

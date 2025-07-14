@@ -70,22 +70,17 @@ def fetch_all_historical():
 
 
 import yfinance as yf
+import pandas as pd
 import os
 
-# Define Yahoo Finance symbol for NIFTY 50 index
-nifty_symbol = "^NSEI"
+df = yf.download("^NSEI", start="2023-01-01")
+df.reset_index(inplace=True)
 
-# Download daily historical data (adjust date as needed)
-df = yf.download(nifty_symbol, start="2023-01-01", interval="1d")
+os.makedirs("/root/falah-ai-bot/historical_data", exist_ok=True)
+df.to_csv("/root/falah-ai-bot/historical_data/NIFTY.csv", index=False)
 
-# Create directory if not exists
-os.makedirs("historical_data", exist_ok=True)
+print("✅ Clean NIFTY.csv saved.")
 
-# Save to CSV
-csv_path = "historical_data/NIFTY.csv"
-df.to_csv(csv_path)
-
-print(f"✅ NIFTY index data saved to: {csv_path}")
 
 if __name__ == "__main__":
     fetch_all_historical()

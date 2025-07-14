@@ -12,6 +12,13 @@ import joblib
 import gc
 
 HIST_DIR = "/root/falah-ai-bot/historical_data/"
+LARGE_MID_CAP_FILE = "/root/falah-ai-bot/large_mid_cap.json"
+
+def load_large_mid_cap_symbols():
+    with open(LARGE_MID_CAP_FILE) as f:
+        symbols = json.load(f)
+    print(f"✅ Loaded {len(symbols)} Large/Mid Cap symbols.")
+    return set(symbols)
 
 def load_all_live_prices():
     live = {}
@@ -42,19 +49,15 @@ def get_current_holdings_positions_symbols(kite):
         positions = kite.positions()
         holdings = kite.holdings()
 
-        # Extract symbols from positions
         for p in positions['day'] + positions['net']:
             if p['quantity'] != 0:
                 symbols.add(p['tradingsymbol'])
-
-        # Extract symbols from holdings
         for h in holdings:
             symbols.add(h['tradingsymbol'])
 
         print(f"🚫 Skipping {len(symbols)} stocks already in positions/holdings.")
     except Exception as e:
         print(f"⚠️ Error fetching holdings/positions: {e}")
-
     return symbols
 
 model = joblib.load("/root/falah-ai-bot/model.pkl")
@@ -62,6 +65,7 @@ model = joblib.load("/root/falah-ai-bot/model.pkl")
 def run_smart_scan():
     kite = get_kite()
     live_prices = load_all_live_prices()
+    large_mid_symbols = load_large_mid_cap_symbols()
 
     with open("/root/falah-ai-bot/tokens.json") as f:
         tokens = json.load(f)
@@ -76,7 +80,6 @@ def run_smart_scan():
         return pd.DataFrame()
 
     results = []
-
     items = list(live_prices.items())
 
     for token, ltp in items:
@@ -86,6 +89,10 @@ def run_smart_scan():
 
         if sym in skip_symbols:
             print(f"🚫 {sym} skipped (already in portfolio).")
+            continue
+
+        if sym not in large_mid_symbols:
+            print(f"🚫 {sym} skipped (not in Large/Mid Cap list).")
             continue
 
         daily_file = os.path.join(HIST_DIR, f"{sym}.csv")

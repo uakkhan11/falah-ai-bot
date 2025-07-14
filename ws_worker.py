@@ -30,6 +30,7 @@ def write_to_file():
         json.dump(live_data, f)
     last_write_time = time.time()
     print(f"[{datetime.now()}] ✅ Live prices written: {len(live_data)} symbols.")
+    print(f"[{datetime.now()}] ✅ Prices saved to {output_file}")
 
 def clean_old_files():
     now = time.time()

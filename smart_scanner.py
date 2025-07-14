@@ -16,16 +16,26 @@ HIST_DIR = "/root/falah-ai-bot/historical_data/"
 def load_all_live_prices():
     live = {}
     files = glob.glob("/tmp/live_prices_*.json")
-    if not files:
-        print("⚠️ Live price file not found.")
-        return live
-    for f in files:
-        try:
+    if files:
+        for f in files:
             with open(f) as fd:
                 live.update(json.load(fd))
-        except Exception as e:
-            print(f"⚠️ Error reading {f}: {e}")
+        print(f"✅ Loaded {len(live)} live prices.")
+    else:
+        print("⚠️ Live prices not found. Loading last close prices from historical files.")
+        with open("/root/falah-ai-bot/tokens.json") as f:
+            tokens = json.load(f)
+        for sym in tokens.keys():
+            daily_file = os.path.join(HIST_DIR, f"{sym}.csv")
+            if os.path.exists(daily_file):
+                df = pd.read_csv(daily_file)
+                if not df.empty:
+                    last_close = df.iloc[-1]["close"]
+                    token = str(tokens[sym])
+                    live[token] = last_close
+        print(f"✅ Loaded {len(live)} fallback prices from historical files.")
     return live
+
 
 # Load model once
 model = joblib.load("/root/falah-ai-bot/model.pkl")

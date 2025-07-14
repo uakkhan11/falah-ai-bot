@@ -8,7 +8,7 @@ from datetime import datetime
 from io import BytesIO
 import camelot
 
-PDF_URL = "https://www.amfiindia.com/spages/AMFI%20Large%20Mid%20Cap%20Funds.pdf"
+PDF_URL = "https://www.amfiindia.com/Themes/Theme1/downloads/AverageMarketCapitalization30Jun2025.pdf"
 PDF_PATH = "/root/falah-ai-bot/amfi_large_midcap.pdf"
 OUTPUT_JSON = "/root/falah-ai-bot/large_mid_cap.json"
 

@@ -6,6 +6,9 @@ from datetime import datetime
 from io import BytesIO
 import camelot
 
+file_path = "/root/falah-ai-bot/amfi_large_midcap.pdf"
+tables = camelot.read_pdf(file_path, pages="all")
+
 # Output JSON file
 OUTPUT_JSON = "/root/falah-ai-bot/large_mid_cap.json"
 

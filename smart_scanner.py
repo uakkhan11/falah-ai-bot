@@ -107,21 +107,19 @@ def run_smart_scan():
         daily_df["EMA10"] = EMAIndicator(close=daily_df["close"], window=10).ema_indicator()
         daily_df["EMA21"] = EMAIndicator(close=daily_df["close"], window=21).ema_indicator()
         daily_df["RSI"] = RSIIndicator(close=daily_df["close"], window=14).rsi()
-
         atr = AverageTrueRange(
             high=daily_df["high"],
             low=daily_df["low"],
             close=daily_df["close"],
             window=14
         ).average_true_range().iloc[-1]
-
-        adx_indicator = ADXIndicator(
+        adx = ADXIndicator(
             high=daily_df["high"],
             low=daily_df["low"],
             close=daily_df["close"],
             window=14
-        )
-        daily_df["ADX"] = adx_indicator.adx()
+        ).adx().iloc[-1]
+        volume_change = daily_df["volume"].iloc[-1] / daily_df["volume"].rolling(10).mean().iloc[-1]
 
         last_daily = daily_df.iloc[-1]
         score, reasons = 0, []
@@ -142,11 +140,11 @@ def run_smart_scan():
             score += 1.0
             reasons.append(f"ATR {atr:.2f}")
 
-        if last_daily["ADX"] < 20:
+        if adx < 20:
             score -= 1.0
-            reasons.append(f"Weak trend (ADX {last_daily['ADX']:.1f})")
+            reasons.append(f"Weak trend (ADX {adx:.1f})")
 
-        if last_daily["volume"] > 1.2 * daily_df["volume"].rolling(10).mean().iloc[-1]:
+        if volume_change > 1.2:
             score += 2.0
             reasons.append("Volume breakout")
 
@@ -161,7 +159,7 @@ def run_smart_scan():
             last_daily["EMA10"],
             last_daily["EMA21"],
             atr,
-            last_daily["volume"] / daily_df["volume"].rolling(10).mean().iloc[-1]
+            volume_change
         ]]
         proba = model.predict_proba(features)[0][1]
         ai_score = proba * 5.0
@@ -175,9 +173,10 @@ def run_smart_scan():
             "CMP": ltp,
             "RSI": round(last_daily["RSI"], 2),
             "ATR": round(atr, 2),
-            "ADX": round(last_daily["ADX"], 2),
+            "ADX": round(adx, 2),
             "EMA10": round(last_daily["EMA10"], 2),
             "EMA21": round(last_daily["EMA21"], 2),
+            "VolumeChange": round(volume_change, 2),
             "Score": round(score, 2),
             "Reasons": ", ".join(reasons)
         })

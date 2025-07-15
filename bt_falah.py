@@ -49,75 +49,90 @@ class FalahStrategy(bt.Strategy):
         print(f"{dt} {txt}")
 
     def next(self):
-        dt = self.datetime.date()
-        if dt not in self.daily_pnl:
-            self.daily_pnl[dt] = 0
-            self.trade_count[dt] = 0
+    dt = self.datetime.date()
+    if dt not in self.daily_pnl:
+        self.daily_pnl[dt] = 0
+        self.trade_count[dt] = 0
 
-        for d in self.datas:
-            symbol = d._name
-            ind = self.indicators[symbol]
+    for d in self.datas:
+        symbol = d._name
+        ind = self.indicators[symbol]
 
-            if any(pd.isna(ind[key][0]) for key in ("rsi", "ema10", "ema21", "atr")):
+        # Skip NaN indicator values
+        if any(pd.isna(ind[key][0]) for key in ("rsi", "ema10", "ema21", "atr")):
+            self.log(f"{symbol}: Skipped due to NaN indicators")
+            continue
+
+        close = d.close[0]
+        rsi = ind["rsi"][0]
+        ema10 = ind["ema10"][0]
+        ema21 = ind["ema21"][0]
+        atr = ind["atr"][0]
+
+        if atr < self.p.min_atr:
+            self.log(f"{symbol}: Skipped due to ATR {atr:.2f} < {self.p.min_atr}")
+            continue
+
+        try:
+            vol_series = pd.Series(d.volume.get(size=10))
+            vol_mean = vol_series[:-1].mean()
+            vol_ratio = vol_series[-1] / (vol_mean + 1e-9) if vol_mean > 0 else 1.0
+        except Exception:
+            vol_ratio = 1.0
+
+        features_df = pd.DataFrame([{
+            "RSI": rsi,
+            "EMA10": ema10,
+            "EMA21": ema21,
+            "ATR": atr,
+            "VolumeChange": vol_ratio
+        }])
+
+        if not np.isfinite(features_df.values).all():
+            self.log(f"{symbol}: Skipped due to non-finite features")
+            continue
+
+        try:
+            prob = MODEL.predict_proba(features_df)[0][1]
+            ai_score = prob * 5
+        except Exception as e:
+            self.log(f"{symbol}: Skipped due to AI model error: {e}")
+            continue
+
+        self.last_ai_score[symbol] = ai_score
+        self.last_features[symbol] = features_df.iloc[0].to_dict()
+
+        ema_pass = ema10 > ema21
+        rsi_pass = rsi > 50
+        ai_pass = ai_score >= self.p.ai_threshold
+
+        self.log(f"{symbol}: close={close:.2f}, RSI={rsi:.2f}, EMA10={ema10:.2f}, EMA21={ema21:.2f}, ATR={atr:.2f}, VolChange={vol_ratio:.2f}, AI Prob={prob:.2f}, AI Score={ai_score:.2f}")
+
+        entry_signal = ema_pass and rsi_pass and ai_pass
+        pos = self.getposition(d).size
+
+        if entry_signal and not pos:
+            if self.trade_count[dt] >= self.p.max_trades_per_day:
+                self.log(f"{symbol}: Skipped due to max trades per day")
+                continue
+            if self.daily_pnl[dt] <= -self.p.max_daily_loss:
+                self.log(f"{symbol}: Skipped due to daily loss limit")
                 continue
 
-            close = d.close[0]
-            rsi = ind["rsi"][0]
-            ema10 = ind["ema10"][0]
-            ema21 = ind["ema21"][0]
-            atr = ind["atr"][0]
+            sl = close - self.p.atr_multiplier * atr
+            risk = self.p.risk_per_trade * self.broker.getvalue()
+            qty = int(risk / (close - sl)) if (close - sl) > 0 else 0
 
-            if atr < self.p.min_atr:
+            if qty <= 0:
+                self.log(f"{symbol}: Skipped due to invalid qty calc (SL too close)")
                 continue
 
-            try:
-                vol_series = pd.Series(d.volume.get(size=10))
-                vol_ratio = vol_series[-1] / (vol_series[:-1].mean() + 1e-9) if vol_series[:-1].mean() > 0 else 1.0
-            except Exception:
-                vol_ratio = 1.0
-
-            features = [[rsi, ema10, ema21, atr, vol_ratio]]
-            features_df = pd.DataFrame(features, columns=["RSI", "EMA10", "EMA21", "ATR", "VolumeChange"])
-
-            if not np.isfinite(features_df.values).all():
-                continue
-
-            try:
-                ai_score = MODEL.predict_proba(features_df)[0][1] * 5
-                ai_raw = ai_score / 5.0
-            except:
-                continue
-
-            self.last_ai_score[symbol] = ai_score
-            self.last_features[symbol] = features_df.iloc[0].to_dict()
-
-            ema_pass = ema10 > ema21
-            rsi_pass = rsi > 50
-            ai_pass = ai_score >= self.p.ai_threshold
-            entry_signal = ema_pass and rsi_pass and ai_pass
-
-            pos = self.getposition(d).size
-
-            if entry_signal and not pos:
-                if self.trade_count[dt] >= self.p.max_trades_per_day:
-                    continue
-                if self.daily_pnl[dt] <= -self.p.max_daily_loss:
-                    continue
-
-                sl = close - self.p.atr_multiplier * atr
-                tp = close + self.p.atr_multiplier * atr * 2
-                risk = self.p.risk_per_trade * self.broker.getvalue()
-                qty = int(risk / (close - sl)) if (close - sl) > 0 else 0
-                if qty <= 0:
-                    continue
-
-                self.buy(data=d, size=qty)
-                self.buy_price[symbol] = close
-                self.sl_price[symbol] = sl
-                self.tp_price[symbol] = tp
-                self.entry_bar[symbol] = len(self)
-                self.trade_count[dt] += 1
-                self.log(f"{symbol}: ✅ Buy qty={qty} SL={sl:.2f} TP={tp:.2f} AI={ai_score:.2f}")
+            self.buy(data=d, size=qty)
+            self.buy_price[symbol] = close
+            self.sl_price[symbol] = sl
+            self.entry_bar[symbol] = len(self)
+            self.trade_count[dt] += 1
+            self.log(f"{symbol}: ✅ BUY {qty} at {close:.2f}, SL {sl:.2f}, AI Score {ai_score:.2f}")
 
             if pos:
                 reason = None

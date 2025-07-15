@@ -232,6 +232,14 @@ risk_per_trade_pct = st.sidebar.slider(
     step=0.5
 ) / 100
 
+min_confidence = st.sidebar.slider(
+    "Minimum Confidence Threshold",
+    min_value=0.1,
+    max_value=1.0,
+    value=0.25,
+    step=0.05
+)
+
 # Auto Scanner
 st.subheader("🔍 Auto Scan for New Stocks")
 if st.button("Scan Stocks"):
@@ -279,8 +287,8 @@ if "scanned_data" in st.session_state:
             ai_score = round(confidence * 5, 2)
             st.write(f"Predicted success probability for {sym}: {confidence:.2f} (AI Score: {ai_score})")
 
-            if confidence < 0.6:
-                st.warning(f"Skipping {sym} due to low confidence.")
+           if confidence < min_confidence:
+                st.warning(f"Skipping {sym} due to low confidence ({confidence:.2f} < {min_confidence}).")
                 continue
 
             try:

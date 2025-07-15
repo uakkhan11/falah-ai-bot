@@ -275,7 +275,7 @@ if "scanned_data" in st.session_state:
             trailing_sl = compute_trailing_sl(cmp, atr)
             target_price = round(cmp + (cmp - trailing_sl) * 3, 2)
 
-            confidence = get_trade_probability(rsi, atr, adx, VolumeChange)
+            confidence = get_trade_probability(rsi, atr, adx, volumeChange)
             st.write(f"Predicted success probability for {sym}: {confidence:.2f}")
 
             if confidence < 0.6:

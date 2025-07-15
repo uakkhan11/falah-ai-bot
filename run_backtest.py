@@ -1,77 +1,92 @@
 import os
-import glob
 import pandas as pd
 import backtrader as bt
-from bt_falah import FalahStrategy
+from datetime import datetime
 
-# ─── CONFIG ───────────────────────────────────────────────
-RESULTS_DIR = "./backtest_results"
-DATA_DIR = "/root/falah-ai-bot/historical_data"
-os.makedirs(RESULTS_DIR, exist_ok=True)
+HIST_DIR = "/root/falah-ai-bot/historical_data/"
 
-# ─── Initialize Cerebro ───────────────────────────────────
-cerebro = bt.Cerebro()
-cerebro.broker.setcash(1_000_000)
-cerebro.broker.setcommission(commission=0.0005)
+class SimpleStrategy(bt.Strategy):
+    def __init__(self):
+        self.rsi = bt.indicators.RSI(self.data.close, period=14)
+        self.ema10 = bt.indicators.EMA(self.data.close, period=10)
+        self.ema21 = bt.indicators.EMA(self.data.close, period=21)
 
-# ─── Load All Data manually ───────────────────────────────
-csv_files = glob.glob(os.path.join(DATA_DIR, "*.csv"))
-if not csv_files:
-    raise FileNotFoundError("No CSV files found in historical_data folder.")
-
-print(f"✅ Found {len(csv_files)} CSV files.")
-
-loaded_files = 0
-
-for csv_file in csv_files:
-    df = pd.read_csv(csv_file, parse_dates=["date"])
-    df["date"] = df["date"].dt.tz_localize(None)
-
-    # Skip empty or bad files
-    if df.shape[0] < 100:
-        print(f"⚠️ {os.path.basename(csv_file)} skipped (too few rows: {df.shape[0]})")
-        continue
-    if df["close"].nunique() == 1:
-        print(f"⚠️ {os.path.basename(csv_file)} skipped (constant price)")
-        continue
-    if df["close"].isna().all():
-        print(f"⚠️ {os.path.basename(csv_file)} skipped (all NaNs)")
-        continue
-
-    df = df.sort_values("date")
-
-    # 🚀 Set date as index (THIS IS THE FIX)
-    df = df.set_index("date")
-
-    data = bt.feeds.PandasData(
-        dataname=df,
-        timeframe=bt.TimeFrame.Minutes,
-        compression=60  # 1-hour bars
-    )
-
-    symbol = os.path.basename(csv_file).replace(".csv", "")
-    cerebro.adddata(data, name=symbol)
-    loaded_files += 1
-
-
-print(f"✅ Loaded {loaded_files} valid DataFrames into Backtrader.")
-print("🚀 Starting Backtest...")
-
-# ─── Add Strategy ────────────────────────────────────────
-cerebro.addstrategy(FalahStrategy)
-
-print("\n✅ Verifying all feeds before running Backtest...")
-for data in cerebro.datas:
-    df = data.p.dataname
-    if isinstance(df, pd.DataFrame):
-        first = df.index[0]
-        if not pd.api.types.is_datetime64_any_dtype(pd.Series([first])):
-            print("❌ INVALID DATETIME in", data._name, ":", type(first), first)
+    def next(self):
+        if not self.position:
+            if self.rsi < 30 and self.ema10 > self.ema21:
+                self.buy()
         else:
-            print("✅", data._name, "ok.")
+            if self.rsi > 70 or self.ema10 < self.ema21:
+                self.close()
 
+def load_csv_file(csv_file):
+    # Quick header validation before loading the entire file
+    try:
+        df_head = pd.read_csv(csv_file, nrows=1)
+        if 'date' not in df_head.columns:
+            print(f"❌ Skipping {csv_file} (missing 'date' column)")
+            return None
+    except Exception as e:
+        print(f"❌ Error reading {csv_file}: {e}")
+        return None
 
-# ─── Run Backtest ────────────────────────────────────────
-print("Starting Portfolio Value:", cerebro.broker.getvalue())
-results = cerebro.run()
-print("Ending Portfolio Value:", cerebro.broker.getvalue())
+    try:
+        df = pd.read_csv(csv_file, parse_dates=["date"])
+        df = df.dropna(subset=["date", "close", "open", "high", "low", "volume"])
+        df = df.sort_values("date")
+        return df
+    except Exception as e:
+        print(f"❌ Failed to process {csv_file}: {e}")
+        return None
+
+if __name__ == "__main__":
+    cerebro = bt.Cerebro()
+    cerebro.addstrategy(SimpleStrategy)
+
+    csv_files = [os.path.join(HIST_DIR, f) for f in os.listdir(HIST_DIR) if f.endswith(".csv")]
+    print(f"✅ Found {len(csv_files)} CSV files.")
+
+    valid_count = 0
+
+    for csv_file in csv_files:
+        df = load_csv_file(csv_file)
+        if df is None or df.empty:
+            continue
+
+        data = bt.feeds.PandasData(
+            dataname=df,
+            datetime="date",
+            open="open",
+            high="high",
+            low="low",
+            close="close",
+            volume="volume",
+            openinterest=None,
+        )
+        cerebro.adddata(data)
+        valid_count += 1
+
+    print(f"✅ Loaded {valid_count} valid CSV files into Backtrader.")
+
+    if valid_count == 0:
+        print("⚠️ No valid data files found. Exiting.")
+        exit()
+
+    cerebro.broker.set_cash(100000)
+    cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
+    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
+
+    print("✅ Starting backtest...")
+    results = cerebro.run()
+    strat = results[0]
+
+    print(f"🏁 Final Portfolio Value: ₹{cerebro.broker.getvalue():.2f}")
+
+    sharpe = strat.analyzers.sharpe.get_analysis()
+    print(f"📊 Sharpe Ratio: {sharpe.get('sharperatio', 'N/A')}")
+
+    trades = strat.analyzers.trades.get_analysis()
+    print(f"📈 Total Trades: {trades.total.closed if 'total' in trades and 'closed' in trades.total else 'N/A'}")
+
+    # Uncomment to visualize
+    # cerebro.plot()

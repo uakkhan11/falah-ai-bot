@@ -12,12 +12,23 @@ class SimpleStrategy(bt.Strategy):
         self.ema21 = bt.indicators.EMA(self.data.close, period=21)
 
     def next(self):
+        date = self.datetime.date(0)
+        rsi_val = self.rsi[0]
+        ema10_val = self.ema10[0]
+        ema21_val = self.ema21[0]
+        close_price = self.data.close[0]
+    
+        print(f"{date} | Close: {close_price:.2f} | RSI: {rsi_val:.2f} | EMA10: {ema10_val:.2f} | EMA21: {ema21_val:.2f}")
+    
         if not self.position:
-            if self.rsi < 30 and self.ema10 > self.ema21:
+            if rsi_val < 30 and ema10_val > ema21_val:
+                print(f"{date} | 📈 BUY triggered | RSI={rsi_val:.2f}, EMA10={ema10_val:.2f}, EMA21={ema21_val:.2f}")
                 self.buy()
         else:
-            if self.rsi > 70 or self.ema10 < self.ema21:
+            if rsi_val > 70 or ema10_val < ema21_val:
+                print(f"{date} | 📉 SELL triggered | RSI={rsi_val:.2f}, EMA10={ema10_val:.2f}, EMA21={ema21_val:.2f}")
                 self.close()
+
 
 def load_csv_file(csv_file):
     # Quick header validation before loading the entire file

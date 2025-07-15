@@ -287,7 +287,7 @@ if "scanned_data" in st.session_state:
             ai_score = round(confidence * 5, 2)
             st.write(f"Predicted success probability for {sym}: {confidence:.2f} (AI Score: {ai_score})")
 
-           if confidence < min_confidence:
+            if confidence < min_confidence:
                 st.warning(f"Skipping {sym} due to low confidence ({confidence:.2f} < {min_confidence}).")
                 continue
 

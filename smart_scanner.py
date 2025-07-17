@@ -14,6 +14,8 @@ import gc
 HIST_DIR = "/root/falah-ai-bot/historical_data/"
 LARGE_MID_CAP_FILE = "/root/falah-ai-bot/large_mid_cap.json"
 
+model = joblib.load("/root/falah-ai-bot/model.pkl")
+
 def load_large_mid_cap_symbols():
     with open(LARGE_MID_CAP_FILE) as f:
         symbols = json.load(f)
@@ -60,8 +62,6 @@ def get_current_holdings_positions_symbols(kite):
         print(f"⚠️ Error fetching holdings/positions: {e}")
     return symbols
 
-model = joblib.load("/root/falah-ai-bot/model.pkl")
-
 def run_smart_scan():
     kite = get_kite()
     live_prices = load_all_live_prices()
@@ -80,19 +80,9 @@ def run_smart_scan():
         return pd.DataFrame()
 
     results = []
-    items = list(live_prices.items())
-
-    for token, ltp in items:
+    for token, ltp in live_prices.items():
         sym = token_to_symbol.get(str(token))
-        if not sym:
-            continue
-
-        if sym in skip_symbols:
-            print(f"🚫 {sym} skipped (already in portfolio).")
-            continue
-
-        if sym not in large_mid_symbols:
-            print(f"🚫 {sym} skipped (not in Large/Mid Cap list).")
+        if not sym or sym in skip_symbols or sym not in large_mid_symbols:
             continue
 
         daily_file = os.path.join(HIST_DIR, f"{sym}.csv")
@@ -103,80 +93,57 @@ def run_smart_scan():
         if len(daily_df) < 21:
             continue
 
-        daily_df["SMA20"] = daily_df["close"].rolling(20).mean()
         daily_df["EMA10"] = EMAIndicator(close=daily_df["close"], window=10).ema_indicator()
         daily_df["EMA21"] = EMAIndicator(close=daily_df["close"], window=21).ema_indicator()
         daily_df["RSI"] = RSIIndicator(close=daily_df["close"], window=14).rsi()
         atr = AverageTrueRange(
-            high=daily_df["high"],
-            low=daily_df["low"],
-            close=daily_df["close"],
-            window=14
+            high=daily_df["high"], low=daily_df["low"], close=daily_df["close"], window=14
         ).average_true_range().iloc[-1]
         adx = ADXIndicator(
-            high=daily_df["high"],
-            low=daily_df["low"],
-            close=daily_df["close"],
-            window=14
+            high=daily_df["high"], low=daily_df["low"], close=daily_df["close"], window=14
         ).adx().iloc[-1]
-        volume_change = daily_df["volume"].iloc[-1] / daily_df["volume"].rolling(10).mean().iloc[-1]
+        volume_change = daily_df["volume"].iloc[-1] / (daily_df["volume"].rolling(10).mean().iloc[-1] + 1e-9)
 
-        last_daily = daily_df.iloc[-1]
-        score, reasons = 0, []
+        last = daily_df.iloc[-1]
+        rsi = last["RSI"]
+        ema10 = last["EMA10"]
+        ema21 = last["EMA21"]
 
-        if ltp > last_daily["SMA20"]:
-            score += 1.5
-            reasons.append("Above SMA20")
+        if not (40 <= rsi <= 70):
+            print(f"❌ {sym} skipped due to RSI {rsi:.2f}")
+            continue
 
-        if last_daily["EMA10"] > last_daily["EMA21"]:
-            score += 1.2
+        features = [[rsi, ema10, ema21, atr, volume_change]]
+        ai_score = model.predict_proba(features)[0][1] * 5
+
+        # Strict filter: 40-65 RSI accepted, 65-70 only if high AI score
+        if 65 < rsi <= 70 and ai_score < 1.5:
+            print(f"❌ {sym} skipped RSI {rsi:.2f} AI {ai_score:.2f}")
+            continue
+
+        score = ai_score
+        reasons = [f"AI Score {ai_score:.2f}"]
+
+        if ema10 > ema21:
+            score += 1.0
             reasons.append("EMA10 > EMA21")
-
-        if last_daily["RSI"] > 55:
-            score += 0.8
-            reasons.append(f"RSI {last_daily['RSI']:.1f}")
-
-        if atr and atr > 1.0:
+        if volume_change > 1.2:
+            score += 1.0
+            reasons.append("Volume Spike")
+        if atr > 1.0:
             score += 1.0
             reasons.append(f"ATR {atr:.2f}")
-
-        if adx < 20:
-            score -= 1.0
-            reasons.append(f"Weak trend (ADX {adx:.1f})")
-
-        if volume_change > 1.2:
-            score += 2.0
-            reasons.append("Volume breakout")
-
-        prev_close = daily_df["close"].iloc[-2]
-        today_open = last_daily["open"]
-        if today_open > prev_close * 1.02:
-            score += 1.5
-            reasons.append("Gap up")
-
-        features = [[
-            last_daily["RSI"],
-            last_daily["EMA10"],
-            last_daily["EMA21"],
-            atr,
-            volume_change
-        ]]
-        proba = model.predict_proba(features)[0][1]
-        ai_score = proba * 5.0
-        score += ai_score
-        reasons.append(f"AI Score {ai_score:.2f}")
-
-        print(f"👉 {sym} | Score: {score:.2f} | Reasons: {reasons}")
 
         results.append({
             "Symbol": sym,
             "CMP": ltp,
-            "RSI": round(last_daily["RSI"], 2),
+            "RSI": round(rsi, 2),
+            "EMA10": round(ema10, 2),
+            "EMA21": round(ema21, 2),
             "ATR": round(atr, 2),
             "ADX": round(adx, 2),
-            "EMA10": round(last_daily["EMA10"], 2),
-            "EMA21": round(last_daily["EMA21"], 2),
             "VolumeChange": round(volume_change, 2),
+            "AI_Score": round(ai_score, 2),
             "Score": round(score, 2),
             "Reasons": ", ".join(reasons)
         })
@@ -185,9 +152,9 @@ def run_smart_scan():
         gc.collect()
 
     df = pd.DataFrame(results)
-    if df.empty:
-        print("⚠️ No stocks matched ANY criteria.")
-        return df
+    df = df.sort_values(by="Score", ascending=False)
+    print(df)
+    return df
 
     df = df.sort_values(by="Score", ascending=False)
     print("✅ Final scan results:")

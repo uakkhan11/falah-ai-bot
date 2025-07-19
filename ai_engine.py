@@ -1,92 +1,101 @@
-from datetime import datetime
-import pytz
-from ta.trend import ADXIndicator
+# ai_engine.py
 
-def calculate_ai_exit_score(stock_data, trailing_sl, current_price, atr_value=None):
-    score = 0
-    reasons = []
+import pandas as pd
+import joblib
+from ta.momentum import RSIIndicator
+from ta.trend import EMAIndicator
+from ta.volatility import AverageTrueRange
 
-    # Calculate ADX if missing
-    if "ADX" not in stock_data.columns:
-        adx_indicator = ADXIndicator(
-            high=stock_data["high"],
-            low=stock_data["low"],
-            close=stock_data["close"],
-            window=14
-        )
-        stock_data["ADX"] = adx_indicator.adx()
 
-    last = stock_data.iloc[-1]
-    
-    # Flexible volume column handling
-    volume_col = None
-    for col in ["Volume", "volume"]:
-        if col in stock_data.columns:
-            volume_col = col
-            break
-    
-    if volume_col:
-        recent_vol = last[volume_col]
-        avg_vol = stock_data[volume_col].tail(10).mean()
-    else:
-        recent_vol = avg_vol = None
+# Load your pre-trained AI model (ensure model.pkl exists in your directory)
+try:
+    model = joblib.load("model.pkl")
+except Exception as e:
+    print(f"⚠️ AI Model load failed: {e}")
+    model = None
 
-    # 1. Trailing Stop Loss
-    if current_price < trailing_sl:
-        drop_pct = (trailing_sl - current_price) / trailing_sl
-        penalty = int(drop_pct * 100)
-        score -= penalty
-        reasons.append(f"Trailing SL hit (-{penalty} pts)")
 
-    # 2. Supertrend
-    if "Supertrend" in last and current_price < last["Supertrend"]:
-        score -= 25
-        reasons.append("Supertrend reversal")
+def extract_features(df):
+    """
+    Extracts features required by the AI model from the latest data.
+    Features: RSI, ATR, EMA10, EMA21, Volume Change %
+    """
+    if len(df) < 22:
+        raise ValueError("Not enough data for feature extraction (minimum 22 rows required).")
 
-    # 3. Volume drop
-    if recent_vol is not None and recent_vol < 0.7 * avg_vol:
-        score -= 10
-        reasons.append("Volume drop")
+    df = df.copy()
 
-    # 4. Bearish candle
-    if last["close"] < last["open"] and (last["open"] - last["close"]) > 0.005 * last["open"]:
-        score -= 15
-        reasons.append("Bearish candle")
+    # RSI 14
+    df["rsi"] = RSIIndicator(close=df["close"], window=14).rsi()
 
-    # 5. High-volume bearish candle
-    if recent_vol is not None and recent_vol > 1.5 * avg_vol and last["close"] < last["open"]:
-        score -= 15
-        reasons.append("High-volume bearish candle")
+    # ATR 14
+    df["atr"] = AverageTrueRange(
+        high=df["high"],
+        low=df["low"],
+        close=df["close"],
+        window=14
+    ).average_true_range()
 
-    # 6. End of day penalty
-    now = datetime.now(pytz.timezone("Asia/Kolkata"))
-    if now.hour == 15:
-        score -= 20
-        reasons.append("End of day exit window")
+    # EMA 10 and EMA 21
+    df["ema_10"] = EMAIndicator(close=df["close"], window=10).ema_indicator()
+    df["ema_21"] = EMAIndicator(close=df["close"], window=21).ema_indicator()
 
-    # 7. Strong bullish close
-    if last["close"] > last["open"] and (last["close"] - last["open"]) > 0.01 * last["open"]:
-        score += 10
-        reasons.append("Strong bullish close")
+    # Volume Change %
+    df["vol_change"] = df["volume"].pct_change() * 100
 
-    # 8. ADX weak trend detection
-    adx_col = "ADX_14" if "ADX_14" in stock_data.columns else ("ADX" if "ADX" in stock_data.columns else None)
-    if adx_col and stock_data[adx_col].iloc[-1] < 20:
-        score -= 10
-        reasons.append("Weak trend (low ADX)")
+    # Extract latest row features
+    last_row = df.iloc[-1]
+    features = [
+        last_row["rsi"],
+        last_row["atr"],
+        last_row["ema_10"],
+        last_row["ema_21"],
+        last_row["vol_change"]
+    ]
 
-    # 9. ATR proximity to trailing SL
-    if atr_value:
-        atr_distance = abs(current_price - trailing_sl) / atr_value
-        if atr_distance < 0.5:
-            score -= 10
-            reasons.append("Price near trailing SL")
+    return features
 
-    # 10. Gap down open
-    if len(stock_data) >= 2:
-        gap_pct = (last["open"] - stock_data["close"].iloc[-2]) / stock_data["close"].iloc[-2]
-        if gap_pct < -0.01:
-            score -= 10
-            reasons.append("Gap down open")
 
-    return score, reasons
+def get_ai_score(df):
+    """
+    Returns AI score (probability) for the latest candle.
+    """
+    if model is None:
+        print("⚠️ AI model not loaded, returning score 0")
+        return 0.0
+
+    try:
+        features = extract_features(df)
+        input_data = pd.DataFrame([features], columns=["rsi", "atr", "ema_10", "ema_21", "vol_change"])
+        score = model.predict_proba(input_data)[0][1]  # Assuming binary classifier, take probability of class 1
+        return float(score)
+    except Exception as e:
+        print(f"⚠️ AI score calculation failed: {e}")
+        return 0.0
+
+
+def get_ai_score_debug(df):
+    """
+    Returns AI score with debug information for inspection.
+    """
+    if model is None:
+        return 0.0, {}
+
+    try:
+        features = extract_features(df)
+        input_data = pd.DataFrame([features], columns=["rsi", "atr", "ema_10", "ema_21", "vol_change"])
+        score = model.predict_proba(input_data)[0][1]
+        debug_info = {
+            "RSI": round(features[0], 2),
+            "ATR": round(features[1], 2),
+            "EMA10": round(features[2], 2),
+            "EMA21": round(features[3], 2),
+            "VolChange%": round(features[4], 2),
+            "AI_Score": round(score, 4)
+        }
+        return float(score), debug_info
+    except Exception as e:
+        print(f"⚠️ AI debug score calculation failed: {e}")
+        return 0.0, {}
+
+

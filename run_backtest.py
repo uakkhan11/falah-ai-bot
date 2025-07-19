@@ -9,7 +9,7 @@ large_mid_cap_file = "large_mid_cap.json"
 
 # Load Large and Mid Cap symbols
 with open(large_mid_cap_file) as f:
-    large_mid_symbols = set(pd.read_json(f)["symbol"].tolist())
+    large_mid_symbols = set(pd.read_json(f).tolist())
 
 class AIStrategy(bt.Strategy):
     def __init__(self):

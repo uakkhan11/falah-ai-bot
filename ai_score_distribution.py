@@ -37,14 +37,14 @@ def process_symbol(symbol):
 
     scores = []
     for idx, row in df.iterrows():
-        features = [[
-            row["RSI"],
-            row["EMA10"],
-            row["EMA21"],
-            row["ATR"],
-            row["VolumeChange"]
-        ]]
-        prob = model.predict_proba(features)[0][1]
+        features = pd.DataFrame([{
+            "RSI": row["RSI"],
+            "EMA10": row["EMA10"],
+            "EMA21": row["EMA21"],
+            "ATR": row["ATR"],
+            "VolumeChange": row["VolumeChange"]
+        }])
+        proba = model.predict_proba(features)[0][1]
         scores.append(prob)
     return scores
 

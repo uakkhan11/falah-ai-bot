@@ -48,7 +48,7 @@ for file in symbol_files:
             df.rename(columns={'date': 'datetime'}, inplace=True)
         df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
         df.dropna(subset=['datetime'], inplace=True)
-        df = df[df['datetime'] >= start_date]
+        df = df[df['datetime'] >= pd.to_datetime(start_date).tz_localize('Asia/Kolkata')]
 
         if len(df) < min_rows_required:
             print(f"⚠️ Skipping {file}: Not enough recent data")

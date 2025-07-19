@@ -28,13 +28,23 @@ symbols = [os.path.splitext(f)[0] for f in csv_files]
 print(f"✅ Total symbols loaded from historical_data: {len(symbols)}")
 
 total_trades = 0
+valid_symbols = 0
 
 for symbol in symbols:
     file_path = os.path.join(historical_data_folder, f"{symbol}.csv")
-    df = pd.read_csv(file_path, parse_dates=['datetime'])
 
-    if df.empty:
-        print(f"⚠️ Skipping {symbol}: Empty data")
+    try:
+        df = pd.read_csv(file_path)
+        if 'datetime' not in df.columns:
+            print(f"⚠️ Skipping {symbol}: Missing datetime column")
+            continue
+        df['datetime'] = pd.to_datetime(df['datetime'])
+    except Exception as e:
+        print(f"⚠️ Skipping {symbol}: Error loading CSV -> {e}")
+        continue
+
+    if df.empty or len(df) < 50:
+        print(f"⚠️ Skipping {symbol}: Not enough data ({len(df)} rows)")
         continue
 
     df.dropna(inplace=True)
@@ -61,13 +71,16 @@ for symbol in symbols:
     cerebro.run()
     final_value = cerebro.broker.getvalue()
 
+    valid_symbols += 1
+
     if final_value != initial_value:
         total_trades += 1
         print(f"✅ {symbol} - PnL: {round(final_value - initial_value, 2)}")
     else:
         print(f"❌ {symbol} - No trades executed")
 
-print("===== FINAL SUMMARY =====")
-print(f"Total Symbols Backtested: {len(symbols)}")
+print("\n===== FINAL SUMMARY =====")
+print(f"Total Symbols Attempted: {len(symbols)}")
+print(f"Valid Symbols Backtested: {valid_symbols}")
 print(f"Total Trades Executed: {total_trades}")
 print("===== END =====")

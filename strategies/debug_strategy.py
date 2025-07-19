@@ -17,8 +17,8 @@ class DebugStrategy(bt.Strategy):
 
         if not self.position:
             reasons = []
-            if rsi_val < 35:
-                reasons.append(f"RSI {rsi_val:.2f} < 35")
+            if rsi_val >= 35:
+                reasons.append(f"RSI {rsi_val:.2f} >= 35")
             if ema10_val <= ema21_val:
                 reasons.append(f"EMA10 {ema10_val:.2f} <= EMA21 {ema21_val:.2f}")
             if reasons:
@@ -26,13 +26,6 @@ class DebugStrategy(bt.Strategy):
             else:
                 print(f"{date} ✅ BUY triggered")
                 self.buy()
-        else:
-                reasons = []
-                if rsi_val >= 35:
-                    reasons.append(f"RSI {rsi_val:.2f} >= 35")
-                if ema10_val <= ema21_val:
-                    reasons.append(f"EMA10 {ema10_val:.2f} <= EMA21 {ema21_val:.2f}")
-                    print(f"{date} ❌ Skipping BUY | Reasons: {', '.join(reasons)}")
         else:
             if rsi_val > 70 or ema10_val < ema21_val:
                 print(f"{date} ✅ SELL triggered | RSI={rsi_val:.2f}, EMA10={ema10_val:.2f}, EMA21={ema21_val:.2f}")

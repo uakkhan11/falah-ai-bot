@@ -5,82 +5,56 @@ import pandas as pd
 import backtrader as bt
 from datetime import datetime
 
-# ===== Strategy Placeholder =====
-class AIStrategy(bt.Strategy):
+class SimpleStrategy(bt.Strategy):
     def __init__(self):
-        self.rsi = bt.indicators.RSI(self.data.close, period=14)
-        self.ema10 = bt.indicators.EMA(self.data.close, period=10)
-        self.ema21 = bt.indicators.EMA(self.data.close, period=21)
+        self.rsi = bt.indicators.RSI_SMA(self.data.close, period=14)
 
     def next(self):
-        if self.position:
-            if self.rsi < 40:
-                self.close()
-        else:
-            if 35 < self.rsi < 65 and self.ema10 > self.ema21:
-                self.buy()
+        if not self.position and self.rsi < 30:
+            self.buy()
+        elif self.position and self.rsi > 70:
+            self.sell()
 
-# ===== Backtest Runner =====
-historical_data_folder = './historical_data'
-csv_files = [f for f in os.listdir(historical_data_folder) if f.endswith('.csv')]
-symbols = [os.path.splitext(f)[0] for f in csv_files]
+historical_data_path = '/root/falah-ai-bot/historical_data'
+files = [f for f in os.listdir(historical_data_path) if f.endswith('.csv')]
 
-print(f"✅ Total symbols loaded from historical_data: {len(symbols)}")
+print(f"✅ Total symbols loaded from historical_data: {len(files)}")
 
-total_trades = 0
-valid_symbols = 0
+symbols_attempted = 0
+symbols_valid = 0
 
-for symbol in symbols:
-    file_path = os.path.join(historical_data_folder, f"{symbol}.csv")
+cerebro = bt.Cerebro()
+cerebro.broker.set_cash(1000000)
+
+for file in files:
+    symbols_attempted += 1
+    symbol = file.replace('.csv', '')
+    file_path = os.path.join(historical_data_path, file)
 
     try:
-        df = pd.read_csv(file_path)
-        if 'datetime' not in df.columns:
-            print(f"⚠️ Skipping {symbol}: Missing datetime column")
-            continue
+        cols = ['datetime', 'open', 'high', 'low', 'close', 'volume']
+        df = pd.read_csv(file_path, names=cols, header=None)
+
         df['datetime'] = pd.to_datetime(df['datetime'])
+
+        if df.empty or 'datetime' not in df.columns:
+            print(f"⚠️ Skipping {symbol}: Invalid or empty data")
+            continue
+
+        df.set_index('datetime', inplace=True)
+        data = bt.feeds.PandasData(dataname=df)
+
+        cerebro.adddata(data, name=symbol)
+        symbols_valid += 1
+
     except Exception as e:
-        print(f"⚠️ Skipping {symbol}: Error loading CSV -> {e}")
+        print(f"⚠️ Skipping {symbol}: Error reading CSV -> {e}")
         continue
 
-    if df.empty or len(df) < 50:
-        print(f"⚠️ Skipping {symbol}: Not enough data ({len(df)} rows)")
-        continue
+print(f"===== FINAL SUMMARY =====")
+print(f"Total Symbols Attempted: {symbols_attempted}")
+print(f"Valid Symbols Backtested: {symbols_valid}")
 
-    df.dropna(inplace=True)
-
-    data = bt.feeds.PandasData(
-        dataname=df,
-        datetime='datetime',
-        open='open',
-        high='high',
-        low='low',
-        close='close',
-        volume='volume',
-        openinterest=-1
-    )
-
-    cerebro = bt.Cerebro()
-    cerebro.addstrategy(AIStrategy)
-    cerebro.adddata(data)
-    cerebro.broker.setcash(100000)
-    cerebro.addsizer(bt.sizers.FixedSize, stake=10)
-
-    print(f"▶️ Running backtest for {symbol}")
-    initial_value = cerebro.broker.getvalue()
-    cerebro.run()
-    final_value = cerebro.broker.getvalue()
-
-    valid_symbols += 1
-
-    if final_value != initial_value:
-        total_trades += 1
-        print(f"✅ {symbol} - PnL: {round(final_value - initial_value, 2)}")
-    else:
-        print(f"❌ {symbol} - No trades executed")
-
-print("\n===== FINAL SUMMARY =====")
-print(f"Total Symbols Attempted: {len(symbols)}")
-print(f"Valid Symbols Backtested: {valid_symbols}")
-print(f"Total Trades Executed: {total_trades}")
-print("===== END =====")
+results = cerebro.run()
+cerebro.broker.get_value()
+print(f"===== END =====")

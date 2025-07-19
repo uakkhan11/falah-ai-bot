@@ -33,13 +33,15 @@ class SimpleStrategy(bt.Strategy):
 def load_csv_file(csv_file):
     # Quick header validation before loading the entire file
     try:
-        if df is None or df.empty:
-            print(f"⚠️ Skipping {csv_file} due to empty or invalid data.")
-            continue
-
-        if len(df) < 100:
-            print(f"⚠️ Skipping {csv_file}, not enough data ({len(df)} rows). Need at least 100 rows for indicators.")
-            continue
+        for csv_file in csv_files:
+            df = load_csv_file(csv_file)
+            if df is None or df.empty:
+                print(f"⚠️ Skipping {csv_file} due to empty or invalid data.")
+                continue
+    
+            if len(df) < 100:
+                print(f"⚠️ Skipping {csv_file}, not enough data ({len(df)} rows). Need at least 100 rows for indicators.")
+                continue
         
         df_head = pd.read_csv(csv_file, nrows=1)
         if 'date' not in df_head.columns:

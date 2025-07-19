@@ -100,4 +100,6 @@ if __name__ == "__main__":
     print(f"📊 Sharpe Ratio: {sharpe.get('sharperatio', 'N/A')}")
 
     trades = strat.analyzers.trades.get_analysis()
-    print(f"📈 Total Trades: {trades.total.closed if trades.total.closed else 'N/A'}")
+    total_closed = trades.get('total', {}).get('closed', 0)
+    print(f"📈 Total Trades: {total_closed}")
+

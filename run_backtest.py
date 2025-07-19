@@ -1,69 +1,63 @@
 import backtrader as bt
 import pandas as pd
-import os
-import glob
-from datetime import datetime
+import os, json
+from indicators import add_indicators
+from ai_engine import get_ai_score
 
 class DebugStrategy(bt.Strategy):
     def __init__(self):
-        self.rsi = bt.indicators.RSI(self.data.close)
+        add_indicators(self)
 
     def log(self, txt):
         dt = self.datas[0].datetime.date(0)
-        print(f'{dt.isoformat()}, {txt}')
+        print(f'{dt}, {txt}')
 
     def next(self):
-        if self.rsi[0] < 30:
-            self.log(f'BUY CREATE {self.data.close[0]:.2f}, RSI={self.rsi[0]:.2f}')
+        rsi = self.rsi[0]
+        ema10 = self.ema10[0]
+        ema21 = self.ema21[0]
+        close = self.data.close[0]
+        ai_score = get_ai_score({
+            'rsi': rsi,
+            'ema10': ema10,
+            'ema21': ema21,
+            'close': close,
+            'atr': self.atr[0],
+            'volume_change': self.volume_change[0]
+        })
+
+        reason = []
+        if rsi < 35 or rsi > 70:
+            reason.append(f"RSI={rsi:.2f}")
+        if ema10 < ema21:
+            reason.append(f"EMA10={ema10:.2f} < EMA21={ema21:.2f}")
+        if ai_score < 0.25:
+            reason.append(f"AI_Score={ai_score:.2f}")
+
+        if reason:
+            self.log(f"NO TRADE: {', '.join(reason)}")
+        else:
+            self.log(f"BUY CREATE {close:.2f}, AI_Score={ai_score:.2f}, RSI={rsi:.2f}, EMA10={ema10:.2f}, EMA21={ema21:.2f}")
             self.buy()
-        elif self.rsi[0] > 70:
-            self.log(f'SELL CREATE {self.data.close[0]:.2f}, RSI={self.rsi[0]:.2f}')
-            self.sell()
 
-cerebro = bt.Cerebro()
-cerebro.broker.set_cash(100000)
+if __name__ == "__main__":
+    folder = '/root/falah-ai-bot/historical_data/'
+    large_mid_cap = json.load(open('/root/falah-ai-bot/large_mid_cap.json'))
 
-symbols = []
-total_trades = 0
-symbol_win_rate = {}
+    cerebro = bt.Cerebro()
+    symbol_count, trade_count = 0, 0
 
-for filepath in glob.glob('data/*.csv'):
-    symbol = os.path.basename(filepath).replace('.csv', '')
-    print(f'\n=== Running backtest for {symbol} ===')
-    try:
-        df = pd.read_csv(filepath)
-        if len(df) < 100:
-            print(f'Skipping {symbol}, insufficient data.')
+    for file in os.listdir(folder):
+        symbol = file.replace('.csv', '')
+        if symbol not in large_mid_cap:
             continue
-
-        df['datetime'] = pd.to_datetime(df['date'])
-        df.set_index('datetime', inplace=True)
-        df = df[['open', 'high', 'low', 'close', 'volume']]
-
+        df = pd.read_csv(folder + file)
+        if len(df) < 100:
+            continue
         data = bt.feeds.PandasData(dataname=df)
-        cerebro.adddata(data, name=symbol)
+        cerebro.adddata(data)
+        symbol_count += 1
 
-    except Exception as e:
-        print(f'Skipping {symbol}, error: {e}')
-        continue
-    symbols.append(symbol)
-
-cerebro.addstrategy(DebugStrategy)
-cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trade_analyzer")
-
-print(f"\nTotal symbols loaded: {len(symbols)}")
-results = cerebro.run()
-
-trade_analysis = results[0].analyzers.trade_analyzer.get_analysis()
-total_trades = trade_analysis.total.closed if 'total' in trade_analysis and 'closed' in trade_analysis.total else 0
-
-print("\n===== FINAL SUMMARY =====")
-print(f"Total Symbols Backtested: {len(symbols)}")
-print(f"Total Trades Executed: {total_trades}")
-if 'won' in trade_analysis and 'total' in trade_analysis.won and total_trades:
-    win_ratio = (trade_analysis.won.total / total_trades) * 100
-    print(f"Win Ratio: {win_ratio:.2f}%")
-else:
-    print("Win Ratio: N/A")
-
-print("\n===== END =====")
+    cerebro.addstrategy(DebugStrategy)
+    cerebro.run()
+    print(f"===== FINAL SUMMARY =====\nTotal Symbols Backtested: {symbol_count}\n===== END =====")

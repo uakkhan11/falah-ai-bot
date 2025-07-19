@@ -4,55 +4,71 @@ import os
 import pandas as pd
 import backtrader as bt
 
-class DummyStrategy(bt.Strategy):
+class DebugAlwaysBuy(bt.Strategy):
     def __init__(self):
         pass
 
     def next(self):
-        pass
+        if not self.position:
+            self.buy()
+            print(f"✅ BUY executed at {self.data.datetime.date(0)} | Close={self.data.close[0]:.2f}")
 
-# Path to historical_data directory
-DATA_DIR = "/root/falah-ai-bot/historical_data/"
+class DebugSymbolCheck(bt.Strategy):
+    def __init__(self):
+        self.rsi = bt.indicators.RSI_SMA(self.data.close, period=14)
 
-symbols = [f for f in os.listdir(DATA_DIR) if f.endswith(".csv")]
+    def next(self):
+        rsi_val = self.rsi[0]
+        if not self.position:
+            if rsi_val > 35 and rsi_val < 70:
+                self.buy()
+                print(f"✅ BUY {self.data._name} at {self.data.datetime.date(0)} | Close={self.data.close[0]:.2f} | RSI={rsi_val:.2f}")
+            else:
+                print(f"⏩ SKIP {self.data._name} | {self.data.datetime.date(0)} | RSI={rsi_val:.2f}")
+
+# Load symbols from historical_data directory
+DATA_DIR = '/root/falah-ai-bot/historical_data'
+files = os.listdir(DATA_DIR)
+symbols = [f.replace('.csv', '') for f in files if f.endswith('.csv')]
 print(f"✅ Total symbols found: {len(symbols)}")
 
-valid_symbols = 0
+valid_symbols = []
+
 cerebro = bt.Cerebro()
 
-for symbol_file in symbols:
-    file_path = os.path.join(DATA_DIR, symbol_file)
+for symbol in symbols:
+    file_path = os.path.join(DATA_DIR, f"{symbol}.csv")
     try:
         df = pd.read_csv(file_path)
 
-        # Fix column name
-        if 'date' in df.columns:
-            df.rename(columns={'date': 'datetime'}, inplace=True)
-
-        required_cols = ['datetime', 'open', 'high', 'low', 'close', 'volume']
-        if not all(col in df.columns for col in required_cols):
-            print(f"⚠️ Skipping {symbol_file}: Missing required columns")
+        if not {'date', 'open', 'high', 'low', 'close', 'volume'}.issubset(df.columns):
+            print(f"⚠️ Skipping {symbol}: Missing required columns")
             continue
 
-        df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
-        df.dropna(subset=['datetime'], inplace=True)
-
-        df = df.sort_values('datetime')
+        df.rename(columns={'date': 'datetime'}, inplace=True)
+        df['datetime'] = pd.to_datetime(df['datetime'])
         df.set_index('datetime', inplace=True)
 
-        data = bt.feeds.PandasData(dataname=df)
-        cerebro.adddata(data, name=symbol_file.replace('.csv', ''))
+        if len(df) < 100:
+            print(f"⚠️ Skipping {symbol}: Insufficient data ({len(df)} rows)")
+            continue
 
-        valid_symbols += 1
+        data = bt.feeds.PandasData(dataname=df)
+        cerebro.adddata(data, name=symbol)
+        valid_symbols.append(symbol)
 
     except Exception as e:
-        print(f"⚠️ Skipping {symbol_file}: Error -> {e}")
+        print(f"⚠️ Skipping {symbol}: Error loading data -> {e}")
 
-print(f"✅ Total valid symbols loaded: {valid_symbols}")
+print(f"✅ Total valid symbols loaded: {len(valid_symbols)}")
 
-if valid_symbols == 0:
-    print("❌ No valid data to backtest.")
-else:
-    cerebro.addstrategy(DummyStrategy)
-    cerebro.run()
-    print("===== BACKTEST COMPLETE =====")
+# Choose strategy (Always-buy for sanity)
+cerebro.addstrategy(DebugAlwaysBuy)
+
+cerebro.broker.set_cash(100000)
+cerebro.run()
+
+print("===== BACKTEST COMPLETE =====")
+print(f"Attempted symbols: {len(symbols)}")
+print(f"Valid symbols processed: {len(valid_symbols)}")
+

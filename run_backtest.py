@@ -1,64 +1,64 @@
-import backtrader as bt
+import os
 import pandas as pd
-import os, json
+import backtrader as bt
 from indicators import add_indicators
 from ai_engine import get_ai_score
 
-class DebugStrategy(bt.Strategy):
-    def __init__(self):
-        add_indicators(self)
+DATA_DIR = "/root/falah-ai-bot/historical_data/"
+large_mid_cap_file = "large_mid_cap.json"
 
-    def log(self, txt):
-        dt = self.datas[0].datetime.date(0)
-        print(f'{dt}, {txt}')
+# Load Large and Mid Cap symbols
+with open(large_mid_cap_file) as f:
+    large_mid_symbols = set(pd.read_json(f)["symbol"].tolist())
+
+class AIStrategy(bt.Strategy):
+    def __init__(self):
+        self.rsi = bt.indicators.RSI_SMA(self.data.close, period=14)
+        self.ema10 = bt.indicators.EMA(self.data.close, period=10)
+        self.ema21 = bt.indicators.EMA(self.data.close, period=21)
 
     def next(self):
-        rsi = self.rsi[0]
-        ema10 = self.ema10[0]
-        ema21 = self.ema21[0]
-        close = self.data.close[0]
-        ai_score = get_ai_score({
-            'rsi': rsi,
-            'ema10': ema10,
-            'ema21': ema21,
-            'close': close,
-            'atr': self.atr[0],
-            'volume_change': self.volume_change[0]
-        })
-
-        reason = []
-        if rsi < 35 or rsi > 70:
-            reason.append(f"RSI={rsi:.2f}")
-        if ema10 < ema21:
-            reason.append(f"EMA10={ema10:.2f} < EMA21={ema21:.2f}")
-        if ai_score < 0.25:
-            reason.append(f"AI_Score={ai_score:.2f}")
-
-        if reason:
-            self.log(f"NO TRADE: {', '.join(reason)}")
+        if not self.position:
+            if (self.rsi[0] > 35 and self.rsi[0] < 65) and (self.ema10[0] > self.ema21[0]):
+                ai_score = get_ai_score(self.data._dataname)
+                if ai_score >= 0.25:
+                    self.buy()
+                    print(f"{self.data._name}: BUY at {self.data.close[0]:.2f}, RSI={self.rsi[0]:.2f}, AI Score={ai_score:.2f}")
         else:
-            self.log(f"BUY CREATE {close:.2f}, AI_Score={ai_score:.2f}, RSI={rsi:.2f}, EMA10={ema10:.2f}, EMA21={ema21:.2f}")
-            self.buy()
+            if self.rsi[0] > 70:
+                self.close()
+                print(f"{self.data._name}: SELL at {self.data.close[0]:.2f}, RSI={self.rsi[0]:.2f}")
 
 if __name__ == "__main__":
-    folder = '/root/falah-ai-bot/historical_data/'
-    large_mid_cap = json.load(open('/root/falah-ai-bot/large_mid_cap.json'))
-
     cerebro = bt.Cerebro()
-    symbol_count, trade_count = 0, 0
+    total_symbols = 0
+    executed_trades = 0
 
-    for file in os.listdir(folder):
-        symbol = file.replace('.csv', '')
-        if symbol not in large_mid_cap:
+    for file in os.listdir(DATA_DIR):
+        if not file.endswith(".csv"):
             continue
-        df = pd.read_csv(file_path, parse_dates=['datetime'])
-        data.set_index('datetime', inplace=True)
-        if len(df) < 100:
+        symbol = file.replace(".csv", "")
+        if symbol not in large_mid_symbols:
             continue
-        data = bt.feeds.PandasData(dataname=df)
-        cerebro.adddata(data)
-        symbol_count += 1
 
-    cerebro.addstrategy(DebugStrategy)
-    cerebro.run()
-    print(f"===== FINAL SUMMARY =====\nTotal Symbols Backtested: {symbol_count}\n===== END =====")
+        file_path = os.path.join(DATA_DIR, file)
+        try:
+            df = pd.read_csv(file_path, parse_dates=["datetime"])
+            df = df.dropna()
+            if len(df) < 100:
+                print(f"Skipping {symbol}: insufficient data ({len(df)} rows)")
+                continue
+            df = add_indicators(df)
+
+            data = bt.feeds.PandasData(dataname=df, datetime="datetime", open="open", high="high",
+                                       low="low", close="close", volume="volume", openinterest=None)
+            cerebro.adddata(data, name=symbol)
+            total_symbols += 1
+        except Exception as e:
+            print(f"Skipping {symbol}: {e}")
+            continue
+
+    cerebro.addstrategy(AIStrategy)
+    print(f"Total symbols loaded: {total_symbols}")
+    results = cerebro.run()
+    print("Backtest complete.")

@@ -29,20 +29,8 @@ class SimpleStrategy(bt.Strategy):
                 print(f"{date} | 📉 SELL triggered | RSI={rsi_val:.2f}, EMA10={ema10_val:.2f}, EMA21={ema21_val:.2f}")
                 self.close()
 
-
 def load_csv_file(csv_file):
-    # Quick header validation before loading the entire file
     try:
-        for csv_file in csv_files:
-            df = load_csv_file(csv_file)
-            if df is None or df.empty:
-                print(f"⚠️ Skipping {csv_file} due to empty or invalid data.")
-                continue
-    
-            if len(df) < 100:
-                print(f"⚠️ Skipping {csv_file}, not enough data ({len(df)} rows). Need at least 100 rows for indicators.")
-                continue
-        
         df_head = pd.read_csv(csv_file, nrows=1)
         if 'date' not in df_head.columns:
             print(f"❌ Skipping {csv_file} (missing 'date' column)")
@@ -55,7 +43,13 @@ def load_csv_file(csv_file):
         df = pd.read_csv(csv_file, parse_dates=["date"])
         df = df.dropna(subset=["date", "close", "open", "high", "low", "volume"])
         df = df.sort_values("date")
+
+        if len(df) < 100:
+            print(f"⚠️ Skipping {csv_file}, not enough data ({len(df)} rows). Need at least 100 rows for indicators.")
+            return None
+
         return df
+
     except Exception as e:
         print(f"❌ Failed to process {csv_file}: {e}")
         return None
@@ -66,8 +60,10 @@ if __name__ == "__main__":
 
     csv_files = [os.path.join(HIST_DIR, f) for f in os.listdir(HIST_DIR) if f.endswith(".csv")]
     print(f"✅ Found {len(csv_files)} CSV files.")
+
     if len(csv_files) == 0:
         print("⚠️ No historical CSV files found. Please check your HIST_DIR path or data availability.")
+        exit()
 
     valid_count = 0
 
@@ -113,5 +109,4 @@ if __name__ == "__main__":
 
     print(f"✅ Backtest completed with {valid_count} symbols.")
 
-    # Uncomment to visualize
     # cerebro.plot()

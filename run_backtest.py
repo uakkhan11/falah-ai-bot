@@ -51,7 +51,8 @@ if __name__ == "__main__":
         symbol = file.replace('.csv', '')
         if symbol not in large_mid_cap:
             continue
-        df = pd.read_csv(folder + file)
+        df = pd.read_csv(file_path, parse_dates=['datetime'])
+        data.set_index('datetime', inplace=True)
         if len(df) < 100:
             continue
         data = bt.feeds.PandasData(dataname=df)

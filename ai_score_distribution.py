@@ -45,7 +45,7 @@ def process_symbol(symbol):
             "VolumeChange": row["VolumeChange"]
         }])
         proba = model.predict_proba(features)[0][1]
-        scores.append(prob)
+        scores.append(proba)
     return scores
 
 def main():

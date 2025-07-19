@@ -26,7 +26,7 @@ class DebugStrategy(bt.Strategy):
             else:
                 print(f"{date} ✅ BUY triggered")
                 self.buy()
-            else:
+        else:
                 reasons = []
                 if rsi_val >= 35:
                     reasons.append(f"RSI {rsi_val:.2f} >= 35")

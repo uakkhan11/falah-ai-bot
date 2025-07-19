@@ -44,8 +44,9 @@ for file in symbol_files:
 print(f"✅ Valid symbols loaded: {len(valid_symbols)}")
 
 class AIStrategy(bt.Strategy):
+    params = (('symbol', None),)
+
     def __init__(self):
-        self.symbol = None
         self.dataclose = self.datas[0].close
 
     def next(self):
@@ -54,7 +55,7 @@ class AIStrategy(bt.Strategy):
             return  # Only consider last 3 months
 
         close = self.dataclose[0]
-        df = dataframes[self.symbol]
+        df = dataframes[self.p.symbol]
         current_row = df[df['datetime'] == dt]
 
         if current_row.empty:
@@ -64,7 +65,7 @@ class AIStrategy(bt.Strategy):
         ai_score = get_ai_score(df[df['datetime'] <= dt].copy())
 
         if ai_score > 0.25:
-            print(f"✅ {self.symbol} BUY {dt.date()} Close={close:.2f} AI={ai_score:.2f}")
+            print(f"✅ {self.p.symbol} BUY {dt.date()} Close={close:.2f} AI={ai_score:.2f}")
             self.buy()
 
 cerebro = bt.Cerebro()
@@ -77,9 +78,7 @@ for symbol in valid_symbols:
     data_feed = bt.feeds.PandasData(dataname=df)
 
     cerebro.adddata(data_feed, name=symbol)
-
-    strat = cerebro.addstrategy(AIStrategy)
-    strat.symbol = symbol
+    cerebro.addstrategy(AIStrategy, symbol=symbol)
 
 print(f"✅ Starting backtest on {len(valid_symbols)} symbols")
 results = cerebro.run()

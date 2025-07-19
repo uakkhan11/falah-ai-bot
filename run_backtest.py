@@ -61,5 +61,8 @@ if __name__ == "__main__":
     print(f"📊 Sharpe Ratio: {sharpe.get('sharperatio', 'N/A')}")
 
     trade_analysis = result.analyzers.trades.get_analysis()
-    total_trades = trade_analysis.total.closed if 'total' in trade_analysis and hasattr(trade_analysis.total, 'closed') else 0
+    try:
+        total_trades = trade_analysis.total.closed
+    except (KeyError, AttributeError):
+        total_trades = 0
     print(f"📈 Total Trades: {total_trades}")

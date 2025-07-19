@@ -17,8 +17,8 @@ class DebugStrategy(bt.Strategy):
 
         if not self.position:
             reasons = []
-            if rsi_val >= 35:
-                reasons.append(f"RSI {rsi_val:.2f} >= 35")
+            if rsi_val <= 35:
+                reasons.append(f"RSI {rsi_val:.2f} <= 35")
             if ema10_val <= ema21_val:
                 reasons.append(f"EMA10 {ema10_val:.2f} <= EMA21 {ema21_val:.2f}")
             if reasons:

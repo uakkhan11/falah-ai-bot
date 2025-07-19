@@ -8,8 +8,10 @@ DATA_DIR = "/root/falah-ai-bot/historical_data/"
 large_mid_cap_file = "large_mid_cap.json"
 
 # Load Large and Mid Cap symbols
-with open(large_mid_cap_file) as f:
-    large_mid_symbols = set(pd.read_json(f).tolist())
+import json
+
+with open('large_mid_cap.json') as f:
+    large_mid_symbols = set(json.load(f))
 
 class AIStrategy(bt.Strategy):
     def __init__(self):

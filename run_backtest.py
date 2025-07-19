@@ -65,7 +65,7 @@ if __name__ == "__main__":
     csv_files = [os.path.join(HIST_DIR, f) for f in os.listdir(HIST_DIR) if f.endswith(".csv")]
     print(f"✅ Found {len(csv_files)} CSV files.")
     if len(csv_files) == 0:
-    print("⚠️ No historical CSV files found. Please check your HIST_DIR path or data availability.")
+        print("⚠️ No historical CSV files found. Please check your HIST_DIR path or data availability.")
 
     valid_count = 0
 

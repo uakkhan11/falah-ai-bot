@@ -18,13 +18,16 @@ from indicators import (
 
 HIST_DIR = "/root/falah-ai-bot/historical_data/"
 LARGE_MID_CAP_FILE = "/root/falah-ai-bot/large_mid_cap.json"
-model = joblib.load("/root/falah-ai-bot/model.pkl")
+MODEL_PATH = "/root/falah-ai-bot/model.pkl"
+model = joblib.load(MODEL_PATH)
+
 
 def load_large_mid_cap_symbols():
     with open(LARGE_MID_CAP_FILE) as f:
         symbols = json.load(f)
     print(f"✅ Loaded {len(symbols)} Large/Mid Cap symbols.")
     return set(symbols)
+
 
 def load_all_live_prices():
     live = {}
@@ -47,6 +50,7 @@ def load_all_live_prices():
         print(f"✅ Loaded {len(live)} fallback prices.")
     return live
 
+
 def get_current_holdings_positions_symbols(kite):
     symbols = set()
     try:
@@ -61,6 +65,7 @@ def get_current_holdings_positions_symbols(kite):
     except Exception as e:
         print(f"⚠️ Error fetching positions: {e}")
     return symbols
+
 
 def run_smart_scan():
     kite = get_kite()
@@ -102,43 +107,47 @@ def run_smart_scan():
         rsi, ema10, ema21 = last["RSI"], last["EMA10"], last["EMA21"]
 
         reasons = []
-        skip = False
 
+        # Filter 1: RSI Zone
         if not (40 <= rsi <= 70):
-            reasons.append(f"RSI {rsi:.2f} not in range")
-            skip = True
+            reasons.append(f"RSI {rsi:.2f} out of range (40-70)")
 
-        bullish_pivot = detect_bullish_pivot(df.tail(30))
-        if not bullish_pivot:
+        # Filter 2: EMA10 > EMA21 mandatory
+        if ema10 <= ema21:
+            reasons.append("EMA10 below EMA21")
+
+        # Filter 3: Bullish Pivot
+        if not detect_bullish_pivot(df.tail(30)):
             reasons.append("No bullish pivot")
-            skip = True
 
-        macd_cross = detect_macd_bullish_cross(df.tail(35))
-        if not macd_cross:
-            reasons.append("No MACD cross")
-            skip = True
+        # Filter 4: MACD Bullish Cross
+        if not detect_macd_bullish_cross(df.tail(35)):
+            reasons.append("No MACD bullish cross")
 
-        supertrend_ok = detect_supertrend_green(df.tail(30))
-        if not supertrend_ok:
-            reasons.append("Supertrend not bullish")
-            skip = True
+        # Filter 5: Supertrend Confirmation
+        if not detect_supertrend_green(df.tail(30)):
+            reasons.append("Supertrend not green")
 
-        if skip:
-            print(f"❌ {sym} skipped due to: {', '.join(reasons)}")
+        if reasons:
+            print(f"❌ Skipping {sym}: {', '.join(reasons)}")
             continue
 
         features = [[rsi, ema10, ema21, atr, volume_change]]
         ai_score = model.predict_proba(features)[0][1] * 5
-
         score = ai_score
-        reasons = [f"AI {ai_score:.2f}"]
 
+        score_reasons = [f"AI {ai_score:.2f}"]
+
+        # Extra scoring weights:
         if ema10 > ema21:
-            score += 1; reasons.append("EMA10>EMA21")
+            score += 1
+            score_reasons.append("EMA10>EMA21")
         if volume_change > 1.2:
-            score += 1; reasons.append("Volume spike")
+            score += 1
+            score_reasons.append("Volume spike")
         if atr > 1.0:
-            score += 1; reasons.append(f"ATR {atr:.2f}")
+            score += 1
+            score_reasons.append(f"ATR {atr:.2f}")
 
         results.append({
             "Symbol": sym,
@@ -151,17 +160,13 @@ def run_smart_scan():
             "VolumeChange": round(volume_change, 2),
             "AI_Score": round(ai_score, 2),
             "Score": round(score, 2),
-            "Reasons": ", ".join(reasons)
+            "Reasons": ", ".join(score_reasons)
         })
 
         del df
         gc.collect()
 
     df = pd.DataFrame(results).sort_values(by="Score", ascending=False)
-    print(df)
-    return df
-
-    df = pd.DataFrame(results)
-    df = df.sort_values(by="Score", ascending=False)
+    print(f"✅ Final selected {len(df)} stocks.")
     print(df)
     return df

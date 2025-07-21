@@ -6,11 +6,10 @@ import numpy as np
 import pandas_ta as ta
 
 INPUT_DIR = "/root/falah-ai-bot/historical_data"
-OUTPUT_FILE = "/root/falah-ai-bot/training_data.csv"
+OUTPUT_FILE = "/root/falah-ai-bot/your_training_data.csv"
 
 rows = []
 
-# Loop over all CSV files
 for file in os.listdir(INPUT_DIR):
     if not file.endswith(".csv"):
         continue
@@ -22,37 +21,38 @@ for file in os.listdir(INPUT_DIR):
     if len(df) < 30:
         continue
 
-    # Compute indicators
+    # Indicators
     df["RSI"] = ta.rsi(df["close"], length=14)
     df["ATR"] = ta.atr(df["high"], df["low"], df["close"], length=14)
     df["ADX"] = ta.adx(df["high"], df["low"], df["close"], length=14)["ADX_14"]
+    df["EMA10"] = ta.ema(df["close"], length=10)
+    df["EMA21"] = ta.ema(df["close"], length=21)
+    df["VolumeChange"] = df["volume"].pct_change()
 
-    # Shift close by -5 days to get future return
-    df["future_close"] = df["close"].shift(-5)
-    df["future_return_pct"] = (df["future_close"] - df["close"]) / df["close"] * 100
+    # Target Outcome: Future high >= +3% within next 10 candles
+    df["Future_High"] = df["high"].rolling(window=10, min_periods=1).max().shift(-1)
+    df["Outcome"] = (df["Future_High"] >= df["close"] * 1.03).astype(int)
 
-    # Target: 1 if price goes up more than +2% in 5 days
-    df["Target"] = np.where(df["future_return_pct"] > 2, 1, 0)
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.dropna(subset=["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange", "Outcome"])
 
-    # Drop NaN rows (due to indicators and shifting)
-    df = df.dropna()
-
-    # For AI_Score placeholder, random between 0.4 and 0.9
-    df["AI_Score"] = np.random.uniform(0.4, 0.9, size=len(df))
-
+    # Append clean rows
     for _, row in df.iterrows():
         rows.append({
-            "Symbol": symbol,
+            "date": row["date"].strftime("%Y-%m-%d"),
+            "close": row["close"],
             "RSI": row["RSI"],
             "ATR": row["ATR"],
             "ADX": row["ADX"],
-            "AI_Score": row["AI_Score"],
-            "Target": row["Target"]
+            "EMA10": row["EMA10"],
+            "EMA21": row["EMA21"],
+            "VolumeChange": row["VolumeChange"],
+            "Outcome": row["Outcome"]
         })
 
-# Build dataframe
+# Final DataFrame
 final_df = pd.DataFrame(rows)
 
-# Save
+# Save final training data
 final_df.to_csv(OUTPUT_FILE, index=False)
-print(f"✅ Training data saved to {OUTPUT_FILE} ({len(final_df)} rows).")
+print(f"✅ Final training data saved to {OUTPUT_FILE} with {len(final_df)} rows.")

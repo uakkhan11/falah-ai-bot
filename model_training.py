@@ -12,6 +12,10 @@ df = pd.read_csv("your_training_data.csv")
 features = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"]
 df = df.dropna(subset=features + ["Outcome"])
 
+if len(df) > 100000:
+    df = df.sample(100000, random_state=42)
+
+
 print(f"✅ Data Loaded: {len(df)} rows | Positive={df['Outcome'].sum()} | Negative={(df['Outcome']==0).sum()}")
 
 # ✅ Step 3: Prepare Inputs

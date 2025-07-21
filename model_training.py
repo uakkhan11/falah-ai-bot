@@ -1,6 +1,7 @@
 # generate_training_data.py
 import pandas as pd
 import os
+import joblib
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
 from ta.trend import ADXIndicator, EMAIndicator

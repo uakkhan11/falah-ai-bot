@@ -1,22 +1,45 @@
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.metrics import classification_report
 import joblib
 
-# Load dataset
+# ✅ Step 1: Load historical data
 df = pd.read_csv("your_training_data.csv")
 
-# Remove incomplete rows
-df = df.dropna(subset=["RSI", "ATR", "ADX", "AI_Score", "Outcome"])
+# ✅ Step 2: Calculate Future Returns based Outcome (Next 10-day +5%)
+df['Future_High'] = df['close'].rolling(window=10, min_periods=1).max().shift(-1)
+df['Outcome'] = (df['Future_High'] >= df['close'] * 1.05).astype(int)
 
-# Define inputs and target
-features = ["RSI", "ATR", "ADX", "AI_Score"]
-X = df[features]
-y = df["Outcome"]
+# ✅ Step 3: Feature Columns (Matching your dashboard & signals)
+features = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"]
+df = df.dropna(subset=features + ["Outcome"])
 
-# Train
-model = RandomForestClassifier(n_estimators=100, random_state=42)
+# ✅ Step 4: Use recent 2-year data (if your data has 'date' column)
+df["date"] = pd.to_datetime(df["date"])
+cutoff = pd.to_datetime("today") - pd.Timedelta(days=730)
+df_recent = df[df["date"] >= cutoff]
+
+# ✅ Step 5: Prepare Inputs
+X = df_recent[features]
+y = df_recent["Outcome"]
+
+print(f"✅ Dataset ready: {X.shape[0]} samples | Positive cases: {y.sum()} | Negative cases: {(y==0).sum()}")
+
+# ✅ Step 6: Train Model with Class Balancing
+model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
 model.fit(X, y)
 
-# Save
+# ✅ Step 7: Cross Validation
+scores = cross_val_score(model, X, y, cv=5)
+print(f"✅ Cross-Validation Accuracy: {scores.mean():.4f}")
+
+# ✅ Step 8: Feature Importance
+importances = model.feature_importances_
+print("✅ Feature Importance:")
+for f, imp in zip(features, importances):
+    print(f"{f}: {imp:.4f}")
+
+# ✅ Step 9: Save Model
 joblib.dump(model, "model.pkl")
-print("✅ Model trained and saved.")
+print("✅ Final model saved as model.pkl")

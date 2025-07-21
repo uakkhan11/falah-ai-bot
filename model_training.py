@@ -43,3 +43,6 @@ final_df = pd.concat(all_data, ignore_index=True)
 final_df.to_csv(OUTPUT_FILE, index=False)
 
 print(f"✅ Final dataset saved: {OUTPUT_FILE} | Total rows={len(final_df)}")
+
+joblib.dump(model, "model.pkl")
+print("\n✅ Model trained and saved to model.pkl")

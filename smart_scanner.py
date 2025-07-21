@@ -10,6 +10,7 @@ from ta.volatility import AverageTrueRange
 from credentials import get_kite
 import joblib
 import gc
+from indicators import detect_bullish_pivot
 
 HIST_DIR = "/root/falah-ai-bot/historical_data/"
 LARGE_MID_CAP_FILE = "/root/falah-ai-bot/large_mid_cap.json"
@@ -113,10 +114,14 @@ def run_smart_scan():
             print(f"❌ {sym} skipped due to RSI {rsi:.2f}")
             continue
 
+        bullish_pivot = detect_bullish_pivot(daily_df.tail(30))
+        if not bullish_pivot:
+            print(f"❌ {sym} skipped due to no bullish pivot structure")
+            continue
+
         features = [[rsi, ema10, ema21, atr, volume_change]]
         ai_score = model.predict_proba(features)[0][1] * 5
 
-        # Strict filter: 40-65 RSI accepted, 65-70 only if high AI score
         if 65 < rsi <= 70 and ai_score < 1.5:
             print(f"❌ {sym} skipped RSI {rsi:.2f} AI {ai_score:.2f}")
             continue
@@ -133,6 +138,9 @@ def run_smart_scan():
         if atr > 1.0:
             score += 1.0
             reasons.append(f"ATR {atr:.2f}")
+        if bullish_pivot:
+            score += 1.0
+            reasons.append("Bullish Pivot Detected")
 
         results.append({
             "Symbol": sym,
@@ -154,25 +162,4 @@ def run_smart_scan():
     df = pd.DataFrame(results)
     df = df.sort_values(by="Score", ascending=False)
     print(df)
-    return df
-
-    df = df.sort_values(by="Score", ascending=False)
-    print("✅ Final scan results:")
-    print(df)
-
-    try:
-        from sheets import log_scan_to_sheet
-        log_scan_to_sheet(df)
-    except Exception as e:
-        print(f"⚠️ Failed to save to sheet: {e}")
-
-    try:
-        from utils import send_telegram
-        msg = "🟢 Scan Results:\n" + "\n".join(
-            f"{r['Symbol']} | {r['Score']} | {r['Reasons']}" for _, r in df.iterrows()
-        )
-        send_telegram(msg)
-    except Exception as e:
-        print(f"⚠️ Failed to send Telegram: {e}")
-
     return df

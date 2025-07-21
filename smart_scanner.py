@@ -10,11 +10,14 @@ from ta.volatility import AverageTrueRange
 from credentials import get_kite
 import joblib
 import gc
-from indicators import detect_bullish_pivot
+from indicators import (
+    detect_bullish_pivot,
+    detect_macd_bullish_cross,
+    detect_supertrend_green
+)
 
 HIST_DIR = "/root/falah-ai-bot/historical_data/"
 LARGE_MID_CAP_FILE = "/root/falah-ai-bot/large_mid_cap.json"
-
 model = joblib.load("/root/falah-ai-bot/model.pkl")
 
 def load_large_mid_cap_symbols():
@@ -32,7 +35,7 @@ def load_all_live_prices():
                 live.update(json.load(fd))
         print(f"✅ Loaded {len(live)} live prices.")
     else:
-        print("⚠️ Live prices not found. Loading last close prices from historical files.")
+        print("⚠️ Live prices not found. Using last closes.")
         with open("/root/falah-ai-bot/tokens.json") as f:
             tokens = json.load(f)
         for sym in tokens.keys():
@@ -40,10 +43,8 @@ def load_all_live_prices():
             if os.path.exists(daily_file):
                 df = pd.read_csv(daily_file)
                 if not df.empty:
-                    last_close = df.iloc[-1]["close"]
-                    token = str(tokens[sym])
-                    live[token] = last_close
-        print(f"✅ Loaded {len(live)} fallback prices from historical files.")
+                    live[str(tokens[sym])] = df.iloc[-1]["close"]
+        print(f"✅ Loaded {len(live)} fallback prices.")
     return live
 
 def get_current_holdings_positions_symbols(kite):
@@ -51,16 +52,14 @@ def get_current_holdings_positions_symbols(kite):
     try:
         positions = kite.positions()
         holdings = kite.holdings()
-
-        for p in positions['day'] + positions['net']:
+        for p in positions['net']:
             if p['quantity'] != 0:
                 symbols.add(p['tradingsymbol'])
         for h in holdings:
             symbols.add(h['tradingsymbol'])
-
-        print(f"🚫 Skipping {len(symbols)} stocks already in positions/holdings.")
+        print(f"🚫 Skipping {len(symbols)} existing holdings/positions.")
     except Exception as e:
-        print(f"⚠️ Error fetching holdings/positions: {e}")
+        print(f"⚠️ Error fetching positions: {e}")
     return symbols
 
 def run_smart_scan():
@@ -71,16 +70,14 @@ def run_smart_scan():
     with open("/root/falah-ai-bot/tokens.json") as f:
         tokens = json.load(f)
     token_to_symbol = {str(v): k for k, v in tokens.items()}
-
     skip_symbols = get_current_holdings_positions_symbols(kite)
 
-    print(f"\n✅ Loaded {len(live_prices)} live prices.")
-
     if not live_prices:
-        print("⚠️ No live prices available, exiting scan.")
+        print("❌ No live prices found. Exiting.")
         return pd.DataFrame()
 
     results = []
+
     for token, ltp in live_prices.items():
         sym = token_to_symbol.get(str(token))
         if not sym or sym in skip_symbols or sym not in large_mid_symbols:
@@ -90,57 +87,58 @@ def run_smart_scan():
         if not os.path.exists(daily_file):
             continue
 
-        daily_df = pd.read_csv(daily_file)
-        if len(daily_df) < 21:
+        df = pd.read_csv(daily_file)
+        if len(df) < 30:
             continue
 
-        daily_df["EMA10"] = EMAIndicator(close=daily_df["close"], window=10).ema_indicator()
-        daily_df["EMA21"] = EMAIndicator(close=daily_df["close"], window=21).ema_indicator()
-        daily_df["RSI"] = RSIIndicator(close=daily_df["close"], window=14).rsi()
-        atr = AverageTrueRange(
-            high=daily_df["high"], low=daily_df["low"], close=daily_df["close"], window=14
-        ).average_true_range().iloc[-1]
-        adx = ADXIndicator(
-            high=daily_df["high"], low=daily_df["low"], close=daily_df["close"], window=14
-        ).adx().iloc[-1]
-        volume_change = daily_df["volume"].iloc[-1] / (daily_df["volume"].rolling(10).mean().iloc[-1] + 1e-9)
+        df["EMA10"] = EMAIndicator(close=df["close"], window=10).ema_indicator()
+        df["EMA21"] = EMAIndicator(close=df["close"], window=21).ema_indicator()
+        df["RSI"] = RSIIndicator(close=df["close"], window=14).rsi()
+        atr = AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range().iloc[-1]
+        adx = ADXIndicator(df["high"], df["low"], df["close"], window=14).adx().iloc[-1]
+        volume_change = df["volume"].iloc[-1] / (df["volume"].rolling(10).mean().iloc[-1] + 1e-9)
 
-        last = daily_df.iloc[-1]
-        rsi = last["RSI"]
-        ema10 = last["EMA10"]
-        ema21 = last["EMA21"]
+        last = df.iloc[-1]
+        rsi, ema10, ema21 = last["RSI"], last["EMA10"], last["EMA21"]
+
+        reasons = []
+        skip = False
 
         if not (40 <= rsi <= 70):
-            print(f"❌ {sym} skipped due to RSI {rsi:.2f}")
-            continue
+            reasons.append(f"RSI {rsi:.2f} not in range")
+            skip = True
 
-        bullish_pivot = detect_bullish_pivot(daily_df.tail(30))
+        bullish_pivot = detect_bullish_pivot(df.tail(30))
         if not bullish_pivot:
-            print(f"❌ {sym} skipped due to no bullish pivot structure")
+            reasons.append("No bullish pivot")
+            skip = True
+
+        macd_cross = detect_macd_bullish_cross(df.tail(35))
+        if not macd_cross:
+            reasons.append("No MACD cross")
+            skip = True
+
+        supertrend_ok = detect_supertrend_green(df.tail(30))
+        if not supertrend_ok:
+            reasons.append("Supertrend not bullish")
+            skip = True
+
+        if skip:
+            print(f"❌ {sym} skipped due to: {', '.join(reasons)}")
             continue
 
         features = [[rsi, ema10, ema21, atr, volume_change]]
         ai_score = model.predict_proba(features)[0][1] * 5
 
-        if 65 < rsi <= 70 and ai_score < 1.5:
-            print(f"❌ {sym} skipped RSI {rsi:.2f} AI {ai_score:.2f}")
-            continue
-
         score = ai_score
-        reasons = [f"AI Score {ai_score:.2f}"]
+        reasons = [f"AI {ai_score:.2f}"]
 
         if ema10 > ema21:
-            score += 1.0
-            reasons.append("EMA10 > EMA21")
+            score += 1; reasons.append("EMA10>EMA21")
         if volume_change > 1.2:
-            score += 1.0
-            reasons.append("Volume Spike")
+            score += 1; reasons.append("Volume spike")
         if atr > 1.0:
-            score += 1.0
-            reasons.append(f"ATR {atr:.2f}")
-        if bullish_pivot:
-            score += 1.0
-            reasons.append("Bullish Pivot Detected")
+            score += 1; reasons.append(f"ATR {atr:.2f}")
 
         results.append({
             "Symbol": sym,
@@ -156,8 +154,12 @@ def run_smart_scan():
             "Reasons": ", ".join(reasons)
         })
 
-        del daily_df
+        del df
         gc.collect()
+
+    df = pd.DataFrame(results).sort_values(by="Score", ascending=False)
+    print(df)
+    return df
 
     df = pd.DataFrame(results)
     df = df.sort_values(by="Score", ascending=False)

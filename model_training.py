@@ -8,7 +8,7 @@ df = pd.read_csv("your_training_data.csv")
 
 # ✅ Step 2: Create Outcome Column — +5% move within next 10 candles
 df['Future_High'] = df['close'].rolling(window=10, min_periods=1).max().shift(-1)
-df['Outcome'] = (df['Future_High'] >= df['close'] * 1.05).astype(int)
+df['Outcome'] = (df['Future_High'] >= df['close'] * 1.03).astype(int)
 
 # ✅ Step 3: Clean rows
 features = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"]

@@ -106,8 +106,8 @@ def get_halal_list(sheet_key, worksheet_name="HalalList"):
     client = gspread.authorize(creds)
 
     try:
-        sheet = client.open_by_key(sheet_key)
-        worksheet = sheet.worksheet(worksheet_name)
+        sheet = client.open_by_key(1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c)
+        worksheet = sheet.worksheet(HalalList)
         symbols = worksheet.col_values(1)
         symbols = [s.strip().upper() for s in symbols if s.strip() and s.lower() != "symbol"]
         return symbols

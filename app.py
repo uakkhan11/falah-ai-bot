@@ -2,8 +2,8 @@
 import time
 import json
 import pytz
-from config import load_secrets
 from datetime import datetime
+
 from credentials import get_kite, validate_kite, load_secrets
 from data_fetch import get_cnc_holdings, get_live_ltp
 from ai_engine import analyze_exit_signals
@@ -50,7 +50,7 @@ def monitor_once(kite, token_map, sheet_name, spreadsheet_key, exit_log_file):
 
 
 if __name__ == "__main__":
-    # Load credentials
+    # ✅ Load credentials
     secrets = load_secrets()
 
     print("API Key:", secrets["zerodha"]["api_key"])
@@ -62,25 +62,17 @@ if __name__ == "__main__":
         send_telegram("❌ Falāh Bot: Invalid token, exiting.")
         exit(1)
 
-    # Load tokens
-    with open("/root/falah-ai-bot/secrets.json", "r") as f:
+    # ✅ Load token map for symbols
+    with open("/root/falah-ai-bot/token_map.json", "r") as f:
         token_map = json.load(f)
-        # Zerodha credentials
-    API_KEY = secrets["zerodha"]["api_key"]
-    API_SECRET = secrets["zerodha"]["api_secret"]
-    ACCESS_TOKEN = secrets["zerodha"]["access_token"]
 
-# Google Sheets credentials
-SPREADSHEET_KEY = secrets["google"]["spreadsheet_key"]
-
-# If you also have the JSON key file for gspread:
-CREDS_JSON = "/root/falah-ai-bot/falah-credentials.json"
-
-    exit_log_file = "/root/falah-ai-bot/exited_stocks.json"
+    # ✅ Google Sheets and config paths
     sheet_name = secrets["google"]["sheet_name"]
-    spreadsheet_key = secrets["sheets"]["spreadsheet_key"]
+    spreadsheet_key = secrets["google"]["spreadsheet_key"]
+    creds_json = "/root/falah-ai-bot/falah-credentials.json"
+    exit_log_file = "/root/falah-ai-bot/exited_stocks.json"
 
-    # Loop monitoring
+    # ✅ Loop monitoring
     while True:
         try:
             monitor_once(kite, token_map, sheet_name, spreadsheet_key, exit_log_file)
@@ -89,4 +81,4 @@ CREDS_JSON = "/root/falah-ai-bot/falah-credentials.json"
             if "Incorrect `api_key` or `access_token`" in str(e):
                 send_telegram("❌ Falāh Bot: Token expired, exiting.")
                 exit(1)
-        time.sleep(900)
+        time.sleep(900)  # 15 minutes

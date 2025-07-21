@@ -57,5 +57,6 @@ joblib.dump(model, "model.pkl")
 print("\n✅ Model trained and saved to model.pkl")
 
 # ✅ Step 13: Summary Log
+print(f"Before date filter: {len(df)} rows | Positive={df['Outcome'].sum()} | Negative={(df['Outcome']==0).sum()}")
 print(f"\n🎉 FINAL SUMMARY:\nTotal Samples={len(df_recent)} | Positives={y.sum()} | Negatives={(y==0).sum()}")
 print(f"Train CV Accuracy={cv_scores.mean():.4f} | Test Accuracy={test_accuracy:.4f}")

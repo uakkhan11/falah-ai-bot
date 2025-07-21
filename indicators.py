@@ -7,10 +7,6 @@ from ta.volatility import AverageTrueRange
 import pandas_ta as pta
 
 def detect_breakout(df, threshold=1.02):
-    """
-    Detects breakout if current close > previous high * threshold.
-    Returns bool and breakout level.
-    """
     if len(df) < 2:
         return False, None
     prev_high = df['high'].iloc[-2]
@@ -19,9 +15,6 @@ def detect_breakout(df, threshold=1.02):
     return is_breakout, round(prev_high * threshold, 2)
 
 def detect_rsi_ema_signals(df, rsi_period=14, ema_period=21, rsi_threshold=60):
-    """
-    Returns True if RSI > threshold and close > EMA.
-    """
     rsi = RSIIndicator(df['close'], window=rsi_period).rsi()
     ema = EMAIndicator(df['close'], window=ema_period).ema_indicator()
     last_rsi = rsi.iloc[-1]
@@ -30,19 +23,12 @@ def detect_rsi_ema_signals(df, rsi_period=14, ema_period=21, rsi_threshold=60):
     return last_rsi > rsi_threshold and last_close > last_ema
 
 def detect_3green_days(df):
-    """
-    Detects 3 consecutive green candles.
-    """
     if len(df) < 3:
         return False
     last_3 = df.iloc[-3:]
     return all(last_3['close'] > last_3['open'])
 
 def detect_darvas_box(df, lookback=20):
-    """
-    Detects if close breaks above the high of the last 'lookback' candles.
-    Returns bool and breakout level.
-    """
     if len(df) < lookback + 1:
         return False, None
     recent_high = df['high'].iloc[-lookback:-1].max()
@@ -51,9 +37,6 @@ def detect_darvas_box(df, lookback=20):
     return is_breakout, round(recent_high, 2)
 
 def calculate_trailing_sl(prices, atr_multiplier=1.5):
-    """
-    Calculate trailing stoploss based on highest price minus ATR.
-    """
     if len(prices) < 2:
         return None
     high_price = max(prices)
@@ -63,9 +46,6 @@ def calculate_trailing_sl(prices, atr_multiplier=1.5):
     return round(trailing_sl, 2)
 
 def check_supertrend_flip(kite, symbol, period=10, multiplier=3):
-    """
-    Returns True if Supertrend has flipped to bearish.
-    """
     try:
         instrument_token = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
         hist = kite.historical_data(
@@ -82,7 +62,6 @@ def check_supertrend_flip(kite, symbol, period=10, multiplier=3):
             length=period,
             multiplier=multiplier
         )
-        # Auto-detect trend column
         trend_col = [c for c in supertrend.columns if "SUPERT" in c and "d" in c][0]
         last_trend = supertrend[trend_col].iloc[-1]
         return last_trend == -1
@@ -91,9 +70,6 @@ def check_supertrend_flip(kite, symbol, period=10, multiplier=3):
         return False
 
 def detect_macd_cross(df):
-    """
-    Detects MACD bullish cross (MACD line crosses above Signal line).
-    """
     if len(df) < 35:
         return False
     macd = MACD(df['close'])
@@ -104,9 +80,6 @@ def detect_macd_cross(df):
     return False
 
 def calculate_atr_trailing_sl(kite, symbol, cmp, atr_multiplier=1.5):
-    """
-    Computes ATR-based trailing stoploss price.
-    """
     try:
         instrument_token = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
         hist = kite.historical_data(
@@ -129,9 +102,6 @@ def calculate_atr_trailing_sl(kite, symbol, cmp, atr_multiplier=1.5):
         return None
 
 def check_rsi_bearish_divergence(kite, symbol, lookback=5):
-    """
-    Returns True if bearish RSI divergence is detected.
-    """
     try:
         instrument_token = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
         hist = kite.historical_data(
@@ -158,9 +128,6 @@ def check_rsi_bearish_divergence(kite, symbol, lookback=5):
         return False
 
 def check_vwap_cross(kite, symbol):
-    """
-    Returns True if CMP < VWAP of last 10 days.
-    """
     try:
         instrument_token = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
         hist = kite.historical_data(
@@ -180,3 +147,25 @@ def check_vwap_cross(kite, symbol):
     except Exception as e:
         print(f"⚠️ VWAP cross check failed for {symbol}: {e}")
         return False
+
+# ✅ ✅ ✅ BULLISH PIVOT DETECTION ✅ ✅ ✅
+
+def detect_bullish_pivot(df, lookback=5):
+    """
+    Detects bullish pivot where recent low is a higher low compared to previous pivot low.
+    """
+    if len(df) < lookback + 2:
+        return False
+
+    pivot_lows = []
+    for i in range(lookback, len(df) - 1):
+        if df['low'].iloc[i] < df['low'].iloc[i - 1] and df['low'].iloc[i] < df['low'].iloc[i + 1]:
+            pivot_lows.append((i, df['low'].iloc[i]))
+
+    if len(pivot_lows) < 2:
+        return False
+
+    last_pivot = pivot_lows[-1][1]
+    prev_pivot = pivot_lows[-2][1]
+
+    return last_pivot > prev_pivot

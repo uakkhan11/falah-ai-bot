@@ -1,49 +1,50 @@
-# generate_training_data.py
+# model_training.py
+
 import pandas as pd
-import os
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split, cross_val_score
 import joblib
-from ta.momentum import RSIIndicator
-from ta.volatility import AverageTrueRange
-from ta.trend import ADXIndicator, EMAIndicator
-from sklearn.preprocessing import MinMaxScaler
 
-DATA_DIR = '/root/falah-ai-bot/historical_data/'
-OUTPUT_FILE = 'your_training_data.csv'
-TARGET_MOVE = 1.05  # 5% move within 10 candles
+# ✅ Step 1: Load Data
+df = pd.read_csv("your_training_data.csv")
 
-def process_file(filepath):
-    df = pd.read_csv(filepath)
-    if len(df) < 50 or 'close' not in df.columns:
-        return None
-    
-    df['RSI'] = RSIIndicator(close=df['close'], window=14).rsi()
-    df['ATR'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
-    df['ADX'] = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14).adx()
-    df['EMA10'] = EMAIndicator(close=df['close'], window=10).ema_indicator()
-    df['EMA21'] = EMAIndicator(close=df['close'], window=21).ema_indicator()
-    df['VolumeChange'] = df['volume'].pct_change().fillna(0)
+# ✅ Step 2: Clean Data
+features = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"]
+df = df.dropna(subset=features + ["Outcome"])
 
-    df['Future_High'] = df['close'].rolling(window=10, min_periods=1).max().shift(-1)
-    df['Outcome'] = (df['Future_High'] >= df['close'] * TARGET_MOVE).astype(int)
+print(f"✅ Data Loaded: {len(df)} rows | Positive={df['Outcome'].sum()} | Negative={(df['Outcome']==0).sum()}")
 
-    df = df.dropna(subset=['RSI', 'ATR', 'ADX', 'EMA10', 'EMA21', 'VolumeChange', 'Outcome'])
-    return df[['date', 'close', 'RSI', 'ATR', 'ADX', 'EMA10', 'EMA21', 'VolumeChange', 'Outcome']]
+# ✅ Step 3: Prepare Inputs
+X = df[features]
+y = df["Outcome"]
 
-# ✅ Main aggregation
-all_data = []
-for file in os.listdir(DATA_DIR):
-    if not file.endswith('.csv'):
-        continue
-    symbol = file.replace('.csv', '')
-    filepath = os.path.join(DATA_DIR, file)
-    df = process_file(filepath)
-    if df is not None:
-        all_data.append(df)
+# ✅ Step 4: Positive count check
+if y.sum() < 10:
+    print("⚠️ Not enough positive cases (<10). Please check dataset or outcome criteria.")
+    exit()
 
-final_df = pd.concat(all_data, ignore_index=True)
-final_df.to_csv(OUTPUT_FILE, index=False)
+# ✅ Step 5: Train-Test Split
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
 
-print(f"✅ Final dataset saved: {OUTPUT_FILE} | Total rows={len(final_df)}")
+# ✅ Step 6: Train Model
+model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight="balanced")
+model.fit(X_train, y_train)
 
+# ✅ Step 7: Cross Validation
+cv_scores = cross_val_score(model, X_train, y_train, cv=5)
+print(f"✅ Cross-Validation Accuracy (Train): {cv_scores.mean():.4f}")
+
+# ✅ Step 8: Test Accuracy
+test_accuracy = model.score(X_test, y_test)
+print(f"✅ Test Accuracy (20% unseen data): {test_accuracy:.4f}")
+
+# ✅ Step 9: Feature Importance
+print("\n✅ Feature Importances:")
+for feature, importance in zip(features, model.feature_importances_):
+    print(f"{feature}: {importance:.4f}")
+
+# ✅ Step 10: Save Model
 joblib.dump(model, "model.pkl")
 print("\n✅ Model trained and saved to model.pkl")

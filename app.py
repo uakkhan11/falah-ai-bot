@@ -74,7 +74,7 @@ if __name__ == "__main__":
 SPREADSHEET_KEY = secrets["google"]["spreadsheet_key"]
 
 # If you also have the JSON key file for gspread:
-CREDS_JSON = "/root/falah-ai-bot/falah-credentials.json
+CREDS_JSON = "/root/falah-ai-bot/falah-credentials.json"
 
     exit_log_file = "/root/falah-ai-bot/exited_stocks.json"
     sheet_name = secrets["google"]["sheet_name"]

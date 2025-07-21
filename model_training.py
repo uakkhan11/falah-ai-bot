@@ -4,7 +4,7 @@ from sklearn.model_selection import cross_val_score
 import joblib
 
 # ✅ Step 1: Load Data
-df = pd.read_csv("training_data.csv")
+df = pd.read_csv("your_training_data.csv")
 
 # ✅ Step 2: Create Outcome Column — +5% move within next 10 candles
 df['Future_High'] = df['close'].rolling(window=10, min_periods=1).max().shift(-1)

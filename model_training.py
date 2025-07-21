@@ -17,7 +17,7 @@ df = df.dropna(subset=features + ["Outcome"])
 # ✅ Step 4: Recent 2 years filtering
 df["date"] = pd.to_datetime(df["date"])
 cutoff_date = pd.to_datetime("today") - pd.Timedelta(days=730)
-df_recent = df[df["date"] >= cutoff_date]
+df_recent = df
 
 print(f"✅ Filtered Data: {len(df_recent)} rows | Positive={df_recent['Outcome'].sum()} | Negative={(df_recent['Outcome']==0).sum()}")
 

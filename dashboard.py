@@ -45,7 +45,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ✅ PWA (optional, keeps)
+# ✅ PWA injection (Optional)
 def inject_pwa():
     st.markdown("""
     <link rel="manifest" href="/static/manifest.json">
@@ -73,7 +73,6 @@ def get_trade_probability(rsi, atr, ema10, ema21, volume_change):
     features = pd.DataFrame([{"RSI": rsi, "ATR": atr, "EMA10": ema10, "EMA21": ema21, "VolumeChange": volume_change}])
     return model.predict_proba(features)[0][1]
 
-# ✅ Reusable helpers
 def compute_trailing_sl(cmp, atr, atr_multiplier=1.5): return round(cmp - atr * atr_multiplier, 2)
 
 def calculate_quantity(capital, risk_pct, entry, sl):
@@ -90,7 +89,46 @@ def is_market_open():
 secrets = load_secrets()
 BOT_TOKEN, CHAT_ID, SPREADSHEET_KEY = secrets["telegram"]["bot_token"], secrets["telegram"]["chat_id"], secrets["google"]["spreadsheet_key"]
 
-# ✅ Sidebar Parameters
+# ✅ ✅ ✅ Access Token Management
+with st.expander("🔑 Access Token Management"):
+    st.subheader("Generate New Access Token")
+
+    api_key = secrets["zerodha"]["api_key"]
+    api_secret = secrets["zerodha"]["api_secret"]
+
+    kite = KiteConnect(api_key=api_key)
+    login_url = kite.login_url()
+
+    st.markdown(f"[🔗 Click here to login to Zerodha]({login_url})")
+
+    request_token = st.text_input("Paste request_token here")
+
+    if st.button("Generate Access Token"):
+        if not request_token:
+            st.error("Please paste the request_token.")
+        else:
+            try:
+                data = kite.generate_session(request_token, api_secret=api_secret)
+                access_token = data["access_token"]
+
+                # Update secrets.json
+                secrets_path = "/root/falah-ai-bot/secrets.json"
+                if os.path.exists(secrets_path):
+                    with open(secrets_path, "r") as f:
+                        secrets_data = json.load(f)
+                    secrets_data["zerodha"]["access_token"] = access_token
+                    with open(secrets_path, "w") as f:
+                        json.dump(secrets_data, f, indent=2)
+
+                # Save to access_token.json
+                with open("/root/falah-ai-bot/access_token.json", "w") as f:
+                    json.dump({"access_token": access_token}, f)
+
+                st.success("✅ Access token generated and saved successfully!")
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
+
+# ✅ Sidebar Settings
 st.sidebar.header("⚙️ Capital & Trade Settings")
 capital = st.sidebar.number_input("Daily Capital (₹)", 1000, 10_00_000, 100_000, 5000)
 max_trades = st.sidebar.slider("Max Trades", 1, 10, 5)
@@ -101,7 +139,7 @@ min_conf = st.sidebar.slider("Min AI Confidence", 0.1, 1.0, 0.25, 0.05)
 if dry_run:
     st.warning("⚠️ DRY RUN ENABLED: No live orders will be placed.", icon="🚨")
 
-# ✅ Monitor Service
+# ✅ Monitor Controls
 st.subheader("🟢 Monitor Service Controls")
 pid_file = "/root/falah-ai-bot/monitor.pid"
 

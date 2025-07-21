@@ -16,7 +16,7 @@ api_key = secrets["zerodha"]["api_key"]
 access_token = secrets["zerodha"]["access_token"]
 
 # Google Sheet info
-SPREADSHEET_KEY = secrets["sheets"]["SPREADSHEET_KEY"]
+SPREADSHEET_KEY = secrets["google"]["SPREADSHEET_KEY"]
 
 # Init KiteConnect
 kite = KiteConnect(api_key=api_key)

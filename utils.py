@@ -89,25 +89,30 @@ def get_live_price(kite, symbol):
         print(f"❌ Failed to fetch live price for {symbol}: {e}")
         return None
 
-def get_halal_list(sheet_key, creds_file="/root/falah-ai-bot/falah-credentials.json"):
-    """
-    Fetch halal symbols from Google Sheet.
-    """
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(creds_file, scope)
-    client = gspread.authorize(creds)
-
-    sheet = client.open_by_key(sheet_key)
-    ws = sheet.worksheet("HalalList")
-    symbols = ws.col_values(1)
-    symbols = [s.strip().upper() for s in symbols if s and s.lower() != "symbol"]
-    return symbols
+from google.oauth2.service_account import Credentials
 
 def get_halal_list(sheet_key, worksheet_name="HalalList"):
-    import gspread
-    client = gspread.service_account(filename="/root/falah-ai-bot/falah-credentials.json")
-    sheet = client.open_by_key(sheet_key)
-    worksheet = sheet.worksheet(worksheet_name)
-    symbols = worksheet.col_values(1)
-    return [s for s in symbols if s.strip()]
+    """
+    ✅ Fetches Halal symbols from Google Sheet using service account.
+    """
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets.readonly",
+        "https://www.googleapis.com/auth/drive.readonly"
+    ]
+    creds = Credentials.from_service_account_file(
+        "/root/falah-ai-bot/falah-credentials.json",
+        scopes=scopes
+    )
+    client = gspread.authorize(creds)
+
+    try:
+        sheet = client.open_by_key(sheet_key)
+        worksheet = sheet.worksheet(worksheet_name)
+        symbols = worksheet.col_values(1)
+        symbols = [s.strip().upper() for s in symbols if s.strip() and s.lower() != "symbol"]
+        return symbols
+    except Exception as e:
+        print(f"❌ Failed to fetch halal symbols: {e}")
+        return []
+
 

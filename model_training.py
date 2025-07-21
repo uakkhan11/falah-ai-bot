@@ -14,6 +14,8 @@ df['Outcome'] = (df['Future_High'] >= df['close'] * 1.03).astype(int)
 features = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"]
 df = df.dropna(subset=features + ["Outcome"])
 
+print(f"Before date filter: {len(df)} rows | Positive={df['Outcome'].sum()} | Negative={(df['Outcome']==0).sum()}")
+
 # ✅ Step 4: Recent 2 years filtering
 df["date"] = pd.to_datetime(df["date"])
 cutoff_date = pd.to_datetime("today") - pd.Timedelta(days=730)
@@ -57,6 +59,5 @@ joblib.dump(model, "model.pkl")
 print("\n✅ Model trained and saved to model.pkl")
 
 # ✅ Step 13: Summary Log
-print(f"Before date filter: {len(df)} rows | Positive={df['Outcome'].sum()} | Negative={(df['Outcome']==0).sum()}")
 print(f"\n🎉 FINAL SUMMARY:\nTotal Samples={len(df_recent)} | Positives={y.sum()} | Negatives={(y==0).sum()}")
 print(f"Train CV Accuracy={cv_scores.mean():.4f} | Test Accuracy={test_accuracy:.4f}")

@@ -132,7 +132,7 @@ def run_smart_scan():
             print(f"❌ Skipping {sym}: {', '.join(reasons)}")
             continue
 
-        features = [[rsi, ema10, ema21, atr, volume_change]]
+        features = [[rsi, ema10, ema21, atr, volume_change, adx]]
         ai_score = model.predict_proba(features)[0][1] * 5
         score = ai_score
 

@@ -188,7 +188,7 @@ if "scanned" in st.session_state:
 
         for _, row in scanned.iterrows():
             sym, cmp, rsi, atr, adx, ema10, ema21, volchg = row[["Symbol","CMP","RSI","ATR","ADX","EMA10","EMA21","VolumeChange"]]
-            confidence = get_trade_probability(rsi, atr, ema10, ema21, volchg)
+            confidence = get_trade_probability(rsi, atr, adx, ema10, ema21, volchg)
             if confidence < min_conf: st.warning(f"❌ Skipped {sym} (Conf: {confidence:.2f})"); continue
 
             sl = compute_trailing_sl(cmp, atr)

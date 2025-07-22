@@ -227,18 +227,26 @@ if "scanned" in st.session_state:
 
             msg = f"🚀 <b>{sym}</b>\nQty: {qty}\nEntry: ₹{cmp}\nSL: ₹{sl}\nConf: {confidence:.2f}"
 
-            if dry_run:
-                st.success(f"(Dry Run) {msg}")
-                send_telegram(BOT_TOKEN, CHAT_ID, f"[DRY RUN]\n{msg}")
-            elif is_market_open():
-                try:
-                    kite.place_order(kite.VARIETY_REGULAR, kite.EXCHANGE_NSE, sym, kite.TRANSACTION_TYPE_BUY,
-                        qty, kite.ORDER_TYPE_MARKET, kite.PRODUCT_CNC)
-                    st.success(f"✅ Order placed for {sym}")
-                    send_telegram(BOT_TOKEN, CHAT_ID, msg)
-                    log_trade_to_sheet(sym, qty, cmp, rsi, atr, adx, confidence)
-                except Exception as e:
-                    st.error(f"❌ {sym} failed: {e}")
+        if dry_run:
+            st.success(f"(Dry Run) {msg}")
+            send_telegram(BOT_TOKEN, CHAT_ID, f"[DRY RUN]\n{msg}")
+        elif is_market_open():
+            try:
+                kite.place_order(
+                    variety=kite.VARIETY_REGULAR,
+                    exchange=kite.EXCHANGE_NSE,
+                    tradingsymbol=sym,
+                    transaction_type=kite.TRANSACTION_TYPE_BUY,
+                    quantity=qty,
+                    order_type=kite.ORDER_TYPE_MARKET,
+                    product=kite.PRODUCT_CNC
+                )
+                st.success(f"✅ Order placed for {sym}")
+                send_telegram(BOT_TOKEN, CHAT_ID, msg)
+                log_trade_to_sheet(sym, qty, cmp, rsi, atr, adx, confidence)
+            except Exception as e:
+                st.error(f"❌ {sym} failed: {e}")
+        
 # Manual Stock Lookup
 st.subheader("🔍 Manual Stock Lookup")
 symbol_input = st.text_input("Enter NSE Symbol (e.g., INFY)").strip().upper()

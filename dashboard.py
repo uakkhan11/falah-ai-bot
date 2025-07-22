@@ -6,6 +6,7 @@ import streamlit as st
 import pandas as pd
 from kiteconnect import KiteConnect
 import joblib
+import psutil
 
 from credentials import load_secrets, get_kite, validate_kite
 from data_fetch import get_live_ltp
@@ -152,22 +153,51 @@ st.subheader("🟢 Monitor Service Controls")
 pid_file = "/root/falah-ai-bot/monitor.pid"
 
 def monitor_status():
+    # Check if monitor process is running via PID file
     if os.path.exists(pid_file):
-        try: os.kill(int(open(pid_file).read()), 0); return True
-        except: return False
+        try:
+            with open(pid_file, "r") as f:
+                pid = int(f.read().strip())
+            # Check if process with this PID exists and is running
+            if psutil.pid_exists(pid):
+                p = psutil.Process(pid)
+                if "python" in p.name() and "monitor_runner.py" in ' '.join(p.cmdline()):
+                    return True
+        except Exception:
+            pass
     return False
 
 status = "🟢 RUNNING" if monitor_status() else "🔴 STOPPED"
 st.info(f"Monitor Status: **{status}**")
 
 c1, c2, c3 = st.columns(3)
-if c1.button("▶️ Start Monitor") and not monitor_status():
-    subprocess.Popen(["nohup", "python3", "monitor_runner.py"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    st.success("✅ Monitor started.")
-if c2.button("🟥 Stop Monitor") and monitor_status():
-    os.kill(int(open(pid_file).read()), signal.SIGTERM); os.remove(pid_file); st.success("✅ Stopped Monitor."); st.rerun()
-if c3.button("🔄 Run Once"): subprocess.run(["python3", "monitor_runner.py", "--once"]); st.success("✅ Cycle complete.")
 
+if c1.button("▶️ Start Monitor") and not monitor_status():
+    proc = subprocess.Popen(
+        ["nohup", "python3", "monitor_runner.py"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    with open(pid_file, "w") as f:
+        f.write(str(proc.pid))
+    st.success("✅ Monitor started.")
+    st.rerun()
+
+if c2.button("🟥 Stop Monitor") and monitor_status():
+    try:
+        with open(pid_file, "r") as f:
+            pid = int(f.read().strip())
+        os.kill(pid, signal.SIGTERM)
+        os.remove(pid_file)
+        st.success("✅ Stopped Monitor.")
+    except Exception as e:
+        st.error(f"❌ Failed to stop monitor: {e}")
+    st.rerun()
+
+if c3.button("🔄 Run Once"):
+    subprocess.run(["python3", "monitor_runner.py", "--once"])
+    st.success("✅ Cycle complete.")
+    
 # ✅ Live Scanner
 st.subheader("🔍 Auto Scanner")
 if st.button("Scan Stocks"):

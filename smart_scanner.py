@@ -133,7 +133,15 @@ def run_smart_scan():
             continue
 
         features = [[rsi, ema10, ema21, atr, volume_change, adx]]
-        ai_score = model.predict_proba(features)[0][1] * 5
+        features_df = pd.DataFrame([{
+            "RSI": rsi,
+            "EMA10": ema10,
+            "EMA21": ema21,
+            "ATR": atr,
+            "VolumeChange": volume_change,
+            "ADX": adx
+        }])
+        ai_score = model.predict_proba(features_df)[0][1] * 5
         score = ai_score
 
         score_reasons = [f"AI {ai_score:.2f}"]

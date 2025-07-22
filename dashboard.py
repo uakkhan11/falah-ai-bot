@@ -72,12 +72,12 @@ model = load_model()
 def get_trade_probability(rsi, atr, ema10, ema21, volchg, adx):
     import pandas as pd
     features_df = pd.DataFrame([{
-        "RSI": rsi,
-        "EMA10": ema10,
-        "EMA21": ema21,
-        "ATR": atr,
-        "VolumeChange": volchg,
-        "ADX": adx
+        'RSI': rsi,
+        'ATR': atr,
+        'ADX': adx,
+        'EMA10': ema10,
+        'EMA21': ema21,
+        'VolumeChange': volchg
     }])
     return model.predict_proba(features_df)[0][1]
 

@@ -69,9 +69,17 @@ def load_model():
 
 model = load_model()
 
-def get_trade_probability(rsi, atr, ema10, ema21, volume_change):
-    features = pd.DataFrame([{"RSI": rsi, "ATR": atr, "EMA10": ema10, "EMA21": ema21, "VolumeChange": volume_change}])
-    return model.predict_proba(features)[0][1]
+def get_trade_probability(rsi, atr, ema10, ema21, volchg, adx):
+    import pandas as pd
+    features_df = pd.DataFrame([{
+        "RSI": rsi,
+        "EMA10": ema10,
+        "EMA21": ema21,
+        "ATR": atr,
+        "VolumeChange": volchg,
+        "ADX": adx
+    }])
+    return model.predict_proba(features_df)[0][1]
 
 def compute_trailing_sl(cmp, atr, atr_multiplier=1.5): return round(cmp - atr * atr_multiplier, 2)
 

@@ -243,9 +243,24 @@ if "scanned" in st.session_state:
                 )
                 st.success(f"✅ Order placed for {sym}")
                 send_telegram(BOT_TOKEN, CHAT_ID, msg)
-                log_trade_to_sheet(sym, qty, cmp, rsi, atr, adx, confidence)
-            except Exception as e:
-                st.error(f"❌ {sym} failed: {e}")
+                
+                    # Safely log the trade with placeholders for exit-related fields
+                log_trade_to_sheet(
+                    sym,          # symbol
+                    qty,          # quantity
+                    cmp,          # entry price
+                    rsi,          # RSI
+                    atr,          # ATR
+                    adx,          # ADX
+                    confidence,   # AI score
+                    "BUY",        # action
+                    "",           # exit_reason
+                    "",           # pnl
+                    ""            # outcome
+                )
+
+        except Exception as e:
+            st.error(f"❌ {sym} failed: {e}")
         
 # Manual Stock Lookup
 st.subheader("🔍 Manual Stock Lookup")

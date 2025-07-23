@@ -241,14 +241,24 @@ if "scanned" in st.session_state:
                     order_type=kite.ORDER_TYPE_MARKET,
                     product=kite.PRODUCT_CNC
                 )
-                log_trade_to_sheet(sym, qty, cmp, rsi, atr, adx, ai_score,
-                                   action="BUY", exit_reason="", pnl="", outcome="")
+                log_trade_to_sheet(
+                    symbol=sym,
+                    qty=qty,
+                    price=cmp,
+                    rsi=rsi,
+                    atr=atr,
+                    adx=adx,
+                    ai_score=ai_score,
+                    action="BUY",
+                    exit_reason="",
+                    pnl="",
+                    outcome=""
+                )
                 st.success(f"✅ Order placed for {sym}")
                 send_telegram(BOT_TOKEN, CHAT_ID, msg)
-            
+
         except Exception as e:
             st.error(f"❌ {sym} failed: {e}")
-
 
         
 # Manual Stock Lookup

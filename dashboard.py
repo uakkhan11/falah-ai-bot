@@ -212,20 +212,25 @@ if "scanned" in st.session_state:
     scanned = st.session_state["scanned"].sort_values("Score", ascending=False).head(max_trades)
 
     if st.button("🚀 Place Orders"):
-        kite = get_kite()
-        if not validate_kite(kite):
-            st.error("⚠️ Invalid access token."); st.stop()
+    kite = get_kite()
+    if not validate_kite(kite):
+        st.error("⚠️ Invalid access token.")
+        st.stop()
 
-        for _, row in scanned.iterrows():
-            sym, cmp, rsi, atr, adx, ema10, ema21, volchg = row[["Symbol","CMP","RSI","ATR","ADX","EMA10","EMA21","VolumeChange"]]
-            confidence = get_trade_probability(rsi, atr, adx, ema10, ema21, volchg)
-            if confidence < min_conf: st.warning(f"❌ Skipped {sym} (Conf: {confidence:.2f})"); continue
+    for _, row in scanned.iterrows():
+        sym, cmp, rsi, atr, adx, ema10, ema21, volchg = row[["Symbol","CMP","RSI","ATR","ADX","EMA10","EMA21","VolumeChange"]]
+        confidence = get_trade_probability(rsi, atr, adx, ema10, ema21, volchg)
 
-            sl = compute_trailing_sl(cmp, atr)
-            qty = calculate_quantity(capital, risk_pct, cmp, sl)
-            if confidence >= 0.8: qty = int(qty * 1.3)
+        if confidence < min_conf:
+            st.warning(f"❌ Skipped {sym} (Conf: {confidence:.2f})")
+            continue
 
-            msg = f"🚀 <b>{sym}</b>\nQty: {qty}\nEntry: ₹{cmp}\nSL: ₹{sl}\nConf: {confidence:.2f}"
+        sl = compute_trailing_sl(cmp, atr)
+        qty = calculate_quantity(capital, risk_pct, cmp, sl)
+        if confidence >= 0.8:
+            qty = int(qty * 1.3)
+
+        msg = f"🚀 <b>{sym}</b>\nQty: {qty}\nEntry: ₹{cmp}\nSL: ₹{sl}\nConf: {confidence:.2f}"
 
         if dry_run:
             st.success(f"(Dry Run) {msg}")
@@ -248,7 +253,7 @@ if "scanned" in st.session_state:
                     rsi=rsi,
                     atr=atr,
                     adx=adx,
-                    ai_score=ai_score,
+                    ai_score=confidence,
                     action="BUY",
                     exit_reason="",
                     pnl="",

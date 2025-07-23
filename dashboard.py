@@ -212,58 +212,58 @@ if "scanned" in st.session_state:
     scanned = st.session_state["scanned"].sort_values("Score", ascending=False).head(max_trades)
 
     if st.button("🚀 Place Orders"):
-    kite = get_kite()
-    if not validate_kite(kite):
-        st.error("⚠️ Invalid access token.")
-        st.stop()
-
-    for _, row in scanned.iterrows():
-        sym, cmp, rsi, atr, adx, ema10, ema21, volchg = row[["Symbol","CMP","RSI","ATR","ADX","EMA10","EMA21","VolumeChange"]]
-        confidence = get_trade_probability(rsi, atr, adx, ema10, ema21, volchg)
-
-        if confidence < min_conf:
-            st.warning(f"❌ Skipped {sym} (Conf: {confidence:.2f})")
-            continue
-
-        sl = compute_trailing_sl(cmp, atr)
-        qty = calculate_quantity(capital, risk_pct, cmp, sl)
-        if confidence >= 0.8:
-            qty = int(qty * 1.3)
-
-        msg = f"🚀 <b>{sym}</b>\nQty: {qty}\nEntry: ₹{cmp}\nSL: ₹{sl}\nConf: {confidence:.2f}"
-
-        if dry_run:
-            st.success(f"(Dry Run) {msg}")
-            send_telegram(BOT_TOKEN, CHAT_ID, f"[DRY RUN]\n{msg}")
-        elif is_market_open():
-            try:
-                kite.place_order(
-                    variety=kite.VARIETY_REGULAR,
-                    exchange=kite.EXCHANGE_NSE,
-                    tradingsymbol=sym,
-                    transaction_type=kite.TRANSACTION_TYPE_BUY,
-                    quantity=qty,
-                    order_type=kite.ORDER_TYPE_MARKET,
-                    product=kite.PRODUCT_CNC
-                )
-                log_trade_to_sheet(
-                    symbol=sym,
-                    qty=qty,
-                    price=cmp,
-                    rsi=rsi,
-                    atr=atr,
-                    adx=adx,
-                    ai_score=confidence,
-                    action="BUY",
-                    exit_reason="",
-                    pnl="",
-                    outcome=""
-                )
-                st.success(f"✅ Order placed for {sym}")
-                send_telegram(BOT_TOKEN, CHAT_ID, msg)
-
-            except Exception as e:
-                st.error(f"❌ {sym} failed: {e}")
+        kite = get_kite()
+        if not validate_kite(kite):
+            st.error("⚠️ Invalid access token.")
+            st.stop()
+    
+        for _, row in scanned.iterrows():
+            sym, cmp, rsi, atr, adx, ema10, ema21, volchg = row[["Symbol","CMP","RSI","ATR","ADX","EMA10","EMA21","VolumeChange"]]
+            confidence = get_trade_probability(rsi, atr, adx, ema10, ema21, volchg)
+    
+            if confidence < min_conf:
+                st.warning(f"❌ Skipped {sym} (Conf: {confidence:.2f})")
+                continue
+    
+            sl = compute_trailing_sl(cmp, atr)
+            qty = calculate_quantity(capital, risk_pct, cmp, sl)
+            if confidence >= 0.8:
+                qty = int(qty * 1.3)
+    
+            msg = f"🚀 <b>{sym}</b>\nQty: {qty}\nEntry: ₹{cmp}\nSL: ₹{sl}\nConf: {confidence:.2f}"
+    
+            if dry_run:
+                st.success(f"(Dry Run) {msg}")
+                send_telegram(BOT_TOKEN, CHAT_ID, f"[DRY RUN]\n{msg}")
+            elif is_market_open():
+                try:
+                    kite.place_order(
+                        variety=kite.VARIETY_REGULAR,
+                        exchange=kite.EXCHANGE_NSE,
+                        tradingsymbol=sym,
+                        transaction_type=kite.TRANSACTION_TYPE_BUY,
+                        quantity=qty,
+                        order_type=kite.ORDER_TYPE_MARKET,
+                        product=kite.PRODUCT_CNC
+                    )
+                    log_trade_to_sheet(
+                        symbol=sym,
+                        qty=qty,
+                        price=cmp,
+                        rsi=rsi,
+                        atr=atr,
+                        adx=adx,
+                        ai_score=confidence,
+                        action="BUY",
+                        exit_reason="",
+                        pnl="",
+                        outcome=""
+                    )
+                    st.success(f"✅ Order placed for {sym}")
+                    send_telegram(BOT_TOKEN, CHAT_ID, msg)
+    
+                except Exception as e:
+                    st.error(f"❌ {sym} failed: {e}")
         
 # Manual Stock Lookup
 st.subheader("🔍 Manual Stock Lookup")

@@ -259,7 +259,6 @@ if "scanned" in st.session_state:
 
         except Exception as e:
             st.error(f"❌ {sym} failed: {e}")
-
         
 # Manual Stock Lookup
 st.subheader("🔍 Manual Stock Lookup")

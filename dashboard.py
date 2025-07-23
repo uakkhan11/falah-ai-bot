@@ -241,24 +241,9 @@ if "scanned" in st.session_state:
                     order_type=kite.ORDER_TYPE_MARKET,
                     product=kite.PRODUCT_CNC
                 )
+                log_trade_to_sheet(sym, qty, cmp, rsi, atr, adx, ai_score, action="BUY", exit_reason="", pnl="", outcome="")
                 st.success(f"✅ Order placed for {sym}")
                 send_telegram(BOT_TOKEN, CHAT_ID, msg)
-                
-                    # Safely log the trade with placeholders for exit-related fields
-                log_trade_to_sheet(
-                    sym,          # symbol
-                    qty,          # quantity
-                    cmp,          # entry price
-                    rsi,          # RSI
-                    atr,          # ATR
-                    adx,          # ADX
-                    confidence,   # AI score
-                    "BUY",        # action
-                    "",           # exit_reason
-                    "",           # pnl
-                    ""            # outcome
-                )
-
         except Exception as e:
             st.error(f"❌ {sym} failed: {e}")
         

@@ -257,8 +257,8 @@ if "scanned" in st.session_state:
                 st.success(f"✅ Order placed for {sym}")
                 send_telegram(BOT_TOKEN, CHAT_ID, msg)
 
-        except Exception as e:
-            st.error(f"❌ {sym} failed: {e}")
+            except Exception as e:
+                st.error(f"❌ {sym} failed: {e}")
         
 # Manual Stock Lookup
 st.subheader("🔍 Manual Stock Lookup")

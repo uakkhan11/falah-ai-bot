@@ -7,29 +7,31 @@ import pandas_ta as pta
 
 
 def calculate_rsi(df, period=14):
-    return RSIIndicator(close=df["close"], window=period).rsi()
+    df['RSI'] = RSIIndicator(close=df['close'], window=period).rsi()
+    return df
 
 
-def calculate_ema(df, period):
-    return EMAIndicator(close=df["close"], window=period).ema_indicator()
+def calculate_ema(df, period=21, col='close'):
+    df[f'EMA{period}'] = EMAIndicator(close=df[col], window=period).ema_indicator()
+    return df
 
 
 def calculate_macd(df):
-    macd = MACD(close=df["close"])
-    return macd.macd(), macd.macd_signal()
+    macd = MACD(close=df['close'])
+    df['MACD'] = macd.macd()
+    df['Signal'] = macd.macd_signal()
+    return df
 
 
-def detect_macd_bullish_cross(df):
-    macd, signal = calculate_macd(df)
-    if len(macd) < 2:
-        return False
-    return macd.iloc[-2] < signal.iloc[-2] and macd.iloc[-1] > signal.iloc[-1]
+def calculate_vwap(df):
+    df['TP'] = (df['high'] + df['low'] + df['close']) / 3
+    df['VWAP'] = (df['TP'] * df['volume']).cumsum() / df['volume'].cumsum()
+    return df.drop(columns=['TP'])
 
 
 def calculate_atr(df, period=14):
-    return AverageTrueRange(
-        high=df["high"], low=df["low"], close=df["close"], window=period
-    ).average_true_range()
+    df['ATR'] = AverageTrueRange(high=df["high"], low=df["low"], close=df["close"], window=period).average_true_range()
+    return df
 
 
 def calculate_supertrend(df, period=10, multiplier=3):
@@ -69,9 +71,6 @@ def detect_darvas_box(df, lookback=20):
 
 
 def detect_bullish_pivot(df, lookback=5):
-    """
-    Detect bullish pivot where recent low is higher than previous pivot low.
-    """
     if len(df) < lookback + 2:
         return False
     pivot_lows = []
@@ -94,15 +93,27 @@ def detect_recent_swing_low(df, lookback=5):
 
 
 def calculate_chandelier_exit(df, atr_multiplier=3):
-    atr = calculate_atr(df).iloc[-1]
+    atr = df['ATR'].iloc[-1] if 'ATR' in df else calculate_atr(df)['ATR'].iloc[-1]
     highest_close = df["close"].rolling(window=22).max().iloc[-1]
     return round(highest_close - atr * atr_multiplier, 2)
 
 
 def get_best_trailing_sl(df, cmp, atr_multiplier=1.5, lookback=5):
-    atr = calculate_atr(df).iloc[-1]
+    if 'ATR' not in df:
+        df = calculate_atr(df)
+    atr = df['ATR'].iloc[-1]
     recent_low = detect_recent_swing_low(df, lookback)
     chandelier_exit = calculate_chandelier_exit(df, atr_multiplier=3)
     atr_sl = cmp - atr * atr_multiplier
     valid_sl = [sl for sl in [recent_low, chandelier_exit, atr_sl] if sl is not None]
     return round(max(valid_sl), 2) if valid_sl else round(atr_sl, 2)
+
+
+def add_all_indicators(df):
+    df = calculate_rsi(df)
+    df = calculate_ema(df, 10)
+    df = calculate_ema(df, 21)
+    df = calculate_macd(df)
+    df = calculate_vwap(df)
+    df = calculate_atr(df)
+    return df

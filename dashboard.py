@@ -207,16 +207,39 @@ if st.button("🔁 Run Intraday Scanner"):
     st.dataframe(intraday_results)
 
 st.subheader("🔍 Auto Scanner")
+
 if st.button("Scan Stocks"):
     st.info("⏳ Scanning...")
     scanned = run_smart_scan()
+
+    # Save scan results to session
     st.session_state["scanned"] = scanned
+
+    # Show result preview
     if not scanned.empty:
         st.success(f"✅ Found {len(scanned)} candidates.")
         st.dataframe(scanned.head(max_trades))
 
-if "scanned" in st.session_state:
-    scanned = st.session_state["scanned"].sort_values("Score", ascending=False).head(max_trades)
+        # Debug info
+        st.write("✅ Debug: Session scanned keys:")
+        st.write(st.session_state.keys())
+
+        st.write("✅ Debug: Scanned preview:")
+        st.write(scanned.head())
+    else:
+        st.warning("⚠️ No stocks passed all filters.")
+
+# 💡 Safe display of scanned results outside button press
+if "scanned" in st.session_state and not st.session_state["scanned"].empty:
+    scanned_df = st.session_state["scanned"]
+    if "Score" in scanned_df.columns:
+        st.subheader("📊 Top Scanned Stocks")
+        scanned_sorted = scanned_df.sort_values("Score", ascending=False).head(max_trades)
+        st.dataframe(scanned_sorted)
+    else:
+        st.warning("⚠️ 'Score' column missing in scanned data.")
+else:
+    st.info("👈 Click 'Scan Stocks' to begin scanning.")
 
     if st.button("🚀 Place Orders"):
         kite = get_kite()

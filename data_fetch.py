@@ -48,3 +48,17 @@ def get_intraday_data(kite, symbol, interval="15minute", days=1):
     except Exception as e:
         print(f"❌ Failed to fetch intraday data for {symbol}: {e}")
         return None
+
+def get_live_ltp(kite, symbols):
+    """
+    Fetch live LTPs for a list of NSE symbols.
+    Example: ['INFY', 'RELIANCE']
+    Returns: {'INFY': 1525.0, 'RELIANCE': 2850.35}
+    """
+    try:
+        full_symbols = [f"NSE:{symbol}" for symbol in symbols]
+        ltp_data = kite.ltp(full_symbols)
+        return {symbol.split(":")[1]: ltp_data[symbol]["last_price"] for symbol in ltp_data}
+    except Exception as e:
+        print(f"⚠️ Error fetching LTPs: {e}")
+        return {}

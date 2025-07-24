@@ -179,9 +179,13 @@ def run_smart_scan():
     print(df)
     return df
 
-if filtered:
-    with open("final_screened.json", "w") as f:
-        json.dump(filtered, f, indent=4)
-    print(f"✅ Final screened symbols saved to final_screened.json ({len(filtered)} symbols)")
-else:
-    print("⚠️ No stocks passed all filters.")
+if __name__ == "__main__":
+    df = run_smart_scan()
+
+    if not df.empty:
+        screened = {row["Symbol"]: row for _, row in df.iterrows()}
+        with open("final_screened.json", "w") as f:
+            json.dump(screened, f, indent=4)
+        print(f"✅ Final screened symbols saved to final_screened.json ({len(screened)} symbols)")
+    else:
+        print("⚠️ No stocks passed all filters.")

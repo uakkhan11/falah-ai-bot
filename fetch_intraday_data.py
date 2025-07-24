@@ -68,7 +68,16 @@ def fetch_intraday_data(symbols, interval=TIMEFRAME, days=DAYS):
             print(f"❌ {symbol} failed: {e}")
 
 if __name__ == "__main__":
-    # Replace with your own loading logic if needed
-    symbols = ["RELIANCE", "INFY", "TCS"]
+    # ✅ Load your screened Halal + Large/Mid Cap symbols
+    FILTERED_FILE = "/root/falah-ai-bot/final_screened.json"  # or filtered_stocks.json
+
+    if os.path.exists(FILTERED_FILE):
+        with open(FILTERED_FILE) as f:
+            data = json.load(f)
+        symbols = list(data.keys())
+        print(f"🔍 Loaded {len(symbols)} screened symbols.")
+    else:
+        print(f"❌ Screened file not found: {FILTERED_FILE}")
+        symbols = []
 
     fetch_intraday_data(symbols)

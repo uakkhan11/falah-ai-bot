@@ -117,3 +117,21 @@ def add_all_indicators(df):
     df = calculate_vwap(df)
     df = calculate_atr(df)
     return df
+
+def intraday_vwap_bounce_strategy(df):
+    df = add_all_indicators(df)
+    df['Signal'] = False
+
+    for i in range(1, len(df)):
+        cond1 = df['close'].iloc[i - 1] < df['VWAP'].iloc[i - 1] and df['close'].iloc[i] > df['VWAP'].iloc[i]
+        cond2 = df['RSI'].iloc[i] > 45
+        cond3 = df['EMA10'].iloc[i] > df['EMA21'].iloc[i]
+        if cond1 and cond2 and cond3:
+            df.loc[df.index[i], 'Signal'] = True
+    return df
+
+
+def intraday_rsi_breakout(df, threshold=55):
+    df = add_all_indicators(df)
+    df['Signal'] = (df['RSI'] > threshold) & (df['EMA10'] > df['EMA21']) & (df['MACD'] > df['Signal'])
+    return df

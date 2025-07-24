@@ -201,12 +201,11 @@ if c3.button("🔄 Run Once"):
     st.success("✅ Cycle complete.")
     
 # ✅ Live Scanner
+st.subheader("🔍 Auto Scanner")
 
 if st.button("🔁 Run Intraday Scanner"):
     intraday_results = run_intraday_scan()
     st.dataframe(intraday_results)
-
-st.subheader("🔍 Auto Scanner")
 
 if st.button("Scan Stocks"):
     st.info("⏳ Scanning...")

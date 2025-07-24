@@ -174,7 +174,10 @@ def run_smart_scan():
         del df
         gc.collect()
 
-    df = pd.DataFrame(results).sort_values(by="Score", ascending=False)
+    if results:
+        df = pd.DataFrame(results).sort_values(by="Score", ascending=False)
+    else:
+        df = pd.DataFrame()
     print(f"✅ Final selected {len(df)} stocks.")
     print(df)
     return df

@@ -1,60 +1,78 @@
 # intraday_scanner.py
-
 import os
+import json
 import pandas as pd
+from datetime import datetime, timedelta
+import pytz
 import joblib
 
-from indicators import intraday_vwap_bounce_strategy, intraday_rsi_breakout_strategy
-from ai_engine import extract_features  # your feature function
-from credentials import load_secrets
+from kiteconnect import KiteConnect
+from data_fetch import get_intraday_data  # Assumes you have 15min intraday fetcher
+from ai_engine import extract_features   # Now available
+from credentials import get_kite
 
-INTRADAY_DIR = "/root/falah-ai-bot/intraday_data/"
-model = joblib.load("model.pkl")
+# Constants
+IST = pytz.timezone("Asia/Kolkata")
+MODEL_PATH = "model.pkl"
+FILTERED_FILE = "final_screened.json"
+THRESHOLD = 0.25  # AI score threshold
 
 def run_intraday_scan():
+    # ✅ Load filtered stocks
+    if not os.path.exists(FILTERED_FILE):
+        print(f"❌ Filtered file not found: {FILTERED_FILE}")
+        return pd.DataFrame()
+
+    with open(FILTERED_FILE) as f:
+        data = json.load(f)
+    symbols = list(data.keys())
+    print(f"🔍 Loaded {len(symbols)} symbols for intraday scan")
+
+    # ✅ Load AI model
+    try:
+        model = joblib.load(MODEL_PATH)
+        print("✅ AI model loaded")
+    except Exception as e:
+        print(f"❌ Failed to load model: {e}")
+        return pd.DataFrame()
+
+    kite = get_kite()
     results = []
 
-    for file in os.listdir(INTRADAY_DIR):
-        if file.endswith(".csv"):
-            symbol = file.replace(".csv", "")
-            path = os.path.join(INTRADAY_DIR, file)
+    for symbol in symbols:
+        try:
+            df = get_intraday_data(kite, symbol, interval="15minute", days=1)
+            if df is None or len(df) < 21:
+                continue
 
-            try:
-                df = pd.read_csv(path)
-                if len(df) < 20:
-                    continue
+            features = extract_features(df)
+            if features is None:
+                continue
 
-                signal = False
-                strategy = ""
+            X = pd.DataFrame([features])
+            score = model.predict_proba(X)[0][1]  # Assuming binary model, class 1 = bullish
 
-                if intraday_vwap_bounce_strategy(df)['Signal'].iloc[-1]:
-                    signal = True
-                    strategy = "VWAP Bounce"
+            if score >= THRESHOLD:
+                results.append({
+                    "Symbol": symbol,
+                    "Score": round(score, 3),
+                    "RSI": round(features["RSI"], 2),
+                    "EMA10": round(features["EMA10"], 2),
+                    "EMA21": round(features["EMA21"], 2),
+                    "VolumeChange": round(features["VolumeChange"], 2),
+                })
 
-                elif intraday_rsi_breakout_strategy(df)['Signal'].iloc[-1]:
-                    signal = True
-                    strategy = "RSI Breakout"
+        except Exception as e:
+            print(f"⚠️ {symbol}: {e}")
+            continue
 
-                if signal:
-                    features = extract_features(df)
-                    ai_score = model.predict_proba([features])[0][1]
+    if not results:
+        print("⚠️ No stocks passed AI intraday filters")
+        return pd.DataFrame()
 
-                    if ai_score >= 0.25:
-                        results.append({
-                            "Symbol": symbol,
-                            "Strategy": strategy,
-                            "Close": df['close'].iloc[-1],
-                            "AI Score": round(ai_score, 4)
-                        })
+    return pd.DataFrame(results).sort_values(by="Score", ascending=False)
 
-            except Exception as e:
-                print(f"❌ {symbol} error: {e}")
-
-    df_results = pd.DataFrame(results)
-    print(f"📊 Intraday AI Picks: {len(df_results)}")
-    print(df_results)
-    return df_results
-
-
+# Debug run
 if __name__ == "__main__":
-    run_intraday_scan()
+    df = run_intraday_scan()
+    print(df)

@@ -105,3 +105,37 @@ def analyze_exit_signals(kite, symbol, avg_price, current_price):
         return []
     except Exception as e:
         return [f"Error: {e}"]
+
+def extract_features(df):
+    """
+    Extracts key features for a given stock DataFrame:
+    - RSI
+    - EMA10 / EMA21
+    - ATR
+    - VolumeChange
+    """
+    from ta.momentum import RSIIndicator
+    from ta.trend import EMAIndicator
+    from ta.volatility import AverageTrueRange
+
+    if len(df) < 21:
+        return None
+
+    df = df.copy()
+
+    df["EMA10"] = EMAIndicator(close=df["close"], window=10).ema_indicator()
+    df["EMA21"] = EMAIndicator(close=df["close"], window=21).ema_indicator()
+    df["RSI"] = RSIIndicator(close=df["close"], window=14).rsi()
+    df["ATR"] = AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range()
+    df["VolumeChange"] = df["volume"] / (df["volume"].rolling(10).mean() + 1e-9)
+
+    last = df.iloc[-1]
+
+    return {
+        "RSI": last["RSI"],
+        "EMA10": last["EMA10"],
+        "EMA21": last["EMA21"],
+        "ATR": last["ATR"],
+        "VolumeChange": last["VolumeChange"],
+    }
+    

@@ -1,47 +1,36 @@
 import os
 import pandas as pd
-from indicators import add_all_indicators
-from strategies_intraday import vwap_bounce_strategy, rsi_breakout_strategy
+from indicators import add_all_indicators, intraday_vwap_bounce_strategy
+from datetime import datetime
 
-DATA_DIR = "/root/falah-ai-bot/intraday_data/"
-STRATEGIES = {
-    "VWAP Bounce": vwap_bounce_strategy,
-    "RSI Breakout": rsi_breakout_strategy
-}
+DATA_PATH = "/root/falah-ai-bot/historical_data_intraday/"  # Make sure this has 15min/60min files
 
-def run_backtest(file_path, strategy_func):
-    df = pd.read_csv(file_path)
-    df = add_all_indicators(df)
-    df = strategy_func(df)
+results = []
+for file in os.listdir(DATA_PATH):
+    if file.endswith(".csv"):
+        symbol = file.replace(".csv", "")
+        try:
+            df = pd.read_csv(os.path.join(DATA_PATH, file))
+            df['datetime'] = pd.to_datetime(df['datetime'])
+            df = df.sort_values("datetime")
+            df = intraday_vwap_bounce_strategy(df)
 
-    trades = []
-    for i in range(1, len(df)):
-        if df['Signal'].iloc[i]:
-            entry = df['close'].iloc[i]
-            atr = df['ATR'].iloc[i]
-            sl = entry - atr * 1.5
-            tp = entry + (entry - sl) * 2
-            outcome = None
+            trades = df[df['Signal']].copy()
+            for _, row in trades.iterrows():
+                entry_price = row['close']
+                sl = entry_price * 0.98
+                target = entry_price * 1.04
+                results.append({
+                    'symbol': symbol,
+                    'date': row['datetime'],
+                    'entry_price': entry_price,
+                    'sl': sl,
+                    'target': target
+                })
 
-            for j in range(i+1, min(i+10, len(df))):
-                high = df['high'].iloc[j]
-                low = df['low'].iloc[j]
-                if high >= tp:
-                    outcome = "Target Hit"
-                    break
-                elif low <= sl:
-                    outcome = "SL Hit"
-                    break
-            trades.append((df['date'].iloc[i], entry, sl, tp, outcome))
-    return trades
+        except Exception as e:
+            print(f"❌ {symbol} failed: {e}")
 
-if __name__ == "__main__":
-    for file in os.listdir(DATA_DIR):
-        if not file.endswith(".csv"): continue
-        file_path = os.path.join(DATA_DIR, file)
-        print(f"\n📊 {file}")
-        for strat_name, strat_func in STRATEGIES.items():
-            trades = run_backtest(file_path, strat_func)
-            print(f"📈 {strat_name}: {len(trades)} trades")
-            outcome_count = pd.Series([t[-1] for t in trades]).value_counts()
-            print(outcome_count.to_string())
+bt_df = pd.DataFrame(results)
+bt_df.to_csv("intraday_backtest_results.csv", index=False)
+print(f"✅ Backtest completed. Total trades: {len(bt_df)}")

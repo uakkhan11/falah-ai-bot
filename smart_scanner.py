@@ -178,3 +178,10 @@ def run_smart_scan():
     print(f"✅ Final selected {len(df)} stocks.")
     print(df)
     return df
+
+if filtered:
+    with open("final_screened.json", "w") as f:
+        json.dump(filtered, f, indent=4)
+    print(f"✅ Final screened symbols saved to final_screened.json ({len(filtered)} symbols)")
+else:
+    print("⚠️ No stocks passed all filters.")

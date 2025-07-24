@@ -109,8 +109,8 @@ def run_smart_scan():
         reasons = []
 
         # Filter 1: RSI Zone
-        if not (35 <= rsi <= 70):
-            reasons.append(f"RSI {rsi:.2f} out of range (35-70)")
+        if not (32 <= rsi <= 70):
+            reasons.append(f"RSI {rsi:.2f} out of range (32-70)")
 
         # Filter 2: EMA10 > EMA21 mandatory
         if ema10 <= ema21:

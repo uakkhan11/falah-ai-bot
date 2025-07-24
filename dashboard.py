@@ -10,7 +10,9 @@ import psutil
 
 from credentials import load_secrets, get_kite, validate_kite
 from data_fetch import get_live_ltp
+from fetch_intraday_data import fetch_intraday_data
 from fetch_historical_batch import fetch_all_historical
+from intraday_scanner import run_intraday_scan
 from smart_scanner import run_smart_scan
 from stock_analysis import analyze_stock, get_regime
 from bulk_analysis import analyze_multiple_stocks
@@ -199,6 +201,11 @@ if c3.button("🔄 Run Once"):
     st.success("✅ Cycle complete.")
     
 # ✅ Live Scanner
+
+if st.button("🔁 Run Intraday Scanner"):
+    intraday_results = run_intraday_scan()
+    st.dataframe(intraday_results)
+
 st.subheader("🔍 Auto Scanner")
 if st.button("Scan Stocks"):
     st.info("⏳ Scanning...")
@@ -335,6 +342,20 @@ b1, b2, b3 = st.columns(3)
 if b1.button("📥 Fetch Historical"): fetch_all_historical(); st.success("✅ Historical fetched.")
 if b2.button("▶️ Start Websockets"): start_all_websockets(); st.success("✅ Live Feed Started.")
 if b3.button("🛑 Stop Websockets"): st.info("❌ Stop WS not implemented.")
+
+st.subheader("🕐 Intraday Data Fetcher")
+
+interval = st.selectbox("Select timeframe", ["15minute", "60minute"], index=0)
+days = st.slider("How many past days?", 1, 10, 5)
+
+if st.button("📥 Fetch Intraday Data Now"):
+    st.info("Fetching intraday data, please wait...")
+
+    try:
+        fetch_intraday_data(large_mid_symbols, interval=interval, days=days)
+        st.success("✅ Intraday data fetched successfully.")
+    except Exception as e:
+        st.error(f"❌ Error fetching data: {e}")
 
 if os.path.exists("/root/falah-ai-bot/last_fetch.txt"):
     st.info(f"Last Fetch: {open('/root/falah-ai-bot/last_fetch.txt').read().strip()}")

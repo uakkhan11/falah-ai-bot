@@ -19,7 +19,9 @@ def get_kite():
     creds = secrets["zerodha"]
 
     kite = KiteConnect(api_key=creds["api_key"])
-    kite.set_access_token(access_token)
+    kite.set_access_token(creds["access_token"])
+    with open("/root/falah-ai-bot/tokens.json") as f:
+        token_map = json.load(f)
     return kite
 
 def get_all_instruments(kite):

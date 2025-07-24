@@ -1,82 +1,50 @@
-from kiteconnect import KiteConnect
-from datetime import datetime, timedelta
-import pytz
-import pandas as pd
-
-IST = pytz.timezone("Asia/Kolkata")
-
-
-def get_cnc_holdings(kite: KiteConnect):
+def get_intraday_data(kite, symbol, interval="15minute", days=1):
     """
-    Fetch CNC holdings.
+    Fetch intraday data for the given symbol using Zerodha Kite.
+    - interval: '5minute', '15minute', etc.
+    - days: number of past days (default 1 for intraday)
     """
-    return kite.holdings()
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import pytz
 
+    ist = pytz.timezone("Asia/Kolkata")
+    now = datetime.now(ist)
+    from_date = now - timedelta(days=days)
+    to_date = now
 
-def get_live_ltp(kite: KiteConnect, symbol: str):
-    """
-    Fetch LTP for a symbol.
-    """
+    # Get instrument token
+    instrument_token = None
     try:
-        full_symbol = f"NSE:{symbol}"
-        print(f"Fetching LTP for {full_symbol}")
-        data = kite.ltp(full_symbol)
-        print("Raw LTP Response:", data)
+        instrument_dump = kite.instruments("NSE")
+        instrument_df = pd.DataFrame(instrument_dump)
+        row = instrument_df[instrument_df["tradingsymbol"] == symbol]
+        if not row.empty:
+            instrument_token = int(row.iloc[0]["instrument_token"])
+    except Exception as e:
+        print(f"⚠️ Failed to fetch instrument token for {symbol}: {e}")
+        return None
 
-        if full_symbol not in data:
-            raise Exception(f"Symbol '{symbol}' not found in LTP response.")
+    if not instrument_token:
+        print(f"❌ Instrument token not found for {symbol}")
+        return None
 
-        return data[full_symbol]["last_price"]
+    try:
+        data = kite.historical_data(
+            instrument_token,
+            from_date,
+            to_date,
+            interval=interval,
+            continuous=False
+        )
+        df = pd.DataFrame(data)
+        if df.empty:
+            return None
+
+        df["date"] = pd.to_datetime(df["date"]).dt.tz_convert("Asia/Kolkata")
+        df.set_index("date", inplace=True)
+        return df
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise Exception(f"LTP fetch error: {e}")
-
-
-def fetch_historical_candles(kite: KiteConnect, instrument_token: str, interval="day", days=60):
-    """
-    Fetch historical candles for a given instrument.
-    """
-    to_date = datetime.now(IST)
-    from_date = to_date - timedelta(days=days)
-
-    candles = kite.historical_data(
-        instrument_token,
-        from_date,
-        to_date,
-        interval
-    )
-
-    df = pd.DataFrame(candles)
-    if df.empty:
-        raise ValueError("No historical data returned.")
-    df.columns = [c.capitalize() for c in df.columns]
-    if len(df) < 20:
-        raise ValueError(f"Only {len(df)} rows fetched. Need at least 20 rows for indicators.")
-    return df
-
-
-def fetch_recent_historical(kite: KiteConnect, symbol: str, interval="15minute", days=5):
-    """
-    Fetch recent historical data for a given NSE symbol (15m default).
-    """
-    print(f"Fetching recent historical for {symbol}...")
-    instrument_token = kite.ltp(f"NSE:{symbol}")[f"NSE:{symbol}"]["instrument_token"]
-    print(f"Resolved {symbol} -> Token {instrument_token}")
-
-    to_date = datetime.now(IST)
-    from_date = to_date - timedelta(days=days)
-
-    candles = kite.historical_data(
-        instrument_token,
-        from_date,
-        to_date,
-        interval
-    )
-
-    df = pd.DataFrame(candles)
-    if df.empty:
-        raise ValueError(f"No data for {symbol} - {interval}.")
-    df.columns = [c.capitalize() for c in df.columns]
-    return df
+        print(f"❌ Failed to fetch intraday data for {symbol}: {e}")
+        return None

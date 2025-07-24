@@ -6,12 +6,19 @@ import os
 import json
 import pandas as pd
 
-from credentials import get_kite  # ✅ Make sure this exists
-# LARGE_MID_CAP_FILE = "/root/falah-ai-bot/large_mid_cap.json"  # optional
+from credentials import load_secrets  # ✅ You already have this
+from access_token import get_access_token  # ✅ Custom logic you use
 
 INTRADAY_DIR = "/root/falah-ai-bot/intraday_data/"
-TIMEFRAME = "15minute"  # change to "60minute" if needed
+TIMEFRAME = "15minute"  # or "60minute"
 DAYS = 5
+
+def get_kite():
+    creds = load_secrets()
+    access_token = get_access_token()
+    kite = KiteConnect(api_key=creds["api_key"])
+    kite.set_access_token(access_token)
+    return kite
 
 def get_all_instruments(kite):
     try:
@@ -57,11 +64,7 @@ def fetch_intraday_data(symbols, interval=TIMEFRAME, days=DAYS):
             print(f"❌ {symbol} failed: {e}")
 
 if __name__ == "__main__":
-    # Static test symbols — you can load dynamically instead
+    # Replace with your own loading logic if needed
     symbols = ["RELIANCE", "INFY", "TCS"]
-
-    # Optional: load from large_mid_cap.json
-    # with open(LARGE_MID_CAP_FILE) as f:
-    #     symbols = json.load(f)
 
     fetch_intraday_data(symbols)

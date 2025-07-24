@@ -1,10 +1,16 @@
 # fetch_intraday_data.py
 
-import os
-import pandas as pd
 from kiteconnect import KiteConnect
-from datetime import datetime, timedelta
-from credentials import get_kite, get_all_instruments
+import os
+import json
+
+def get_all_instruments(kite):
+    try:
+        instruments = kite.instruments("NSE")
+        return instruments
+    except Exception as e:
+        print(f"❌ Failed to fetch instruments: {e}")
+        return []
 
 INTRADAY_DIR = "/root/falah-ai-bot/intraday_data/"
 TIMEFRAME = "15minute"  # change to "60minute" if needed

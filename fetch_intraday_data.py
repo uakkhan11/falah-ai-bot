@@ -6,16 +6,18 @@ import os
 import json
 import pandas as pd
 
-from credentials import load_secrets  # ✅ You already have this
-from access_token import get_access_token  # ✅ Custom logic you use
+from credentials import load_secrets
+
 
 INTRADAY_DIR = "/root/falah-ai-bot/intraday_data/"
 TIMEFRAME = "15minute"  # or "60minute"
 DAYS = 5
 
 def get_kite():
-    creds = load_secrets()
-    access_token = get_access_token()
+# Load credentials
+    secrets = load_secrets()
+    creds = secrets["zerodha"]
+
     kite = KiteConnect(api_key=creds["api_key"])
     kite.set_access_token(access_token)
     return kite

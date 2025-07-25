@@ -192,3 +192,10 @@ if __name__ == "__main__":
         print(f"✅ Final screened symbols saved to final_screened.json ({len(screened)} symbols)")
     else:
         print("⚠️ No stocks passed all filters.")
+
+missing = []
+...
+if not token:
+    missing.append(sym)
+...
+print("⚠️ Missing tokens for:", missing)

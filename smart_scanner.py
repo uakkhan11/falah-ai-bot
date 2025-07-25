@@ -192,15 +192,3 @@ if __name__ == "__main__":
         print(f"✅ Final screened symbols saved to final_screened.json ({len(screened)} symbols)")
     else:
         print("⚠️ No stocks passed all filters.")
-
-# Load tokens
-with open("tokens.json") as f:
-    token_map = json.load(f)
-
-...
-
-for sym in symbols:
-    token = token_map.get(sym)
-    if not token:
-        print(f"⚠️ No token for {sym}")
-        continue

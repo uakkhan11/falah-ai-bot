@@ -193,9 +193,14 @@ if __name__ == "__main__":
     else:
         print("⚠️ No stocks passed all filters.")
 
-missing = []
+# Load tokens
+with open("tokens.json") as f:
+    token_map = json.load(f)
+
 ...
-if not token:
-    missing.append(sym)
-...
-print("⚠️ Missing tokens for:", missing)
+
+for sym in symbols:
+    token = token_map.get(sym)
+    if not token:
+        print(f"⚠️ No token for {sym}")
+        continue

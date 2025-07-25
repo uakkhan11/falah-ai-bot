@@ -83,6 +83,16 @@ kws.on_connect = on_connect
 kws.on_close = on_close
 kws.on_error = on_error
 
+from datetime import datetime, time as dt_time
+
+def is_market_open():
+    now = datetime.now().time()
+    return dt_time(9, 15) <= now <= dt_time(15, 30)
+
 print(f"[{datetime.now()}] 🔄 Starting WebSocket worker...")
-schedule_cleanup()
-kws.connect(threaded=False)
+
+if is_market_open():
+    schedule_cleanup()
+    kws.connect(threaded=False)
+else:
+    print(f"[{datetime.now()}] 🔒 Market is closed. Exiting WebSocket worker.")

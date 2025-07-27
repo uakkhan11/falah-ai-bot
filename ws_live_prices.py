@@ -5,7 +5,7 @@ from kiteconnect import KiteConnect
 from credentials import load_secrets
 import subprocess
 
-def start_websocket():
+def start_all_websockets():
     secrets = load_secrets()
     api_key = secrets["zerodha"]["api_key"]
     access_token = secrets["zerodha"]["access_token"]

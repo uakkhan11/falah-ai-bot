@@ -1,4 +1,5 @@
 # smart_scanner.py
+
 import os
 import pandas as pd
 from indicators import (
@@ -8,7 +9,7 @@ from indicators import (
 )
 from ai_engine import compute_ai_score
 from price_fetcher import get_price
-from amfi_fetcher import load_large_midcap_symbols
+from amfi_fetcher import load_large_midcap_symbols  # ✅ FIXED import
 from holdings import get_existing_holdings
 
 DATA_DIR = "/root/falah-ai-bot/historical_data"
@@ -29,12 +30,12 @@ def run_smart_scan():
 
     for symbol in sorted(large_midcap_symbols):
         if symbol in holdings:
-            skip_reasons["Skipping existing holdings/positions"] = skip_reasons.get("Skipping existing holdings/positions", 0) + 1
+            skip_reasons["Holdings"] = skip_reasons.get("Holdings", 0) + 1
             continue
 
         filepath = os.path.join(DATA_DIR, f"{symbol}.csv")
         if not os.path.exists(filepath):
-            skip_reasons["Missing historical file"] = skip_reasons.get("Missing historical file", 0) + 1
+            skip_reasons["Missing file"] = skip_reasons.get("Missing file", 0) + 1
             continue
 
         df = pd.read_csv(filepath)
@@ -51,15 +52,15 @@ def run_smart_scan():
         ema10 = df["ema10"].iloc[-1]
         ema21 = df["ema21"].iloc[-1]
 
-        # Filter: EMA10 > EMA21
+        # Filter: EMA
         if ema10 <= ema21:
-            skip_reasons["EMA10 below EMA21"] = skip_reasons.get("EMA10 below EMA21", 0) + 1
+            skip_reasons["EMA10 < EMA21"] = skip_reasons.get("EMA10 < EMA21", 0) + 1
             continue
         filter_stats["ema_pass"] += 1
 
-        # Filter: RSI between 30–75
+        # Filter: RSI
         if rsi < 30 or rsi > 75:
-            skip_reasons[f"RSI {rsi:.2f} out of range (30-75)"] = skip_reasons.get(f"RSI {rsi:.2f} out of range (30-75)", 0) + 1
+            skip_reasons[f"RSI {round(rsi, 2)} out of 30-75"] = skip_reasons.get(f"RSI {round(rsi, 2)} out of 30-75", 0) + 1
             continue
         filter_stats["rsi_pass"] += 1
 
@@ -69,19 +70,19 @@ def run_smart_scan():
             continue
         filter_stats["pivot_pass"] += 1
 
-        # Filter: MACD Bullish Cross
+        # Filter: MACD bullish cross
         if not detect_macd_bullish_cross(df):
             skip_reasons["No MACD bullish cross"] = skip_reasons.get("No MACD bullish cross", 0) + 1
             continue
         filter_stats["macd_pass"] += 1
 
-        # Filter: Supertrend Green
+        # Filter: Supertrend green
         if not detect_supertrend_green(df):
             skip_reasons["Supertrend not green"] = skip_reasons.get("Supertrend not green", 0) + 1
             continue
         filter_stats["supertrend_pass"] += 1
 
-        # ✅ Passed all filters, get live price and AI score
+        # Passed all filters
         ltp = get_price(symbol)
         ai_score = compute_ai_score(df)
 

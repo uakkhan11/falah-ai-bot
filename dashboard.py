@@ -227,14 +227,6 @@ if st.button("Scan Stocks"):
 
         st.write("✅ Debug: Scanned preview:")
         st.write(scanned_df.head())
-        # Debug info
-        st.write("✅ Debug: Session scanned keys:")
-        st.write(st.session_state.keys())
-
-        st.write("✅ Debug: Scanned preview:")
-        st.write(scanned.head())
-    else:
-        st.warning("⚠️ No stocks passed all filters.")
 
 # 💡 Safe display of scanned results outside button press
 if "scanned" in st.session_state and not st.session_state["scanned"].empty:

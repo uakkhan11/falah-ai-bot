@@ -23,6 +23,17 @@ def compute_ai_score(df):
     if df is None or len(df) < 21:
         return 0, ["Insufficient data"]
 
+    try:
+        features = extract_features(df)
+        if not features:
+            return 0.0, ["Invalid features"]
+
+        model = joblib.load("model.pkl")
+        probs = model.predict_proba([list(features.values())])  # [[0.3, 0.7]]
+        ai_score = float(probs[0][1])  # Positive class score
+
+        reasons = []
+
     df = df.copy()
 
     df["EMA10"] = EMAIndicator(close=df["close"], window=10).ema_indicator()

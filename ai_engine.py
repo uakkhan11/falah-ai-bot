@@ -1,11 +1,69 @@
 # ai_engine.py
+
 import pandas as pd
 from datetime import datetime
 import pytz
-from ta.trend import ADXIndicator
-from data_fetch import fetch_recent_historical  # assumes you already have this implemented
+from ta.trend import ADXIndicator, EMAIndicator
+from ta.momentum import RSIIndicator
+from ta.volatility import AverageTrueRange
+from data_fetch import fetch_recent_historical  # assumes already implemented
 
 IST = pytz.timezone("Asia/Kolkata")
+
+def compute_ai_score(df):
+    """
+    Compute a bullish entry score for the given stock data.
+    Factors considered:
+    - RSI between 35-65 or 65-70 with extra boost
+    - EMA10 > EMA21
+    - Volume surge (last volume > 1.3x average)
+    - Green candle
+    - Supertrend confirmation (if available)
+    """
+    if df is None or len(df) < 21:
+        return 0, ["Insufficient data"]
+
+    df = df.copy()
+
+    df["EMA10"] = EMAIndicator(close=df["close"], window=10).ema_indicator()
+    df["EMA21"] = EMAIndicator(close=df["close"], window=21).ema_indicator()
+    df["RSI"] = RSIIndicator(close=df["close"], window=14).rsi()
+    df["ATR"] = AverageTrueRange(high=df["high"], low=df["low"], close=df["close"], window=14).average_true_range()
+    df["VolumeChange"] = df["volume"] / (df["volume"].rolling(10).mean() + 1e-9)
+
+    last = df.iloc[-1]
+    score = 0
+    reasons = []
+
+    if last["EMA10"] > last["EMA21"]:
+        score += 10
+        reasons.append("EMA10 > EMA21")
+
+    if 35 <= last["RSI"] <= 65:
+        score += 10
+        reasons.append("RSI between 35-65")
+
+    elif 65 < last["RSI"] <= 70:
+        score += 5
+        reasons.append("RSI 65-70")
+
+    elif last["RSI"] > 70:
+        score -= 10
+        reasons.append("RSI > 70 (overbought)")
+
+    if last["VolumeChange"] > 1.3:
+        score += 10
+        reasons.append("Volume spike")
+
+    if last["close"] > last["open"]:
+        score += 5
+        reasons.append("Green candle")
+
+    if "Supertrend" in df.columns and last["close"] > last["Supertrend"]:
+        score += 5
+        reasons.append("Supertrend green")
+
+    return score, reasons
 
 
 def calculate_ai_exit_score(stock_data, trailing_sl, current_price, atr_value=None):
@@ -87,9 +145,6 @@ def calculate_ai_exit_score(stock_data, trailing_sl, current_price, atr_value=No
 
 
 def analyze_exit_signals(kite, symbol, avg_price, current_price):
-    """
-    Main function to fetch recent data, compute exit score, and return reasons.
-    """
     try:
         stock_data = fetch_recent_historical(kite, symbol, days=30)
         if len(stock_data) < 15:
@@ -106,18 +161,8 @@ def analyze_exit_signals(kite, symbol, avg_price, current_price):
     except Exception as e:
         return [f"Error: {e}"]
 
-def extract_features(df):
-    """
-    Extracts key features for a given stock DataFrame:
-    - RSI
-    - EMA10 / EMA21
-    - ATR
-    - VolumeChange
-    """
-    from ta.momentum import RSIIndicator
-    from ta.trend import EMAIndicator
-    from ta.volatility import AverageTrueRange
 
+def extract_features(df):
     if len(df) < 21:
         return None
 
@@ -138,4 +183,3 @@ def extract_features(df):
         "ATR": last["ATR"],
         "VolumeChange": last["VolumeChange"],
     }
-    

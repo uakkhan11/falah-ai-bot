@@ -2,7 +2,7 @@
 import os
 import json
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 import joblib
 
@@ -18,23 +18,42 @@ FILTERED_FILE = "final_screened.json"
 THRESHOLD = 0.25  # AI score threshold
 
 def run_intraday_scan():
+    debug_logs = []
+
     # ✅ Load filtered stocks
     if not os.path.exists(FILTERED_FILE):
-        print(f"❌ Filtered file not found: {FILTERED_FILE}")
-        return pd.DataFrame()
+        msg = f"❌ Filtered file not found: {FILTERED_FILE}"
+        print(msg)
+        debug_logs.append(msg)
+        return pd.DataFrame(), debug_logs
 
     with open(FILTERED_FILE) as f:
         data = json.load(f)
-    symbols = list(data.keys())
+
+    # ✅ Handle different formats
+    if isinstance(data, dict):
+        symbols = list(data.keys())
+    elif isinstance(data, list):
+        symbols = [d.get("symbol") for d in data if isinstance(d, dict) and "symbol" in d]
+    else:
+        msg = f"❌ Unsupported format in {FILTERED_FILE}"
+        print(msg)
+        debug_logs.append(msg)
+        return pd.DataFrame(), debug_logs
+
     print(f"🔍 Loaded {len(symbols)} symbols for intraday scan")
+    debug_logs.append(f"Loaded {len(symbols)} symbols")
 
     # ✅ Load AI model
     try:
         model = joblib.load(MODEL_PATH)
         print("✅ AI model loaded")
+        debug_logs.append("AI model loaded")
     except Exception as e:
-        print(f"❌ Failed to load model: {e}")
-        return pd.DataFrame()
+        msg = f"❌ Failed to load model: {e}"
+        print(msg)
+        debug_logs.append(msg)
+        return pd.DataFrame(), debug_logs
 
     kite = get_kite()
     results = []
@@ -43,36 +62,48 @@ def run_intraday_scan():
         try:
             df = get_intraday_data(kite, symbol, interval="15minute", days=1)
             if df is None or len(df) < 21:
+                debug_logs.append(f"⏭ Skipped {symbol}: insufficient data")
                 continue
 
             features = extract_features(df)
             if features is None:
+                debug_logs.append(f"⏭ Skipped {symbol}: feature extraction failed")
                 continue
 
             X = pd.DataFrame([features])
-            score = model.predict_proba(X)[0][1]  # Assuming binary model, class 1 = bullish
+            score = model.predict_proba(X)[0][1]
 
             if score >= THRESHOLD:
                 results.append({
                     "Symbol": symbol,
                     "Score": round(score, 3),
-                    "RSI": round(features["RSI"], 2),
-                    "EMA10": round(features["EMA10"], 2),
-                    "EMA21": round(features["EMA21"], 2),
-                    "VolumeChange": round(features["VolumeChange"], 2),
+                    "RSI": round(features.get("RSI", 0), 2),
+                    "EMA10": round(features.get("EMA10", 0), 2),
+                    "EMA21": round(features.get("EMA21", 0), 2),
+                    "VolumeChange": round(features.get("VolumeChange", 0), 2),
                 })
+                debug_logs.append(f"✅ {symbol} passed with score {round(score,3)}")
+            else:
+                debug_logs.append(f"❌ {symbol} score {round(score,3)} below threshold")
 
         except Exception as e:
-            print(f"⚠️ {symbol}: {e}")
+            msg = f"⚠️ {symbol}: {e}"
+            print(msg)
+            debug_logs.append(msg)
             continue
 
     if not results:
-        print("⚠️ No stocks passed AI intraday filters")
-        return pd.DataFrame()
+        msg = "⚠️ No stocks passed AI intraday filters"
+        print(msg)
+        debug_logs.append(msg)
+        return pd.DataFrame(), debug_logs
 
-    return pd.DataFrame(results).sort_values(by="Score", ascending=False)
+    df_result = pd.DataFrame(results).sort_values(by="Score", ascending=False)
+    return df_result, debug_logs
 
 # Debug run
 if __name__ == "__main__":
-    df = run_intraday_scan()
+    df, logs = run_intraday_scan()
     print(df)
+    for log in logs:
+        print(log)

@@ -211,13 +211,18 @@ if st.button("Scan Stocks"):
     st.info("⏳ Scanning...")
     scanned = run_smart_scan()
 
+    scanned_df, debug_logs = run_smart_scan()
+
     # Save scan results to session
-    st.session_state["scanned"] = scanned
+    st.session_state["scanned"] = scanned_df
 
     # Show result preview
     if not scanned.empty:
-        st.success(f"✅ Found {len(scanned)} candidates.")
-        st.dataframe(scanned.head(max_trades))
+        st.success(f"✅ Found {len(scanned_df)} candidates.")
+        st.dataframe(scanned_df.head(max_trades))
+
+    else:
+        st.warning("⚠️ No stocks matched the filter criteria.")
 
         # Debug info
         st.write("✅ Debug: Session scanned keys:")

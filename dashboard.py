@@ -193,17 +193,16 @@ st.subheader("🔍 Auto Scanner")
 
 if st.button("🔁 Run Intraday Scanner"):
     intraday_results, logs = run_intraday_scan()
-    if not intraday_results.empty:
-        st.success(f"✅ {len(intraday_results)} intraday candidates found.")
-        st.dataframe(intraday_results)
-
-        if st.button("📈 Place Order"):
-            st.warning("🚀 Order placement will be implemented.")
-    else:
-        st.warning("⚠️ No intraday stocks matched.")
-    with st.expander("🔍 Debug Logs"):
-        for log in logs:
-            st.write(log)
+        if not intraday_results.empty:
+            st.success(f"✅ {len(intraday_results)} stock(s) passed the scan.")
+            st.dataframe(intraday_results)
+            st.download_button("⬇ Download Results", intraday_results.to_csv(index=False), file_name="intraday_results.csv")
+        else:
+            st.warning("⚠️ No stocks passed the AI filters.")
+    
+        with st.expander("📋 Debug Logs"):
+            for log in intraday_logs:
+                st.text(log)
 
 
 if st.button("Scan Stocks"):

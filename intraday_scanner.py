@@ -70,7 +70,7 @@ def run_intraday_scan():
                 debug_logs.append(f"⏭ Skipped {symbol}: feature extraction failed")
                 continue
 
-            X = pd.DataFrame([features])
+            X = pd.DataFrame([features])[['RSI', 'EMA10', 'EMA21', 'ATR', 'ADX', 'VolumeChange']]
             score = model.predict_proba(X)[0][1]
 
             if score >= THRESHOLD:

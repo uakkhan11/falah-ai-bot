@@ -8,7 +8,7 @@ from indicators import (
 )
 from ai_engine import compute_ai_score
 from price_fetcher import get_price
-from amfi_large_midcap import load_large_midcap_symbols
+from amfi_fetcher import load_large_midcap_symbols
 from holdings import get_existing_holdings
 
 DATA_DIR = "/root/falah-ai-bot/historical_data"

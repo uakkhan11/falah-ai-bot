@@ -78,18 +78,20 @@ def run_intraday_scan():
                 debug_logs.append(f"⏭ Skipped {symbol}: feature extraction failed")
                 continue
 
-            X = pd.DataFrame([features])[['RSI', 'EMA10', 'EMA21', 'ATR', 'ADX', 'VolumeChange']]
+            X = pd.DataFrame([features])[['rsi', 'ema10', 'ema21', 'atr', 'adx', 'volumechange']]
             score = model.predict_proba(X)[0][1]
-
+            
             if score >= THRESHOLD:
                 results.append({
-                    "Symbol": symbol,
+                    "symbol": symbol,
                     "Score": round(score, 3),
-                    "RSI": round(features.get("RSI", 0), 2),
-                    "EMA10": round(features.get("EMA10", 0), 2),
-                    "EMA21": round(features.get("EMA21", 0), 2),
-                    "VolumeChange": round(features.get("VolumeChange", 0), 2),
+                    "rsi": round(features.get("rsi", 0), 2),
+                    "ema10": round(features.get("ema10", 0), 2),
+                    "ema21": round(features.get("ema21", 0), 2),
+                    "volumechange": round(features.get("volumechange", 0), 2),
+                    "ai_reasons": features.get("ai_reasons", "N/A")
                 })
+
                 debug_logs.append(f"✅ {symbol} passed with Score {round(score, 3)}")
             else:
                 debug_logs.append(f"❌ {symbol} Score {round(score, 3)} below threshold")

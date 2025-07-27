@@ -217,10 +217,9 @@ if st.button("Scan Stocks"):
     st.session_state["scanned"] = scanned_df
 
     # Show result preview
-    if not scanned.empty:
+    if not scanned_df.empty:
         st.success(f"✅ Found {len(scanned_df)} candidates.")
         st.dataframe(scanned_df.head(max_trades))
-
     else:
         st.warning("⚠️ No stocks matched the filter criteria.")
 

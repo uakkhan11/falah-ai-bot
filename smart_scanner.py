@@ -85,7 +85,11 @@ def run_smart_scan():
         # Passed all filters
         ltp = get_price(symbol)
         ai_score = compute_ai_score(df)
-        ai_score = ai_score[1] if isinstance(ai_score, tuple) else ai_score
+
+        if isinstance(ai_score, list):
+            ai_score = ai_score[0]
+        elif isinstance(ai_score, tuple):
+            ai_score = ai_score[1]
 
         final_selected.append({
             "symbol": symbol,

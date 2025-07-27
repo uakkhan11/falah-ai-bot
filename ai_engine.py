@@ -32,7 +32,11 @@ def compute_ai_score(df):
         probs = model.predict_proba([list(features.values())])  # [[0.3, 0.7]]
         ai_score = float(probs[0][1])  # Positive class score
 
-        reasons = []
+        return ai_score, ["Model prediction"]
+
+    except Exception as e:
+        return 0.0, [f"AI error: {str(e)}"]
+
 
     df = df.copy()
 

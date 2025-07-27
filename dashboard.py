@@ -192,17 +192,18 @@ if c3.button("🔄 Run Once"):
 st.subheader("🔍 Auto Scanner")
 
 if st.button("🔁 Run Intraday Scanner"):
-    intraday_results, logs = run_intraday_scan()
-        if not intraday_results.empty:
-            st.success(f"✅ {len(intraday_results)} stock(s) passed the scan.")
-            st.dataframe(intraday_results)
-            st.download_button("⬇ Download Results", intraday_results.to_csv(index=False), file_name="intraday_results.csv")
-        else:
-            st.warning("⚠️ No stocks passed the AI filters.")
-    
-        with st.expander("📋 Debug Logs"):
-            for log in intraday_logs:
-                st.text(log)
+    intraday_results, intraday_logs = run_intraday_scan()
+
+    if not intraday_results.empty:
+        st.success(f"✅ {len(intraday_results)} stock(s) passed the scan.")
+        st.dataframe(intraday_results)
+        st.download_button("⬇ Download Results", intraday_results.to_csv(index=False), file_name="intraday_results.csv")
+    else:
+        st.warning("⚠️ No stocks passed the AI filters.")
+
+    with st.expander("📋 Debug Logs"):
+        for log in intraday_logs:
+            st.text(log)
 
 
 if st.button("Scan Stocks"):

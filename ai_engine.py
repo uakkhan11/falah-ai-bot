@@ -6,6 +6,7 @@ import pytz
 from ta.trend import ADXIndicator, EMAIndicator
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
+from ta.trend import ADXIndicator
 from data_fetch import fetch_recent_historical  # assumes already implemented
 
 IST = pytz.timezone("Asia/Kolkata")
@@ -191,14 +192,18 @@ def extract_features(df):
     df["EMA21"] = EMAIndicator(close=df["close"], window=21).ema_indicator()
     df["RSI"] = RSIIndicator(close=df["close"], window=14).rsi()
     df["ATR"] = AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range()
+    df["ADX"] = ADXIndicator(high=df["high"], low=df["low"], close=df["close"], window=14).adx()
     df["VolumeChange"] = df["volume"] / (df["volume"].rolling(10).mean() + 1e-9)
 
     last = df.iloc[-1]
 
-    return {
+    features = {
         "RSI": last["RSI"],
         "EMA10": last["EMA10"],
         "EMA21": last["EMA21"],
         "ATR": last["ATR"],
+        "ADX": last["ADX"],
         "VolumeChange": last["VolumeChange"],
     }
+    
+    return features

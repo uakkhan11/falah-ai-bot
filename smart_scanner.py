@@ -89,7 +89,7 @@ def run_smart_scan():
         final_selected.append({
             "symbol": symbol,
             "ltp": ltp,
-            "ai_score": round(ai_score, 4),
+            "ai_score": round(ai_score[1], 4),
             "rsi": round(rsi, 2)
         })
 

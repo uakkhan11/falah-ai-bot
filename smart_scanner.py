@@ -89,12 +89,13 @@ def run_smart_scan():
         final_selected.append({
             "symbol": symbol,
             "ltp": ltp,
-            "ai_score": round(ai_score, 4),
+            "Score": round(ai_score, 4),
             "rsi": round(rsi, 2),
             "ai_reasons": ", ".join(ai_reasons) if ai_reasons else ""
         })
 
     result_df = pd.DataFrame(final_selected)
+    result_df.to_json("final_screened.json", orient="records", indent=2)
     return result_df, {
         "skip_reasons": skip_reasons,
         "filter_stats": filter_stats

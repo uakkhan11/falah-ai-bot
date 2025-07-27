@@ -1,4 +1,4 @@
-# smart_scanner.py
+# smart_scanner.py (debug diagnostic version)
 
 import os
 import json
@@ -15,6 +15,7 @@ from indicators import (
     detect_macd_bullish_cross,
     detect_supertrend_green
 )
+from collections import Counter
 
 HIST_DIR = "/root/falah-ai-bot/historical_data/"
 LARGE_MID_CAP_FILE = "/root/falah-ai-bot/large_mid_cap.json"
@@ -82,6 +83,7 @@ def run_smart_scan():
         return pd.DataFrame()
 
     results = []
+    reason_counter = Counter()
 
     for token, ltp in live_prices.items():
         sym = token_to_symbol.get(str(token))
@@ -93,7 +95,7 @@ def run_smart_scan():
             continue
 
         df = pd.read_csv(daily_file)
-        if len(df) < 30:
+        if len(df) < 50:
             continue
 
         df["EMA10"] = EMAIndicator(close=df["close"], window=10).ema_indicator()
@@ -108,28 +110,33 @@ def run_smart_scan():
 
         reasons = []
 
-        # Filter 1: RSI Zone
-        if not (30 <= rsi <= 75):
-            reasons.append(f"RSI {rsi:.2f} out of range (32-70)")
+        # NaN safety check
+        if pd.isna(rsi) or pd.isna(ema10) or pd.isna(ema21):
+            reasons.append("NaN indicators")
+        else:
+            # Filter 1: RSI Zone (relaxed)
+            if not (30 <= rsi <= 75):
+                reasons.append(f"RSI {rsi:.2f} out of range (30-75)")
 
-        # Filter 2: EMA10 > EMA21 mandatory
-        if ema10 <= ema21:
-            reasons.append("EMA10 below EMA21")
+            # Filter 2: EMA10 > EMA21 (mandatory)
+            if ema10 <= ema21:
+                reasons.append("EMA10 below EMA21")
 
-        # Filter 3: Bullish Pivot
-        if not detect_bullish_pivot(df.tail(30)):
-            reasons.append("No bullish pivot")
+            # Filter 3: Bullish Pivot (kept)
+            if not detect_bullish_pivot(df.tail(30)):
+                reasons.append("No bullish pivot")
 
-        # Filter 4: MACD Bullish Cross
-        if not detect_macd_bullish_cross(df.tail(35)):
-            reasons.append("No MACD bullish cross")
+            # Filter 4: MACD Bullish Cross (TEMPORARILY relaxed)
+            # if not detect_macd_bullish_cross(df.tail(35)):
+            #     reasons.append("No MACD bullish cross")
 
-        # Filter 5: Supertrend Confirmation
-        if not detect_supertrend_green(df.tail(30)):
-            reasons.append("Supertrend not green")
+            # Filter 5: Supertrend Confirmation (TEMPORARILY relaxed)
+            # if not detect_supertrend_green(df.tail(30)):
+            #     reasons.append("Supertrend not green")
 
         if reasons:
-            print(f"❌ Skipping {sym}: {', '.join(reasons)} | RSI={rsi:.2f}, EMA10={ema10:.2f}, EMA21={ema21:.2f}, ATR={atr:.2f}, VolumeChange={volume_change:.2f}")
+            print(f"❌ Skipping {sym}: {', '.join(reasons)}")
+            reason_counter.update(reasons)
             continue
 
         features_df = pd.DataFrame([{
@@ -178,6 +185,10 @@ def run_smart_scan():
         df = pd.DataFrame()
     print(f"✅ Final selected {len(df)} stocks.")
     print(df)
+
+    print("\n📊 Skip Reason Summary:")
+    for reason, count in reason_counter.items():
+        print(f" - {reason}: {count}")
     return df
 
 

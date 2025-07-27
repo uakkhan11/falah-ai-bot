@@ -84,21 +84,14 @@ def run_smart_scan():
 
         # Passed all filters
         ltp = get_price(symbol)
-        ai_score_raw = compute_ai_score(df)
-
-        # Handle list, tuple, or single float return
-        if isinstance(ai_score_raw, list):
-            ai_score = ai_score_raw[0]
-        elif isinstance(ai_score_raw, tuple):
-            ai_score = ai_score_raw[1]
-        else:
-            ai_score = ai_score_raw
+        ai_score, ai_reasons = compute_ai_score(df)
 
         final_selected.append({
             "symbol": symbol,
             "ltp": ltp,
             "ai_score": round(ai_score, 4),
             "rsi": round(rsi, 2)
+            "ai_reasons": ", ".join(ai_reasons) if ai_reasons else ""
         })
 
     result_df = pd.DataFrame(final_selected)

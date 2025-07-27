@@ -9,7 +9,7 @@ from indicators import (
 )
 from ai_engine import compute_ai_score
 from price_fetcher import get_price
-from amfi_fetcher import load_large_midcap_symbols  # ✅ FIXED import
+from amfi_fetcher import load_large_midcap_symbols
 from holdings import get_existing_holdings
 
 DATA_DIR = "/root/falah-ai-bot/historical_data"
@@ -85,11 +85,12 @@ def run_smart_scan():
         # Passed all filters
         ltp = get_price(symbol)
         ai_score = compute_ai_score(df)
+        ai_score = ai_score[0][1]  # ✅ Extract positive class probability
 
         final_selected.append({
             "symbol": symbol,
             "ltp": ltp,
-            "ai_score": round(ai_score[1], 4),
+            "ai_score": round(ai_score, 4),
             "rsi": round(rsi, 2)
         })
 
@@ -98,7 +99,6 @@ def run_smart_scan():
         "skip_reasons": skip_reasons,
         "filter_stats": filter_stats
     }
-
 
 if __name__ == "__main__":
     result_df, debug_stats = run_smart_scan()

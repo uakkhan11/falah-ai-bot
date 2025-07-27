@@ -204,8 +204,16 @@ if c3.button("🔄 Run Once"):
 st.subheader("🔍 Auto Scanner")
 
 if st.button("🔁 Run Intraday Scanner"):
-    intraday_results = run_intraday_scan()
-    st.dataframe(intraday_results)
+    intraday_results, logs = run_intraday_scan()
+    if not intraday_results.empty:
+        st.success(f"✅ {len(intraday_results)} intraday candidates found.")
+        st.dataframe(intraday_results)
+    else:
+        st.warning("⚠️ No intraday stocks matched.")
+    with st.expander("🔍 Debug Logs"):
+        for log in logs:
+            st.write(log)
+
 
 if st.button("Scan Stocks"):
     st.info("⏳ Scanning...")

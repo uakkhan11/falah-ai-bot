@@ -7,8 +7,8 @@ import pytz
 import joblib
 
 from kiteconnect import KiteConnect
-from data_fetch import get_intraday_data  # Assumes you have 15min intraday fetcher
-from ai_engine import extract_features   # Now available
+from data_fetch import get_intraday_data  # Fetches 15min data
+from ai_engine import extract_features
 from credentials import get_kite
 
 # Constants
@@ -30,7 +30,7 @@ def run_intraday_scan():
     with open(FILTERED_FILE) as f:
         data = json.load(f)
 
-    # ✅ Handle different formats
+    # ✅ Handle different JSON structures
     if isinstance(data, dict):
         symbols = list(data.keys())
     elif isinstance(data, list):
@@ -41,28 +41,36 @@ def run_intraday_scan():
         debug_logs.append(msg)
         return pd.DataFrame(), debug_logs
 
-    print(f"🔍 Loaded {len(symbols)} symbols for intraday scan")
-    debug_logs.append(f"Loaded {len(symbols)} symbols")
+    msg = f"🔍 Loaded {len(symbols)} symbols for intraday scan"
+    print(msg)
+    debug_logs.append(msg)
 
     # ✅ Load AI model
     try:
         model = joblib.load(MODEL_PATH)
-        print("✅ AI model loaded")
-        debug_logs.append("AI model loaded")
+        debug_logs.append("✅ AI model loaded")
     except Exception as e:
         msg = f"❌ Failed to load model: {e}"
         print(msg)
         debug_logs.append(msg)
         return pd.DataFrame(), debug_logs
 
-    kite = get_kite()
+    # ✅ Get live kite session
+    try:
+        kite = get_kite()
+    except Exception as e:
+        msg = f"❌ Failed to connect to Kite: {e}"
+        debug_logs.append(msg)
+        return pd.DataFrame(), debug_logs
+
     results = []
 
+    # ✅ Run scan per symbol
     for symbol in symbols:
         try:
             df = get_intraday_data(kite, symbol, interval="15minute", days=1)
             if df is None or len(df) < 21:
-                debug_logs.append(f"⏭ Skipped {symbol}: insufficient data")
+                debug_logs.append(f"⏭ Skipped {symbol}: insufficient data ({len(df) if df is not None else 0})")
                 continue
 
             features = extract_features(df)
@@ -82,9 +90,9 @@ def run_intraday_scan():
                     "EMA21": round(features.get("EMA21", 0), 2),
                     "VolumeChange": round(features.get("VolumeChange", 0), 2),
                 })
-                debug_logs.append(f"✅ {symbol} passed with score {round(score,3)}")
+                debug_logs.append(f"✅ {symbol} passed with Score {round(score, 3)}")
             else:
-                debug_logs.append(f"❌ {symbol} score {round(score,3)} below threshold")
+                debug_logs.append(f"❌ {symbol} Score {round(score, 3)} below threshold")
 
         except Exception as e:
             msg = f"⚠️ {symbol}: {e}"
@@ -92,6 +100,7 @@ def run_intraday_scan():
             debug_logs.append(msg)
             continue
 
+    # ✅ Final result
     if not results:
         msg = "⚠️ No stocks passed AI intraday filters"
         print(msg)
@@ -101,7 +110,8 @@ def run_intraday_scan():
     df_result = pd.DataFrame(results).sort_values(by="Score", ascending=False)
     return df_result, debug_logs
 
-# Debug run
+
+# 🔧 Debug standalone run
 if __name__ == "__main__":
     df, logs = run_intraday_scan()
     print(df)

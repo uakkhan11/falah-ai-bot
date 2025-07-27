@@ -90,7 +90,7 @@ def run_smart_scan():
             "symbol": symbol,
             "ltp": ltp,
             "ai_score": round(ai_score, 4),
-            "rsi": round(rsi, 2)
+            "rsi": round(rsi, 2),
             "ai_reasons": ", ".join(ai_reasons) if ai_reasons else ""
         })
 

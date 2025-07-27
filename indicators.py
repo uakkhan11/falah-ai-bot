@@ -7,6 +7,34 @@ from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
 from ta.volume import OnBalanceVolumeIndicator
 
+# --- Basic Calculators (used in filter logs/debug) ---
+
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.rolling(window=period).mean()
+    avg_loss = loss.rolling(window=period).mean()
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def calculate_ema(series, span):
+    return series.ewm(span=span, adjust=False).mean()
+
+def calculate_atr(df, period=14):
+    high = df['high']
+    low = df['low']
+    close = df['close']
+    tr1 = high - low
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.rolling(window=period).mean()
+    return atr
+
+# --- Composite Indicator Additions (used in batch) ---
+
 def add_all_indicators(df):
     df['EMA10'] = EMAIndicator(close=df['close'], window=10).ema_indicator()
     df['EMA21'] = EMAIndicator(close=df['close'], window=21).ema_indicator()
@@ -15,6 +43,7 @@ def add_all_indicators(df):
     df['OBV'] = OnBalanceVolumeIndicator(close=df['close'], volume=df['volume']).on_balance_volume()
     return df
 
+# --- Strategy Conditions ---
 
 def detect_bullish_pivot(df):
     """Check for bullish pivot - higher low and breakout candle."""
@@ -26,7 +55,6 @@ def detect_bullish_pivot(df):
         pass
     return False
 
-
 def detect_macd_bullish_cross(df):
     """MACD bullish crossover"""
     exp1 = df['close'].ewm(span=12, adjust=False).mean()
@@ -34,7 +62,6 @@ def detect_macd_bullish_cross(df):
     macd = exp1 - exp2
     signal = macd.ewm(span=9, adjust=False).mean()
     return macd.iloc[-2] < signal.iloc[-2] and macd.iloc[-1] > signal.iloc[-1]
-
 
 def detect_supertrend_green(df, period=10, multiplier=3):
     """Basic supertrend logic"""
@@ -56,6 +83,7 @@ def detect_supertrend_green(df, period=10, multiplier=3):
         trend.append(in_uptrend)
     return trend[-1]
 
+# --- Intraday Signal Utilities ---
 
 def intraday_vwap_bounce_strategy(df):
     """Detect VWAP bounce pattern in intraday (15/60min) data"""
@@ -69,14 +97,13 @@ def intraday_vwap_bounce_strategy(df):
 
     if (
         df['close'].iloc[-1] > df['VWAP'].iloc[-1] and  # above VWAP
-        df['low'].iloc[-2] < df['VWAP'].iloc[-2] and  # tested VWAP prev candle
-        df['close'].iloc[-2] < df['VWAP'].iloc[-2]  # closed below VWAP then bounced
+        df['low'].iloc[-2] < df['VWAP'].iloc[-2] and    # tested VWAP prev candle
+        df['close'].iloc[-2] < df['VWAP'].iloc[-2]      # closed below VWAP then bounced
     ):
         signal = True
 
     df['Signal'] = signal
     return df
-
 
 def intraday_rsi_breakout_strategy(df, rsi_window=14, rsi_threshold=60):
     """RSI breakout above threshold on 15m/60m"""

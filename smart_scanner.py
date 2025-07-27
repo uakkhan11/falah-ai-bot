@@ -129,10 +129,9 @@ def run_smart_scan():
             reasons.append("Supertrend not green")
 
         if reasons:
-            print(f"❌ Skipping {sym}: {', '.join(reasons)}")
+            print(f"❌ Skipping {sym}: {', '.join(reasons)} | RSI={rsi:.2f}, EMA10={ema10:.2f}, EMA21={ema21:.2f}, ATR={atr:.2f}, VolumeChange={volume_change:.2f}")
             continue
 
-        features = [[rsi, ema10, ema21, atr, volume_change, adx]]
         features_df = pd.DataFrame([{
             "RSI": rsi,
             "ATR": atr,
@@ -146,7 +145,6 @@ def run_smart_scan():
 
         score_reasons = [f"AI {ai_score:.2f}"]
 
-        # Extra scoring weights:
         if ema10 > ema21:
             score += 1
             score_reasons.append("EMA10>EMA21")
@@ -181,6 +179,7 @@ def run_smart_scan():
     print(f"✅ Final selected {len(df)} stocks.")
     print(df)
     return df
+
 
 if __name__ == "__main__":
     df = run_smart_scan()

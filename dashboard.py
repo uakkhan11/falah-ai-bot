@@ -208,6 +208,9 @@ if st.button("🔁 Run Intraday Scanner"):
     if not intraday_results.empty:
         st.success(f"✅ {len(intraday_results)} intraday candidates found.")
         st.dataframe(intraday_results)
+
+        if st.button("📈 Place Order"):
+            st.warning("🚀 Order placement will be implemented.")
     else:
         st.warning("⚠️ No intraday stocks matched.")
     with st.expander("🔍 Debug Logs"):

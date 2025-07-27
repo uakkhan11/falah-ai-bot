@@ -31,10 +31,14 @@ def compute_ai_score(df):
         model = joblib.load("model.pkl")
         probs = model.predict_proba([list(features.values())])  # [[0.3, 0.7]]
         ai_score = float(probs[0][1])  # Positive class score
+        reasons = ["Model prediction"]
 
-        return ai_score, ["Model prediction"]
+        print(f"✅ AI Score: {ai_score:.4f}, Features: {features}")
+        return ai_score, reasons
+        
 
     except Exception as e:
+        print(f"⚠️ AI Error: {e}")
         return 0.0, [f"AI error: {str(e)}"]
 
 

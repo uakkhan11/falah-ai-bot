@@ -85,7 +85,6 @@ def run_smart_scan():
         # Passed all filters
         ltp = get_price(symbol)
         ai_score = compute_ai_score(df)
-        ai_score = ai_score[0][1]  # ✅ Extract positive class probability
 
         final_selected.append({
             "symbol": symbol,

@@ -1,204 +1,129 @@
-# smart_scanner.py (debug diagnostic version)
+# smart_scanner.py
 
 import os
 import json
 import pandas as pd
-import glob
-from ta.momentum import RSIIndicator
-from ta.trend import EMAIndicator, ADXIndicator
-from ta.volatility import AverageTrueRange
-from credentials import get_kite
-import joblib
-import gc
-from indicators import (
-    detect_bullish_pivot,
-    detect_macd_bullish_cross,
-    detect_supertrend_green
-)
-from collections import Counter
+from indicators import add_all_indicators, detect_macd_bullish_cross, detect_supertrend_green
 
-HIST_DIR = "/root/falah-ai-bot/historical_data/"
-LARGE_MID_CAP_FILE = "/root/falah-ai-bot/large_mid_cap.json"
-MODEL_PATH = "/root/falah-ai-bot/model.pkl"
-model = joblib.load(MODEL_PATH)
+DATA_DIR = "historical_data/"
+EXCLUDED_SYMBOLS = set()
 
-
-def load_large_mid_cap_symbols():
-    with open(LARGE_MID_CAP_FILE) as f:
-        symbols = json.load(f)
-    print(f"✅ Loaded {len(symbols)} Large/Mid Cap symbols.")
-    return set(symbols)
-
-
-def load_all_live_prices():
-    live = {}
-    files = glob.glob("/tmp/live_prices_*.json")
-    if files:
-        for f in files:
-            with open(f) as fd:
-                live.update(json.load(fd))
-        print(f"✅ Loaded {len(live)} live prices.")
-    else:
-        print("⚠️ Live prices not found. Using last closes.")
-        with open("/root/falah-ai-bot/tokens.json") as f:
-            tokens = json.load(f)
-        for sym in tokens.keys():
-            daily_file = os.path.join(HIST_DIR, f"{sym}.csv")
-            if os.path.exists(daily_file):
-                df = pd.read_csv(daily_file)
-                if not df.empty:
-                    live[str(tokens[sym])] = df.iloc[-1]["close"]
-        print(f"✅ Loaded {len(live)} fallback prices.")
-    return live
-
-
-def get_current_holdings_positions_symbols(kite):
-    symbols = set()
+def load_large_midcap_symbols():
     try:
-        positions = kite.positions()
-        holdings = kite.holdings()
-        for p in positions['net']:
-            if p['quantity'] != 0:
-                symbols.add(p['tradingsymbol'])
-        for h in holdings:
-            symbols.add(h['tradingsymbol'])
-        print(f"🚫 Skipping {len(symbols)} existing holdings/positions.")
-    except Exception as e:
-        print(f"⚠️ Error fetching positions: {e}")
-    return symbols
+        with open("large_mid_cap.json", "r") as f:
+            return json.load(f)
+    except:
+        return []
 
+def load_holdings_positions():
+    try:
+        with open("holdings_positions.json", "r") as f:
+            return json.load(f)
+    except:
+        return []
+
+def detect_bullish_pivot_relaxed(df):
+    if len(df) < 5:
+        return False
+    lows = df["low"].tail(3).values
+    closes = df["close"].tail(3).values
+    return (lows[1] > lows[0]) and (lows[2] > lows[1]) and (closes[2] > closes[1])
 
 def run_smart_scan():
-    kite = get_kite()
-    live_prices = load_all_live_prices()
-    large_mid_symbols = load_large_mid_cap_symbols()
+    symbols = [f.replace(".csv", "") for f in os.listdir(DATA_DIR) if f.endswith(".csv")]
+    large_midcap = set(load_large_midcap_symbols())
+    holdings = set(load_holdings_positions())
+    EXCLUDED_SYMBOLS.update(holdings)
 
-    with open("/root/falah-ai-bot/tokens.json") as f:
-        tokens = json.load(f)
-    token_to_symbol = {str(v): k for k, v in tokens.items()}
-    skip_symbols = get_current_holdings_positions_symbols(kite)
+    filtered_symbols = [s for s in symbols if s in large_midcap and s not in EXCLUDED_SYMBOLS]
+    print(f"✅ Loaded {len(symbols)} total symbols")
+    print(f"✅ Loaded {len(large_midcap)} Large/Mid Cap symbols.")
+    print(f"🚫 Skipping {len(holdings)} existing holdings/positions.")
 
-    if not live_prices:
-        print("❌ No live prices found. Exiting.")
-        return pd.DataFrame()
+    selected = []
+    skip_reasons = {}
+    filter_stats = {
+        "ema_pass": 0,
+        "pivot_pass": 0,
+        "rsi_pass": 0,
+        "supertrend_pass": 0,
+        "macd_pass": 0
+    }
 
-    results = []
-    reason_counter = Counter()
+    for symbol in filtered_symbols:
+        try:
+            df = pd.read_csv(os.path.join(DATA_DIR, f"{symbol}.csv"))
+            if len(df) < 30:
+                continue
+            df = add_all_indicators(df)
 
-    for token, ltp in live_prices.items():
-        sym = token_to_symbol.get(str(token))
-        if not sym or sym in skip_symbols or sym not in large_mid_symbols:
-            continue
+            reasons = []
+            latest = df.iloc[-1]
+            ema10 = latest["EMA10"]
+            ema21 = latest["EMA21"]
+            rsi = latest["RSI"]
 
-        daily_file = os.path.join(HIST_DIR, f"{sym}.csv")
-        if not os.path.exists(daily_file):
-            continue
+            # Relaxed EMA10 > EMA21 with 2% tolerance
+            if ema10 < ema21 * 0.98:
+                reasons.append("EMA10 below EMA21")
+            else:
+                filter_stats["ema_pass"] += 1
 
-        df = pd.read_csv(daily_file)
-        if len(df) < 50:
-            continue
+            # Relaxed bullish pivot
+            if not detect_bullish_pivot_relaxed(df.tail(10)):
+                reasons.append("No bullish pivot")
+            else:
+                filter_stats["pivot_pass"] += 1
 
-        df["EMA10"] = EMAIndicator(close=df["close"], window=10).ema_indicator()
-        df["EMA21"] = EMAIndicator(close=df["close"], window=21).ema_indicator()
-        df["RSI"] = RSIIndicator(close=df["close"], window=14).rsi()
-        atr = AverageTrueRange(df["high"], df["low"], df["close"], window=14).average_true_range().iloc[-1]
-        adx = ADXIndicator(df["high"], df["low"], df["close"], window=14).adx().iloc[-1]
-        volume_change = df["volume"].iloc[-1] / (df["volume"].rolling(10).mean().iloc[-1] + 1e-9)
-
-        last = df.iloc[-1]
-        rsi, ema10, ema21 = last["RSI"], last["EMA10"], last["EMA21"]
-
-        reasons = []
-
-        # NaN safety check
-        if pd.isna(rsi) or pd.isna(ema10) or pd.isna(ema21):
-            reasons.append("NaN indicators")
-        else:
-            # Filter 1: RSI Zone (relaxed)
+            # RSI in range
             if not (30 <= rsi <= 75):
                 reasons.append(f"RSI {rsi:.2f} out of range (30-75)")
+            else:
+                filter_stats["rsi_pass"] += 1
 
-            # Filter 2: EMA10 > EMA21 (mandatory)
-            if ema10 <= ema21:
-                reasons.append("EMA10 below EMA21")
+            # Optional: Supertrend confirmation
+            if not detect_supertrend_green(df.tail(30)):
+                reasons.append("Supertrend not green")
+            else:
+                filter_stats["supertrend_pass"] += 1
 
-            # Filter 3: Bullish Pivot (kept)
-            if not detect_bullish_pivot(df.tail(30)):
-                reasons.append("No bullish pivot")
+            # Optional: MACD crossover
+            if not detect_macd_bullish_cross(df.tail(50)):
+                reasons.append("No MACD bullish cross")
+            else:
+                filter_stats["macd_pass"] += 1
 
-            # Filter 4: MACD Bullish Cross (TEMPORARILY relaxed)
-            # if not detect_macd_bullish_cross(df.tail(35)):
-            #     reasons.append("No MACD bullish cross")
+            if not reasons:
+                selected.append({
+                    "symbol": symbol,
+                    "close": latest["close"],
+                    "RSI": round(rsi, 2),
+                    "EMA10": round(ema10, 2),
+                    "EMA21": round(ema21, 2),
+                })
+            else:
+                for r in reasons:
+                    skip_reasons[r] = skip_reasons.get(r, 0) + 1
 
-            # Filter 5: Supertrend Confirmation (TEMPORARILY relaxed)
-            # if not detect_supertrend_green(df.tail(30)):
-            #     reasons.append("Supertrend not green")
-
-        if reasons:
-            print(f"❌ Skipping {sym}: {', '.join(reasons)}")
-            reason_counter.update(reasons)
+        except Exception as e:
+            skip_reasons[f"{symbol} error"] = skip_reasons.get(f"{symbol} error", 0) + 1
             continue
 
-        features_df = pd.DataFrame([{
-            "RSI": rsi,
-            "ATR": atr,
-            "ADX": adx,
-            "EMA10": ema10,
-            "EMA21": ema21,
-            "VolumeChange": volume_change
-        }])
-        ai_score = model.predict_proba(features_df)[0][1] * 5
-        score = ai_score
+    selected_df = pd.DataFrame(selected)
+    print(f"\n✅ Final selected {len(selected_df)} stocks.")
+    print(selected_df)
 
-        score_reasons = [f"AI {ai_score:.2f}"]
-
-        if ema10 > ema21:
-            score += 1
-            score_reasons.append("EMA10>EMA21")
-        if volume_change > 1.2:
-            score += 1
-            score_reasons.append("Volume spike")
-        if atr > 1.0:
-            score += 1
-            score_reasons.append(f"ATR {atr:.2f}")
-
-        results.append({
-            "Symbol": sym,
-            "CMP": ltp,
-            "RSI": round(rsi, 2),
-            "EMA10": round(ema10, 2),
-            "EMA21": round(ema21, 2),
-            "ATR": round(atr, 2),
-            "ADX": round(adx, 2),
-            "VolumeChange": round(volume_change, 2),
-            "AI_Score": round(ai_score, 2),
-            "Score": round(score, 2),
-            "Reasons": ", ".join(score_reasons)
-        })
-
-        del df
-        gc.collect()
-
-    if results:
-        df = pd.DataFrame(results).sort_values(by="Score", ascending=False)
-    else:
-        df = pd.DataFrame()
-    print(f"✅ Final selected {len(df)} stocks.")
-    print(df)
-
+    # Detailed skip reason summary
     print("\n📊 Skip Reason Summary:")
-    for reason, count in reason_counter.items():
+    for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
         print(f" - {reason}: {count}")
-    return df
 
+    # Optional: Filter pass stats
+    print("\n📈 Filter Pass Stats:")
+    for k, v in filter_stats.items():
+        print(f" - {k}: {v}")
+
+    return selected_df
 
 if __name__ == "__main__":
-    df = run_smart_scan()
-
-    if not df.empty:
-        screened = {row["Symbol"]: row for _, row in df.iterrows()}
-        with open("final_screened.json", "w") as f:
-            json.dump(screened, f, indent=4)
-        print(f"✅ Final screened symbols saved to final_screened.json ({len(screened)} symbols)")
-    else:
-        print("⚠️ No stocks passed all filters.")
+    run_smart_scan()

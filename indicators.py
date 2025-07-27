@@ -13,8 +13,7 @@ def add_all_indicators(df):
     df['RSI'] = RSIIndicator(close=df['close'], window=14).rsi()
     df['ATR'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
     df['OBV'] = OnBalanceVolumeIndicator(close=df['close'], volume=df['volume']).on_balance_volume()
-    
-return df
+    return df
 
 
 def detect_bullish_pivot(df):

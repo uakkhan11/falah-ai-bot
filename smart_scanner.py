@@ -94,9 +94,5 @@ def run_smart_scan():
     return result_df
 '''
 
-# Save to file
-with open("/mnt/data/smart_scanner.py", "w") as f:
-    f.write(updated_smart_scanner_code)
-
 "/mnt/data/smart_scanner.py"
 

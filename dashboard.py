@@ -72,18 +72,6 @@ def load_model():
 
 model = load_model()
 
-def get_trade_probability(rsi, atr, ema10, ema21, volchg, adx):
-    import pandas as pd
-    features_df = pd.DataFrame([{
-        'RSI': rsi,
-        'ATR': atr,
-        'ADX': adx,
-        'EMA10': ema10,
-        'EMA21': ema21,
-        'VolumeChange': volchg
-    }])
-    return model.predict_proba(features_df)[0][1]
-
 def compute_trailing_sl(cmp, atr, atr_multiplier=1.5): return round(cmp - atr * atr_multiplier, 2)
 
 def calculate_quantity(capital, risk_pct, entry, sl):
@@ -263,25 +251,30 @@ if "scanned" in st.session_state and not st.session_state["scanned"].empty:
                     try:
                         sym = row["symbol"]
                         cmp = row["ltp"]
-                        rsi = row["rsi"]
-                        confidence = row["Score"]
+                        rsi = row.get("rsi", 50)
+                        confidence = row.get("Score", 0)
                     except KeyError as e:
                         st.error(f"❌ Column missing in scanned data: {e}")
                         st.write("✅ Available columns:", row.index.tolist())
                         continue
-        
-                    confidence = get_trade_probability(rsi, atr, adx, ema10, ema21, volchg)
+                
                     if confidence < min_conf:
                         st.warning(f"❌ Skipped {sym} (Conf: {confidence:.2f})")
                         continue
-        
-                    sl = compute_trailing_sl(cmp, atr)
-                    qty = calculate_quantity(capital, risk_pct, cmp, sl)
+                
+                    # Fallback: use fixed SL logic (e.g., 1.5% below entry)
+                    sl = round(cmp * 0.985, 2)
+                    try:
+                        qty = calculate_quantity(capital, risk_pct, cmp, sl)
+                    except ValueError as ve:
+                        st.warning(f"⚠️ {sym}: {ve}")
+                        continue
+                
                     if confidence >= 0.8:
                         qty = int(qty * 1.3)
-        
+                
                     msg = f"🚀 <b>{sym}</b>\nQty: {qty}\nEntry: ₹{cmp}\nSL: ₹{sl}\nConf: {confidence:.2f}"
-        
+                
                     if dry_run:
                         st.success(f"(Dry Run) {msg}")
                         send_telegram(BOT_TOKEN, CHAT_ID, f"[DRY RUN]\n{msg}")
@@ -301,8 +294,8 @@ if "scanned" in st.session_state and not st.session_state["scanned"].empty:
                                 qty=qty,
                                 price=cmp,
                                 rsi=rsi,
-                                atr=atr,
-                                adx=adx,
+                                atr=None,
+                                adx=None,
                                 ai_score=confidence,
                                 action="BUY",
                                 exit_reason="",
@@ -313,6 +306,7 @@ if "scanned" in st.session_state and not st.session_state["scanned"].empty:
                             send_telegram(BOT_TOKEN, CHAT_ID, msg)
                         except Exception as e:
                             st.error(f"❌ {sym} failed: {e}")
+
 
     else:
         st.warning("⚠️ 'Score' column missing in scanned data.")

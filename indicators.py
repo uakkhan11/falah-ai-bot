@@ -43,45 +43,72 @@ def add_all_indicators(df):
     df['OBV'] = OnBalanceVolumeIndicator(close=df['close'], volume=df['volume']).on_balance_volume()
     return df
 
-# --- Strategy Conditions ---
+# --- Strategy Conditions (Relaxed Versions) ---
 
-def detect_bullish_pivot(df):
-    """Check for bullish pivot - higher low and breakout candle."""
+def detect_bullish_pivot(df, window=3):
+    """Relaxed bullish pivot: dip in middle candle followed by green candle"""
+    if len(df) < window + 2:
+        return False
+    recent = df.tail(window + 2)
+    lows = recent["low"].values
+    closes = recent["close"].values
+    opens = recent["open"].values
+
     try:
-        recent = df.tail(5)
-        if recent["close"].iloc[-1] > recent["high"].max():
+        if (
+            lows[1] < lows[0] and
+            lows[1] < lows[2] and
+            closes[2] > opens[2]  # green candle after pivot
+        ):
             return True
-    except Exception:
-        pass
+    except:
+        return False
     return False
 
 def detect_macd_bullish_cross(df):
-    """MACD bullish crossover"""
+    """Relaxed MACD bullish crossover: allow in last 3 candles"""
+    if "macd" in df.columns and "macd_signal" in df.columns:
+        macd = df["macd"].tail(5).values
+        signal = df["macd_signal"].tail(5).values
+        for i in range(1, len(macd)):
+            if macd[i - 1] < signal[i - 1] and macd[i] > signal[i]:
+                return True
+        return False
+
+    # Else compute MACD fresh
     exp1 = df['close'].ewm(span=12, adjust=False).mean()
     exp2 = df['close'].ewm(span=26, adjust=False).mean()
     macd = exp1 - exp2
     signal = macd.ewm(span=9, adjust=False).mean()
-    return macd.iloc[-2] < signal.iloc[-2] and macd.iloc[-1] > signal.iloc[-1]
 
-def detect_supertrend_green(df, period=10, multiplier=3):
-    """Basic supertrend logic"""
+    for i in range(-4, -1):
+        if macd.iloc[i - 1] < signal.iloc[i - 1] and macd.iloc[i] > signal.iloc[i]:
+            return True
+    return False
+
+def detect_supertrend_green(df, lookback=3, period=10, multiplier=3):
+    """Relaxed: Check if supertrend is green in any of last `lookback` candles"""
+    if "supertrend_direction" in df.columns:
+        return (df["supertrend_direction"].tail(lookback) == "green").any()
+
+    # Else compute inline
     atr = AverageTrueRange(df["high"], df["low"], df["close"], window=period).average_true_range()
     hl2 = (df["high"] + df["low"]) / 2
     upperband = hl2 + (multiplier * atr)
     lowerband = hl2 - (multiplier * atr)
     close = df["close"]
-    trend = []
+    direction = []
     in_uptrend = True
     for i in range(len(close)):
         if i == 0:
-            trend.append(in_uptrend)
+            direction.append("green" if in_uptrend else "red")
             continue
         if close.iloc[i] > upperband.iloc[i - 1]:
             in_uptrend = True
         elif close.iloc[i] < lowerband.iloc[i - 1]:
             in_uptrend = False
-        trend.append(in_uptrend)
-    return trend[-1]
+        direction.append("green" if in_uptrend else "red")
+    return direction[-lookback:].count("green") > 0
 
 # --- Intraday Signal Utilities ---
 

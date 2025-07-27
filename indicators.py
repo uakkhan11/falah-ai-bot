@@ -2,10 +2,20 @@
 
 import pandas as pd
 import numpy as np
-from ta.trend import EMAIndicator
-from ta.momentum import RSIIndicator
-from ta.volume import OnBalanceVolumeIndicator
-from ta.volatility import AverageTrueRange
+def add_all_indicators(df):
+    from ta.trend import EMAIndicator
+    from ta.momentum import RSIIndicator
+    from ta.volatility import AverageTrueRange
+    from ta.volume import OnBalanceVolumeIndicator
+
+    df['EMA10'] = EMAIndicator(close=df['close'], window=10).ema_indicator()
+    df['EMA21'] = EMAIndicator(close=df['close'], window=21).ema_indicator()
+    df['RSI'] = RSIIndicator(close=df['close'], window=14).rsi()
+    df['ATR'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
+    df['OBV'] = OnBalanceVolumeIndicator(close=df['close'], volume=df['volume']).on_balance_volume()
+    
+    # Add more if needed
+    return df
 
 
 def detect_bullish_pivot(df):

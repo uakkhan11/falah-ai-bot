@@ -209,11 +209,9 @@ if st.button("🔁 Run Intraday Scanner"):
 
 if st.button("Scan Stocks"):
     st.info("⏳ Scanning...")
-    scanned = run_smart_scan()
 
+    # Run scan and get results
     scanned_df, debug_logs = run_smart_scan()
-
-    # Save scan results to session
     st.session_state["scanned"] = scanned_df
 
     # Show result preview
@@ -223,6 +221,12 @@ if st.button("Scan Stocks"):
     else:
         st.warning("⚠️ No stocks matched the filter criteria.")
 
+        # Debug info
+        st.write("✅ Debug: Session scanned keys:")
+        st.write(st.session_state.keys())
+
+        st.write("✅ Debug: Scanned preview:")
+        st.write(scanned_df.head())
         # Debug info
         st.write("✅ Debug: Session scanned keys:")
         st.write(st.session_state.keys())

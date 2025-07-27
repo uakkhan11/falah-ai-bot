@@ -261,7 +261,10 @@ if "scanned" in st.session_state and not st.session_state["scanned"].empty:
             else:
                 for _, row in scanned_df.iterrows():
                     try:
-                        sym, cmp, rsi, atr, adx, ema10, ema21, volchg = row[["Symbol","CMP","RSI","ATR","ADX","EMA10","EMA21","VolumeChange"]]
+                        sym = row["symbol"]
+                        cmp = row["ltp"]
+                        rsi = row["rsi"]
+                        confidence = row["Score"]
                     except KeyError as e:
                         st.error(f"❌ Column missing in scanned data: {e}")
                         st.write("✅ Available columns:", row.index.tolist())

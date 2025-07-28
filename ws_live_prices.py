@@ -44,4 +44,4 @@ def start_all_websockets():
     ], env=env)
 
 if __name__ == "__main__":
-    start_websockets()
+    start_all_websockets()

@@ -84,11 +84,13 @@ kws.on_close = on_close
 kws.on_error = on_error
 
 from datetime import datetime, time as dt_time
+import pytz
+
+IST = pytz.timezone("Asia/Kolkata")
 
 def is_market_open():
-    now = datetime.now().time()
+    now = datetime.now(IST).time()
     return dt_time(9, 15) <= now <= dt_time(15, 30)
-
 print(f"[{datetime.now()}] 🔄 Starting WebSocket worker...")
 
 if is_market_open():

@@ -1,9 +1,14 @@
 # ws_live_prices.py
+
 import os
 import json
+import math
+import subprocess
 from kiteconnect import KiteConnect
 from credentials import load_secrets
-import subprocess
+
+MAX_TOKENS_PER_SOCKET = 4000
+WORKER_PATH = "/root/falah-ai-bot/ws_worker.py"
 
 def start_all_websockets():
     secrets = load_secrets()
@@ -31,17 +36,23 @@ def start_all_websockets():
     if not tokens:
         raise ValueError("No tokens found in token_map.json")
 
-    # ✅ Convert token list to comma-separated string
-    token_str = ",".join(str(t) for t in tokens)
+    total_tokens = len(tokens)
+    print(f"▶️ Launching WebSockets for {total_tokens} tokens...")
 
-    print(f"▶️ Launching single WebSocket with {len(tokens)} tokens...")
+    num_sockets = math.ceil(total_tokens / MAX_TOKENS_PER_SOCKET)
 
-    env = dict(os.environ, ZERODHA_TOKEN=access_token)
+    for i in range(num_sockets):
+        start = i * MAX_TOKENS_PER_SOCKET
+        end = start + MAX_TOKENS_PER_SOCKET
+        token_slice = tokens[start:end]
+        token_str = ",".join(str(t) for t in token_slice)
 
-    subprocess.Popen([
-        "python3", "/root/falah-ai-bot/ws_worker.py",
-        api_key, access_token, token_str
-    ], env=env)
+        print(f"🔌 Starting WebSocket Worker {i+1}/{num_sockets} for tokens {start} to {end - 1} ({len(token_slice)} tokens)")
+
+        subprocess.Popen([
+            "python3", WORKER_PATH,
+            api_key, access_token, token_str
+        ], env=os.environ.copy())
 
 if __name__ == "__main__":
     start_all_websockets()

@@ -8,15 +8,16 @@ from kiteconnect import KiteTicker
 from threading import Timer
 
 # Load credentials
-with open("/root/falah-ai-bot/secrets.json") as f:
-    secrets = json.load(f)
-api_key = secrets["zerodha"]["api_key"]
-access_token = secrets["zerodha"]["access_token"]
+import sys
 
-# Load tokens
-with open("/root/falah-ai-bot/tokens.json") as f:
-    token_map = json.load(f)
-tokens = [int(t) for t in token_map.values()]
+if len(sys.argv) != 4:
+    print("Usage: python ws_worker.py <api_key> <access_token> <comma_separated_tokens>")
+    sys.exit(1)
+
+api_key = sys.argv[1]
+access_token = sys.argv[2]
+tokens = [int(t) for t in sys.argv[3].split(",")]
+
 
 output_file = "/tmp/live_prices_batch.json"
 live_data = {}

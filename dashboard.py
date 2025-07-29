@@ -280,7 +280,7 @@ if "scanned" in st.session_state and not st.session_state["scanned"].empty:
                         send_telegram(BOT_TOKEN, CHAT_ID, f"[DRY RUN]\n{msg}")
                     elif is_market_open():
                         try:
-                            kite.place_order(
+                            response = kite.place_order(
                                 variety=kite.VARIETY_REGULAR,
                                 exchange=kite.EXCHANGE_NSE,
                                 tradingsymbol=sym,
@@ -289,25 +289,36 @@ if "scanned" in st.session_state and not st.session_state["scanned"].empty:
                                 order_type=kite.ORDER_TYPE_MARKET,
                                 product=kite.PRODUCT_CNC
                             )
-                            log_trade_to_sheet(
-                                symbol=sym,
-                                qty=qty,
-                                price=cmp,
-                                rsi=rsi,
-                                atr=None,
-                                adx=None,
-                                ai_score=confidence,
-                                action="BUY",
-                                exit_reason="",
-                                pnl="",
-                                outcome=""
-                            )
-                            st.success(f"✅ Order placed for {sym}")
-                            send_telegram(BOT_TOKEN, CHAT_ID, msg)
+                        
+                            # 🔍 Zerodha typically returns a dict with 'order_id'
+                            if isinstance(response, dict) and response.get("order_id"):
+                                st.success(f"✅ Order placed for {sym} | Order ID: {response['order_id']}")
+                                send_telegram(BOT_TOKEN, CHAT_ID, msg)
+                        
+                                log_trade_to_sheet(
+                                    symbol=sym,
+                                    qty=qty,
+                                    price=cmp,
+                                    rsi=rsi,
+                                    atr=None,
+                                    adx=None,
+                                    ai_score=confidence,
+                                    action="BUY",
+                                    exit_reason="",
+                                    pnl="",
+                                    outcome=""
+                                )
+                            else:
+                                st.error(f"❌ {sym} order failed | Response: {response}")
+                        
                         except Exception as e:
-                            st.error(f"❌ {sym} failed: {e}")
-
-
+                            # Decode known KiteConnect errors
+                            import kiteconnect
+                            if isinstance(e, kiteconnect.exceptions.KiteException):
+                                st.error(f"❌ {sym} Kite error: {e}")
+                            else:
+                                st.error(f"❌ {sym} unexpected error: {e}")
+                                
     else:
         st.warning("⚠️ 'Score' column missing in scanned data.")
 else:

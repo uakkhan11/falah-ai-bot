@@ -280,7 +280,7 @@ if "scanned" in st.session_state and not st.session_state["scanned"].empty:
                         send_telegram(BOT_TOKEN, CHAT_ID, f"[DRY RUN]\n{msg}")
                     elif is_market_open():
                         try:
-                            response = kite.place_order(
+                            order_id = kite.place_order(
                                 variety=kite.VARIETY_REGULAR,
                                 exchange=kite.EXCHANGE_NSE,
                                 tradingsymbol=sym,
@@ -290,9 +290,17 @@ if "scanned" in st.session_state and not st.session_state["scanned"].empty:
                                 product=kite.PRODUCT_CNC
                             )
                         
-                            # 🔍 Zerodha typically returns a dict with 'order_id'
-                            if isinstance(response, dict) and response.get("order_id"):
-                                st.success(f"✅ Order placed for {sym} | Order ID: {response['order_id']}")
+                            # 🕵️‍♂️ Check if order was actually accepted
+                            status = "UNKNOWN"
+                            try:
+                                order_history = kite.order_history(order_id)
+                                if order_history:
+                                    status = order_history[-1].get("status", "UNKNOWN")
+                            except Exception as hist_err:
+                                st.warning(f"⚠️ Could not verify order status for {sym}: {hist_err}")
+                        
+                            if status in ["COMPLETE", "OPEN", "TRIGGER PENDING"]:
+                                st.success(f"✅ Order placed for {sym} | ID: {order_id} | Status: {status}")
                                 send_telegram(BOT_TOKEN, CHAT_ID, msg)
                         
                                 log_trade_to_sheet(
@@ -309,15 +317,15 @@ if "scanned" in st.session_state and not st.session_state["scanned"].empty:
                                     outcome=""
                                 )
                             else:
-                                st.error(f"❌ {sym} order failed | Response: {response}")
+                                st.error(f"❌ {sym} order rejected | ID: {order_id} | Status: {status}")
                         
                         except Exception as e:
-                            # Decode known KiteConnect errors
                             import kiteconnect
                             if isinstance(e, kiteconnect.exceptions.KiteException):
                                 st.error(f"❌ {sym} Kite error: {e}")
                             else:
                                 st.error(f"❌ {sym} unexpected error: {e}")
+
                                 
     else:
         st.warning("⚠️ 'Score' column missing in scanned data.")

@@ -4,6 +4,7 @@ import os
 import json
 import math
 import subprocess
+import time
 from kiteconnect import KiteConnect
 from credentials import load_secrets
 
@@ -46,13 +47,16 @@ def start_all_websockets():
         end = start + MAX_TOKENS_PER_SOCKET
         token_slice = tokens[start:end]
         token_str = ",".join(str(t) for t in token_slice)
+        index = str(i + 1)
 
-        print(f"🔌 Starting WebSocket Worker {i+1}/{num_sockets} for tokens {start} to {end - 1} ({len(token_slice)} tokens)")
+        print(f"🔌 Starting WebSocket Worker {index}/{num_sockets} for tokens {start} to {end - 1} ({len(token_slice)} tokens)")
 
         subprocess.Popen([
             "python3", WORKER_PATH,
-            api_key, access_token, token_str
+            api_key, access_token, token_str, index
         ], env=os.environ.copy())
+
+        time.sleep(1)  # prevent rate limit
 
 if __name__ == "__main__":
     start_all_websockets()

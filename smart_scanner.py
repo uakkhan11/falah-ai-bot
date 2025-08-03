@@ -28,12 +28,15 @@ def run_smart_scan():
     holdings = get_existing_holdings()
     live_prices = get_symbol_price_map()
 
+    print(f"✅ Loaded {len(symbols)} symbols from Halal list")
+
     if not live_prices:
         print("⚠️ No live prices available. Possibly market is closed.")
         return pd.DataFrame(), {}
 
     final_selected = []
     skip_reasons = {}
+    skip_reason_dict = {}
     filter_stats = {
         "ema_pass": 0,
         "pivot_pass": 0,
@@ -45,21 +48,24 @@ def run_smart_scan():
     for symbol in sorted(set(symbols)):
         if symbol in holdings:
             skip_reasons["Holdings"] = skip_reasons.get("Holdings", 0) + 1
+            skip_reason_dict[symbol] = "Already in holdings"
             continue
 
         if symbol not in live_prices:
             skip_reasons["No live price"] = skip_reasons.get("No live price", 0) + 1
+            skip_reason_dict[symbol] = "No live price"
             continue
 
         filepath = os.path.join(DATA_DIR, f"{symbol}.csv")
-        print(f"🔍 Processing {symbol} from {filepath}")
         if not os.path.exists(filepath):
             skip_reasons["Missing file"] = skip_reasons.get("Missing file", 0) + 1
+            skip_reason_dict[symbol] = "Missing historical data file"
             continue
 
         df = pd.read_csv(filepath)
         if df.shape[0] < 30:
             skip_reasons["Not enough data"] = skip_reasons.get("Not enough data", 0) + 1
+            skip_reason_dict[symbol] = "Less than 30 candles"
             continue
 
         df = df.tail(60).copy()
@@ -72,40 +78,40 @@ def run_smart_scan():
         ema10 = df["ema10"].iloc[-1]
         ema21 = df["ema21"].iloc[-1]
 
-        # Filter: EMA
         if ema10 <= ema21:
             skip_reasons["EMA10 < EMA21"] = skip_reasons.get("EMA10 < EMA21", 0) + 1
+            skip_reason_dict[symbol] = f"EMA10 ({ema10:.2f}) < EMA21 ({ema21:.2f})"
             continue
         filter_stats["ema_pass"] += 1
 
-        # Filter: RSI within 30-75 and rising
         if rsi < 30 or rsi > 75:
             skip_reasons[f"RSI {round(rsi,2)} out of 30-75"] = skip_reasons.get(f"RSI {round(rsi,2)} out of 30-75", 0) + 1
+            skip_reason_dict[symbol] = f"RSI {rsi:.2f} out of range"
             continue
         if rsi < prev_rsi:
             skip_reasons["RSI falling"] = skip_reasons.get("RSI falling", 0) + 1
+            skip_reason_dict[symbol] = f"RSI {rsi:.2f} falling from {prev_rsi:.2f}"
             continue
         filter_stats["rsi_pass"] += 1
 
-        # Filter: Bullish pivot
         if not detect_bullish_pivot(df):
             skip_reasons["No bullish pivot"] = skip_reasons.get("No bullish pivot", 0) + 1
+            skip_reason_dict[symbol] = "No bullish pivot"
             continue
         filter_stats["pivot_pass"] += 1
 
-        # Filter: MACD bullish cross
         if not detect_macd_bullish_cross(df):
             skip_reasons["No MACD bullish cross"] = skip_reasons.get("No MACD bullish cross", 0) + 1
+            skip_reason_dict[symbol] = "No MACD bullish crossover"
             continue
         filter_stats["macd_pass"] += 1
 
-        # Filter: Supertrend green
         if not detect_supertrend_green(df):
             skip_reasons["Supertrend not green"] = skip_reasons.get("Supertrend not green", 0) + 1
+            skip_reason_dict[symbol] = "Supertrend not green"
             continue
         filter_stats["supertrend_pass"] += 1
 
-        # Passed all filters
         ltp = live_prices[symbol]
         ai_score, ai_reasons = compute_ai_score(df)
 
@@ -119,6 +125,11 @@ def run_smart_scan():
 
     result_df = pd.DataFrame(final_selected)
     result_df.to_json("final_screened.json", orient="records", indent=2)
+
+    print(f"\n✅ After filters: {len(result_df)} passed\n")
+    for s in sorted(skip_reason_dict):
+        print(f"⛔ Skipped {s}: Reason - {skip_reason_dict[s]}")
+
     return result_df, {
         "skip_reasons": skip_reasons,
         "filter_stats": filter_stats

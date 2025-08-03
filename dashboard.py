@@ -19,6 +19,25 @@ from bulk_analysis import analyze_multiple_stocks
 from ws_live_prices import start_all_websockets
 from telegram_utils import send_telegram
 from sheets import log_trade_to_sheet
+from live_price_reader import get_symbol_price_map
+
+if st.button("🔄 Refresh Prices"):
+    st.rerun()
+
+st.title("🔴 Live LTP Monitor")
+
+try:
+    prices = get_symbol_price_map()
+    if prices:
+        df = pd.DataFrame([
+            {"Symbol": sym, "LTP": prices[sym]}
+            for sym in sorted(prices)
+        ])
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.warning("📴 Market is closed or no live price data available.")
+except Exception as e:
+    st.error(f"❌ Failed to fetch live prices: {e}")
 
 # ✅ Streamlit UI Setup
 st.set_page_config(page_title="Falāh Bot Dashboard", layout="wide", page_icon="🌙")

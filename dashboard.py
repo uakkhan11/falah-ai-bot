@@ -353,48 +353,50 @@ else:
         
 # Manual Stock Lookup
 st.subheader("🔍 Manual Stock Lookup")
-symbol_input = st.text_input("Enter NSE Symbol (e.g., INFY)").strip().upper()
+
+symbol_input = st.selectbox("Choose NSE Symbol", valid_symbols)
+
 if st.button("Fetch Stock Data"):
-    if not symbol_input:
-        st.warning("Enter a symbol.")
-    else:
-        kite = get_kite()
-        if not validate_kite(kite):
-            st.error("Invalid token.")
-            st.stop()
-        try:
-            result = analyze_stock(kite, symbol_input)
-            st.write(f"✅ CMP: ₹{result['cmp']:.2f}")
-            st.write(f"ATR(14): {result['atr']:.2f}")
-            trailing_sl = compute_trailing_sl(result['cmp'], result['atr'])
-            target_price = round(result['cmp'] + (result['cmp'] - trailing_sl) * 3, 2)
-            st.write(f"Trailing SL: ₹{trailing_sl}")
-            st.write(f"Target Price (1:3 R/R): ₹{target_price}")
-            st.write(f"ADX: {result['adx']:.2f} ({get_regime(result['adx'])})")
-            st.write(f"RSI: {result['rsi']:.2f} ({result['rsi_percentile']*100:.1f}% percentile)")
-            st.write(f"Relative Strength: {result['rel_strength']:.2f}")
-            st.write(f"AI Exit Score: {result['ai_score']}")
-            st.write(f"Recommendation: **{result['recommendation']}**")
-            st.dataframe(result["history"].tail(10))
-
-        except Exception as e:
-            st.error(f"Error fetching data: {e}")
-
+    kite = get_kite()
+    if not validate_kite(kite):
+        st.error("Invalid token.")
+        st.stop()
+    try:
+        result = analyze_stock(kite, symbol_input)
+        st.write(f"✅ CMP: ₹{result['cmp']:.2f}")
+        st.write(f"ATR(14): {result['atr']:.2f}")
+        trailing_sl = compute_trailing_sl(result['cmp'], result['atr'])
+        target_price = round(result['cmp'] + (result['cmp'] - trailing_sl) * 3, 2)
+        st.write(f"Trailing SL: ₹{trailing_sl}")
+        st.write(f"Target Price (1:3 R/R): ₹{target_price}")
+        st.write(f"ADX: {result['adx']:.2f} ({get_regime(result['adx'])})")
+        st.write(f"RSI: {result['rsi']:.2f} ({result['rsi_percentile']*100:.1f}% percentile)")
+        st.write(f"Relative Strength: {result['rel_strength']:.2f}")
+        st.write(f"AI Exit Score: {result['ai_score']}")
+        st.write(f"Recommendation: **{result['recommendation']}**")
+        st.dataframe(result["history"].tail(10))
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
 # Bulk Analysis
 st.subheader("📊 Bulk Stock Analysis")
-symbols_input = st.text_area(
-    "Enter NSE symbols separated by commas (e.g., INFY,TCS,HDFCBANK):"
-).strip().upper()
+symbols_input = st.text_area("Enter NSE symbols separated by commas (e.g., INFY,TCS,HDFCBANK):").strip().upper()
 
 if st.button("Analyze Stocks"):
     if not symbols_input:
         st.warning("Enter at least one symbol.")
     else:
         symbols_list = [s.strip() for s in symbols_input.split(",")]
+        invalid = [s for s in symbols_list if s not in valid_symbols]
+        
+        if invalid:
+            st.error(f"Invalid symbols: {', '.join(invalid)}")
+            st.stop()
+
         kite = get_kite()
         if not validate_kite(kite):
             st.error("Invalid token.")
             st.stop()
+
         st.info("Analyzing...")
         results = analyze_multiple_stocks(kite, symbols_list)
 

@@ -30,6 +30,7 @@ valid_symbols = sorted([
     s for s in all_symbols
     if s.isupper() and s.isalpha() and len(s) >= 3
 ])
+print("🧪 Valid symbols about to fetch:", valid_symbols)
 
 if st.button("🔄 Refresh Prices"):
     st.rerun()

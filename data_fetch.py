@@ -25,26 +25,33 @@ def get_live_ltp(kite, symbol):
         print(f"⚠️ Error fetching LTP for {symbol}: {e}")
         return None
 
-def get_intraday_data(kite, symbol, interval="15minute", days=5):
+def get_intraday_data(kite, symbol, interval="15minute", days=1):
     try:
-        token = get_instrument_token(kite, symbol)
+        from_date = datetime.now() - timedelta(days=days)
+        to_date = datetime.now()
+
+        # Load token map
+        with open("token_map.json") as f:
+            token_map = json.load(f)
+
+        token = token_map.get(symbol)
         if not token:
-            print(f"❌ Skipping {symbol}, instrument token not found.")
-            return pd.DataFrame()
+            print(f"❌ Token not found for {symbol}")
+            return None
 
-        to_date = datetime.datetime.now()
-        from_date = to_date - datetime.timedelta(days=days)
+        data = kite.historical_data(token, from_date, to_date, interval)
 
-        data = kite.historical_data(
-            instrument_token=token,
-            from_date=from_date,
-            to_date=to_date,
-            interval=interval
-        )
-        return pd.DataFrame(data)
+        if not data:
+            print(f"⚠️ No data returned for {symbol}")
+            return None
+
+        df = pd.DataFrame(data)
+        print(f"✅ Data fetched for {symbol}: {len(df)} rows")
+        return df
+
     except Exception as e:
-        print(f"⚠️ Error fetching intraday data for {symbol}: {e}")
-        return pd.DataFrame()
+        print(f"⚠️ Error fetching data for {symbol}: {e}")
+        return None
 
 def fetch_historical_candles(kite, symbol, interval="day", days=30):
     try:

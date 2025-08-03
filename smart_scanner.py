@@ -20,7 +20,6 @@ if not live_prices:
 DATA_DIR = "/root/falah-ai-bot/historical_data"
 
 def run_smart_scan():
-    large_midcap_symbols = load_large_midcap_symbols()
     holdings = get_existing_holdings()
     live_prices = get_symbol_price_map()  # ✅ Load all live prices once
 
@@ -33,8 +32,6 @@ def run_smart_scan():
         "supertrend_pass": 0,
         "macd_pass": 0
     }
-
-    for symbol in sorted(large_midcap_symbols):
         if symbol in holdings:
             skip_reasons["Holdings"] = skip_reasons.get("Holdings", 0) + 1
             continue

@@ -9,20 +9,26 @@ from threading import Timer
 from kiteconnect import KiteTicker
 import pytz
 
+# --------- IMPORT FROM credentials.py ----------
+from credentials import load_secrets
+
+# --------- LOAD SECRETS ----------
+secrets = load_secrets("/root/falah-ai-bot/secrets.json")
+api_key = secrets["zerodha"]["api_key"]
+access_token = secrets["zerodha"]["access_token"]
+
 # --------- ARGUMENT VALIDATION ----------
-if len(sys.argv) != 5:
-    print("Usage: python ws_worker.py <api_key> <access_token> <comma_separated_tokens> <worker_index>")
+if len(sys.argv) != 3:
+    print("Usage: python ws_worker.py <comma_separated_tokens> <worker_index>")
     sys.exit(1)
 
-api_key = sys.argv[1]
-access_token = sys.argv[2]
-tokens = [int(t) for t in sys.argv[3].split(",")]
-worker_index = sys.argv[4]
+tokens = [int(t) for t in sys.argv[1].split(",")]
+worker_index = sys.argv[2]
 
 # --------- PATHS ----------
 TMP_FILE = f"/tmp/live_prices_{worker_index}.json"
 MERGED_FILE = "live_prices.json"
-TOKEN_MAP_FILE = "instrument_token_map.json"  # Required for symbol ↔ token mapping
+TOKEN_MAP_FILE = "instrument_token_map.json"
 
 # --------- LIVE DATA CACHE ----------
 live_data = {}

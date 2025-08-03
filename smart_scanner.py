@@ -8,20 +8,29 @@ from indicators import (
     detect_supertrend_green
 )
 from ai_engine import compute_ai_score
-from amfi_fetcher import load_large_midcap_symbols
 from holdings import get_existing_holdings
 from live_price_reader import get_symbol_price_map
-live_prices = get_symbol_price_map()
-
-if not live_prices:
-    print("⚠️ No live prices available. Possibly market is closed.")
-
+from credentials import load_secrets
+import gspread
 
 DATA_DIR = "/root/falah-ai-bot/historical_data"
 
+def get_halal_list(sheet_key):
+    gc = gspread.service_account(filename="/root/falah-ai-bot/falah-credentials.json")
+    sheet = gc.open_by_key(sheet_key)
+    ws = sheet.worksheet("HalalList")
+    symbols = ws.col_values(1)[1:]  # skip header
+    return [s.strip().upper() for s in symbols if s.strip()]
+
 def run_smart_scan():
+    secrets = load_secrets()
+    symbols = get_halal_list(secrets["google"]["spreadsheet_key"])
     holdings = get_existing_holdings()
-    live_prices = get_symbol_price_map()  # ✅ Load all live prices once
+    live_prices = get_symbol_price_map()
+
+    if not live_prices:
+        print("⚠️ No live prices available. Possibly market is closed.")
+        return pd.DataFrame(), {}
 
     final_selected = []
     skip_reasons = {}
@@ -32,6 +41,8 @@ def run_smart_scan():
         "supertrend_pass": 0,
         "macd_pass": 0
     }
+
+    for symbol in sorted(set(symbols)):
         if symbol in holdings:
             skip_reasons["Holdings"] = skip_reasons.get("Holdings", 0) + 1
             continue
@@ -56,6 +67,7 @@ def run_smart_scan():
         df["ema21"] = calculate_ema(df["close"], span=21)
 
         rsi = df["rsi"].iloc[-1]
+        prev_rsi = df["rsi"].iloc[-2]
         ema10 = df["ema10"].iloc[-1]
         ema21 = df["ema21"].iloc[-1]
 
@@ -65,17 +77,13 @@ def run_smart_scan():
             continue
         filter_stats["ema_pass"] += 1
 
-       # Filter: RSI
-        prev_rsi = df["rsi"].iloc[-2]  # Previous candle RSI
-        
+        # Filter: RSI within 30-75 and rising
         if rsi < 30 or rsi > 75:
-            skip_reasons[f"RSI {round(rsi, 2)} out of 30-75"] = skip_reasons.get(f"RSI {round(rsi, 2)} out of 30-75", 0) + 1
+            skip_reasons[f"RSI {round(rsi,2)} out of 30-75"] = skip_reasons.get(f"RSI {round(rsi,2)} out of 30-75", 0) + 1
             continue
-        
         if rsi < prev_rsi:
             skip_reasons["RSI falling"] = skip_reasons.get("RSI falling", 0) + 1
             continue
-        
         filter_stats["rsi_pass"] += 1
 
         # Filter: Bullish pivot
@@ -103,13 +111,12 @@ def run_smart_scan():
         final_selected.append({
             "symbol": symbol,
             "ltp": ltp,
-            "ai_score": round(ai_score, 4),
+            "Score": round(ai_score, 4),
             "rsi": round(rsi, 2),
             "ai_reasons": ", ".join(ai_reasons) if ai_reasons else ""
         })
 
     result_df = pd.DataFrame(final_selected)
-    result_df.rename(columns={"ai_score": "Score"}, inplace=True)
     result_df.to_json("final_screened.json", orient="records", indent=2)
     return result_df, {
         "skip_reasons": skip_reasons,
@@ -121,10 +128,9 @@ if __name__ == "__main__":
 
     if result_df.empty:
         print("✅ Final selected 0 stocks.")
-        print(result_df)
     else:
         print(f"✅ Final selected {len(result_df)} stocks:")
-        print(result_df[["symbol", "ltp", "ai_score", "rsi"]])
+        print(result_df[["symbol", "ltp", "Score", "rsi"]])
 
     # 📊 Skip Reason Summary
     if "skip_reasons" in debug_stats:

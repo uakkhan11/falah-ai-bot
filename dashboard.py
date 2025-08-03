@@ -38,15 +38,26 @@ if st.button("🔄 Refresh Prices"):
 st.title("🔴 Live LTP Monitor")
 
 try:
-    prices = get_symbol_price_map()
-    if prices:
-        df = pd.DataFrame([
-            {"Symbol": sym, "LTP": prices[sym]}
-            for sym in sorted(prices)
-        ])
-        st.dataframe(df, use_container_width=True)
+    # Load final picks from intraday scan
+    if os.path.exists("final_screened.json"):
+        with open("final_screened.json", "r") as f:
+            picks = json.load(f)
+        symbols = [item["symbol"] for item in picks if "symbol" in item]
     else:
-        st.warning("📴 Market is closed or no live price data available.")
+        symbols = []
+
+    if not symbols:
+        st.warning("⚠️ No symbols in final picks.")
+    else:
+        prices = get_symbol_price_map(symbols)
+        if prices:
+            df = pd.DataFrame([
+                {"Symbol": sym, "LTP": prices.get(sym, "N/A")}
+                for sym in sorted(symbols)
+            ])
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.warning("📴 Market is closed or no live price data available.")
 except Exception as e:
     st.error(f"❌ Failed to fetch live prices: {e}")
 

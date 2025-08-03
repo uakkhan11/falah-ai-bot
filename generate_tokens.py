@@ -1,4 +1,5 @@
-# generate_tokens_from_all.py
+# generate_tokens.py
+
 import pandas as pd
 import json
 from kiteconnect import KiteConnect
@@ -27,7 +28,7 @@ instruments = kite.instruments("NSE")
 df = pd.DataFrame(instruments)
 print(f"✅ Loaded {len(df)} instruments.")
 
-# Save them if you want
+# Save optional full instruments
 df.to_csv("/root/falah-ai-bot/all_nse_instruments.csv", index=False)
 
 # Fetch Halal symbols from Google Sheets
@@ -47,8 +48,9 @@ print(f"✅ Matched {len(filtered)} symbols in Zerodha instruments.")
 # Build mapping
 token_map = dict(zip(filtered["tradingsymbol"], filtered["instrument_token"]))
 
-# Save tokens.json
-with open("/root/falah-ai-bot/tokens.json", "w") as f:
+# ✅ Save to token_map.json (required name)
+output_path = "/root/falah-ai-bot/token_map.json"
+with open(output_path, "w") as f:
     json.dump(token_map, f, indent=2)
 
-print(f"✅ tokens.json updated with {len(token_map)} symbols.")
+print(f"✅ token_map.json updated with {len(token_map)} symbols.")

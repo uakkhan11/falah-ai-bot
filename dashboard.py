@@ -9,7 +9,7 @@ import joblib
 import psutil
 
 from credentials import load_secrets, get_kite, validate_kite
-from data_fetch import get_live_ltp
+from data_fetch import fetch_all_historical
 from fetch_intraday_data import fetch_intraday_data
 from fetch_historical_batch import fetch_all_historical
 from intraday_scanner import run_intraday_scan
@@ -26,7 +26,10 @@ with open("symbol_to_token.json") as f:
     all_symbols = list(symbol_map.keys())
 
 # Filter only alphabetic ones (e.g., 'INFY', 'TCS', not '0MOFSL27-N3')
-valid_symbols = sorted([s for s in all_symbols if s.isalpha()])
+valid_symbols = sorted([
+    s for s in all_symbols
+    if s.isupper() and s.isalpha() and len(s) >= 3
+])
 
 if st.button("🔄 Refresh Prices"):
     st.rerun()

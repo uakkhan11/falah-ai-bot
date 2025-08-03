@@ -52,6 +52,7 @@ def run_smart_scan():
             continue
 
         filepath = os.path.join(DATA_DIR, f"{symbol}.csv")
+        print(f"🔍 Processing {symbol} from {filepath}")
         if not os.path.exists(filepath):
             skip_reasons["Missing file"] = skip_reasons.get("Missing file", 0) + 1
             continue

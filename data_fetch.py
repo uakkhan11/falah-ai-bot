@@ -61,9 +61,48 @@ def get_intraday_data(kite, symbol, interval="15minute", days=5):
             to_date=to_date,
             interval=interval
         )
-        return pd.DataFrame(data)
+        df = pd.DataFrame(data)
+        if 'date' not in df.columns and 'timestamp' in df.columns:
+            df.rename(columns={"timestamp": "date"}, inplace=True)
+        return df
     except Exception as e:
         print(f"⚠️ Error fetching intraday data for {symbol}: {e}")
+        return pd.DataFrame()
+
+
+def fetch_recent_historical(kite, symbol, days=30):
+    """
+    Fetches recent historical daily data with proper column checks.
+    """
+    try:
+        instrument = f"NSE:{symbol}"
+        to_date = datetime.datetime.now()
+        from_date = to_date - datetime.timedelta(days=days)
+
+        token = kite.ltp([instrument])[instrument]["instrument_token"]
+        data = kite.historical_data(
+            instrument_token=token,
+            from_date=from_date,
+            to_date=to_date,
+            interval="day"
+        )
+
+        df = pd.DataFrame(data)
+        if df.empty:
+            print(f"⚠️ No data for {symbol}")
+            return df
+
+        if 'date' not in df.columns and 'timestamp' in df.columns:
+            df.rename(columns={"timestamp": "date"}, inplace=True)
+        if 'date' not in df.columns:
+            print(f"❌ Missing 'date' column in {symbol} data!")
+            return pd.DataFrame()
+
+        df['date'] = pd.to_datetime(df['date'])
+        return df
+
+    except Exception as e:
+        print(f"⚠️ Error fetching recent historical for {symbol}: {e}")
         return pd.DataFrame()
 
 
@@ -75,27 +114,31 @@ def fetch_historical_candles(kite, symbol, interval="day", days=30):
         instrument = f"NSE:{symbol}"
         to_date = datetime.datetime.now()
         from_date = to_date - datetime.timedelta(days=days)
+        token = kite.ltp([instrument])[instrument]["instrument_token"]
         data = kite.historical_data(
-            instrument_token=kite.ltp([instrument])[instrument]["instrument_token"],
+            instrument_token=token,
             from_date=from_date,
             to_date=to_date,
-            interval="day"
+            interval=interval
         )
         df = pd.DataFrame(data)
-        
-        if not df.empty:
-            if 'date' not in df.columns:
-                print(f"⚠️ 'date' column missing, raw columns: {df.columns}")
-                return pd.DataFrame()  # Return empty to avoid crash
-            df['date'] = pd.to_datetime(df['date'])  # Ensure datetime
-        else:
-            print(f"⚠️ No data received for {symbol}")
 
+        if df.empty:
+            print(f"⚠️ No data received for {symbol}")
+            return df
+
+        if 'date' not in df.columns and 'timestamp' in df.columns:
+            df.rename(columns={"timestamp": "date"}, inplace=True)
+        if 'date' not in df.columns:
+            print(f"❌ 'date' column missing even after rename in {symbol}")
+            return pd.DataFrame()
+
+        df['date'] = pd.to_datetime(df['date'])
         return df
+
     except Exception as e:
         print(f"⚠️ Error fetching historical data for {symbol}: {e}")
         return pd.DataFrame()
-
 
 
 def fetch_all_historical(kite, symbol_list, days=60, interval="day", output_dir="historical_data"):

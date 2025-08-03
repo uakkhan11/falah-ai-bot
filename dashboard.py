@@ -21,6 +21,9 @@ from telegram_utils import send_telegram
 from sheets import log_trade_to_sheet
 from live_price_reader import get_symbol_price_map
 
+with open("symbol_to_token.json") as f:
+    valid_symbols = sorted(json.load(f).keys())
+
 if st.button("🔄 Refresh Prices"):
     st.rerun()
 

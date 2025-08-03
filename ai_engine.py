@@ -7,7 +7,7 @@ from ta.trend import ADXIndicator, EMAIndicator
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
 from ta.trend import ADXIndicator
-from data_fetch import fetch_recent_historical  # assumes already implemented
+from data_fetch import fetch_historical_candles  # assumes already implemented
 
 IST = pytz.timezone("Asia/Kolkata")
 

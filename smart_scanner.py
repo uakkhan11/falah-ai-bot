@@ -8,15 +8,16 @@ from indicators import (
     detect_supertrend_green
 )
 from ai_engine import compute_ai_score
-from price_fetcher import get_price
 from amfi_fetcher import load_large_midcap_symbols
 from holdings import get_existing_holdings
+from live_price_reader import get_symbol_price_map  # ✅ NEW
 
 DATA_DIR = "/root/falah-ai-bot/historical_data"
 
 def run_smart_scan():
     large_midcap_symbols = load_large_midcap_symbols()
     holdings = get_existing_holdings()
+    live_prices = get_symbol_price_map()  # ✅ Load all live prices once
 
     final_selected = []
     skip_reasons = {}
@@ -31,6 +32,10 @@ def run_smart_scan():
     for symbol in sorted(large_midcap_symbols):
         if symbol in holdings:
             skip_reasons["Holdings"] = skip_reasons.get("Holdings", 0) + 1
+            continue
+
+        if symbol not in live_prices:
+            skip_reasons["No live price"] = skip_reasons.get("No live price", 0) + 1
             continue
 
         filepath = os.path.join(DATA_DIR, f"{symbol}.csv")
@@ -83,13 +88,13 @@ def run_smart_scan():
         filter_stats["supertrend_pass"] += 1
 
         # Passed all filters
-        ltp = get_price(symbol)
+        ltp = live_prices[symbol]
         ai_score, ai_reasons = compute_ai_score(df)
 
         final_selected.append({
             "symbol": symbol,
             "ltp": ltp,
-            "Score": round(ai_score, 4),
+            "ai_score": round(ai_score, 4),
             "rsi": round(rsi, 2),
             "ai_reasons": ", ".join(ai_reasons) if ai_reasons else ""
         })

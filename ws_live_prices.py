@@ -1,6 +1,8 @@
 # ws_live_prices.py
 import os, subprocess, json
 
+tokens_dir = "/root/falah-ai-bot/ws_tokens"
+os.makedirs(tokens_dir, exist_ok=True)
 def start_all_websockets():
     tokens_dir = "/root/falah-ai-bot/ws_tokens"
     for file in sorted(os.listdir(tokens_dir)):

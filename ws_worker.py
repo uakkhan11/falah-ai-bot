@@ -7,6 +7,10 @@ import os
 from kiteconnect import KiteTicker
 from credentials import load_secrets
 
+
+with open(sys.argv[1], "r") as f:
+    tokens = json.load(f)
+
 # Check args: only worker index is required
 if len(sys.argv) != 2:
     print("Usage: python ws_worker.py <worker_index>")

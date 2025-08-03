@@ -7,8 +7,8 @@ from credentials import load_secrets
 
 # Load credentials
 secrets = load_secrets()
-api_key = secrets["api_key"]
-access_token = secrets["access_token"]
+api_key = secrets["zerodha"]["api_key"]
+access_token = secrets["zerodha"]["access_token"]
 
 # Validate args
 if len(sys.argv) != 3:

@@ -105,6 +105,7 @@ def run_smart_scan():
         })
 
     result_df = pd.DataFrame(final_selected)
+    result_df.rename(columns={"ai_score": "Score"}, inplace=True)
     result_df.to_json("final_screened.json", orient="records", indent=2)
     return result_df, {
         "skip_reasons": skip_reasons,

@@ -11,7 +11,11 @@ from ai_engine import compute_ai_score
 from amfi_fetcher import load_large_midcap_symbols
 from holdings import get_existing_holdings
 from live_price_reader import get_symbol_price_map
-print(get_symbol_price_map())
+live_prices = get_symbol_price_map()
+
+if not live_prices:
+    print("⚠️ No live prices available. Possibly market is closed.")
+
 
 DATA_DIR = "/root/falah-ai-bot/historical_data"
 

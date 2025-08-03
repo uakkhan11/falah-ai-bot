@@ -1,61 +1,47 @@
 # live_price_reader.py
 
-import os
 import json
-import glob
-import time
-from datetime import datetime, time as dt_time
-import pytz
+import os
+import pandas as pd
+from amfi_fetcher import load_large_midcap_symbols
 
-# ---------- Settings ----------
-TMP_FOLDER = "/tmp"
-TOKEN_MAP_PATH = "/root/falah-ai-bot/token_map.json"
-MAX_FILE_AGE_SEC = 15  # ignore stale live_prices_*.json files older than 15 sec
+HISTORICAL_DATA_DIR = "/root/falah-ai-bot/historical_data"
+LIVE_PRICE_FILE = "live_prices.json"
 
-IST = pytz.timezone("Asia/Kolkata")
-
-# ---------- Market Time Check ----------
-def is_market_open():
-    now = datetime.now(IST).time()
-    return dt_time(9, 15) <= now <= dt_time(15, 30)
-
-# ---------- Load Token Map ----------
-def load_token_map(path=TOKEN_MAP_PATH):
-    with open(path) as f:
-        return json.load(f)  # {symbol: token}
-
-def reverse_token_map(token_map):
-    return {v: k for k, v in token_map.items()}  # {token: symbol}
-
-# ---------- Read Latest Live Price Files ----------
-def get_combined_live_prices(tmp_folder=TMP_FOLDER, max_age_sec=MAX_FILE_AGE_SEC):
-    prices = {}
-    now = time.time()
-    for path in glob.glob(os.path.join(tmp_folder, "live_prices_*.json")):
-        try:
-            modified = os.path.getmtime(path)
-            if now - modified > max_age_sec:
-                print(f"⚠️ Skipping stale file: {path}")
-                continue
-            with open(path) as f:
-                worker_data = json.load(f)
-                prices.update({int(k): v for k, v in worker_data.items()})
-        except Exception as e:
-            print(f"⚠️ Error reading {path}: {e}")
-    return prices  # {token: price}
-
-# ---------- Main: Get Symbol → Price Map ----------
 def get_symbol_price_map():
-    if not is_market_open():
-        print("🔒 Market is closed. Skipping live price fetch.")
-        return {}
+    price_map = {}
 
-    token_map = load_token_map()
-    reverse_map = reverse_token_map(token_map)
-    token_prices = get_combined_live_prices()
-    
-    return {
-        reverse_map[token]: price
-        for token, price in token_prices.items()
-        if token in reverse_map
-    }
+    # Step 1: Try to load live prices from cached file
+    if os.path.exists(LIVE_PRICE_FILE):
+        try:
+            with open(LIVE_PRICE_FILE, "r") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and data:
+                    print("✅ Using live prices from cache.")
+                    return {k: round(float(v), 2) for k, v in data.items()}
+        except Exception as e:
+            print(f"⚠️ Error reading {LIVE_PRICE_FILE}: {e}")
+
+    # Step 2: Fallback to last close from historical data
+    print("⚠️ Live prices not found. Falling back to last close prices from historical data.")
+    symbols = load_large_midcap_symbols()
+
+    for symbol in symbols:
+        filepath = os.path.join(HISTORICAL_DATA_DIR, f"{symbol}.csv")
+        if os.path.exists(filepath):
+            try:
+                df = pd.read_csv(filepath)
+                if not df.empty:
+                    last_close = df["close"].iloc[-1]
+                    price_map[symbol] = round(float(last_close), 2)
+            except Exception as e:
+                print(f"⚠️ Failed to load data for {symbol}: {e}")
+        else:
+            print(f"⚠️ Historical file missing: {symbol}.csv")
+
+    if not price_map:
+        print("❌ No prices available from live or fallback data.")
+    else:
+        print(f"✅ Fallback prices loaded for {len(price_map)} symbols.")
+
+    return price_map

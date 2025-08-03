@@ -277,7 +277,7 @@ if "scanned" in st.session_state and not st.session_state["scanned"].empty:
             if scanned_df.empty:
                 st.warning("No scanned stocks available.")
             else:
-                for _, row in scanned_df.iterrows():
+                for _, row in scanned_sorted.iterrows():
                     try:
                         sym = row["symbol"]
                         cmp = row["ltp"]

@@ -10,7 +10,8 @@ from indicators import (
 from ai_engine import compute_ai_score
 from amfi_fetcher import load_large_midcap_symbols
 from holdings import get_existing_holdings
-from live_price_reader import get_symbol_price_map  # ✅ NEW
+from live_price_reader import get_symbol_price_map
+print(get_symbol_price_map())
 
 DATA_DIR = "/root/falah-ai-bot/historical_data"
 

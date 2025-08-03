@@ -79,11 +79,21 @@ def fetch_historical_candles(kite, symbol, interval="day", days=30):
             instrument_token=kite.ltp([instrument])[instrument]["instrument_token"],
             from_date=from_date,
             to_date=to_date,
-            interval=interval
+            interval="day"
         )
-        return pd.DataFrame(data)
+        df = pd.DataFrame(data)
+        
+        if not df.empty:
+            if 'date' not in df.columns:
+                print(f"⚠️ 'date' column missing, raw columns: {df.columns}")
+                return pd.DataFrame()  # Return empty to avoid crash
+            df['date'] = pd.to_datetime(df['date'])  # Ensure datetime
+        else:
+            print(f"⚠️ No data received for {symbol}")
+
+        return df
     except Exception as e:
-        print(f"⚠️ Error in fetch_historical_candles for {symbol}: {e}")
+        print(f"⚠️ Error fetching historical data for {symbol}: {e}")
         return pd.DataFrame()
 
 

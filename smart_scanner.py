@@ -68,10 +68,17 @@ def run_smart_scan():
             continue
         filter_stats["ema_pass"] += 1
 
-        # Filter: RSI
+       # Filter: RSI
+        prev_rsi = df["rsi"].iloc[-2]  # Previous candle RSI
+        
         if rsi < 30 or rsi > 75:
             skip_reasons[f"RSI {round(rsi, 2)} out of 30-75"] = skip_reasons.get(f"RSI {round(rsi, 2)} out of 30-75", 0) + 1
             continue
+        
+        if rsi < prev_rsi:
+            skip_reasons["RSI falling"] = skip_reasons.get("RSI falling", 0) + 1
+            continue
+        
         filter_stats["rsi_pass"] += 1
 
         # Filter: Bullish pivot

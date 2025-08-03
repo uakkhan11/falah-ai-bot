@@ -67,29 +67,25 @@ def get_intraday_data(kite, symbol, interval="15minute", days=5):
         return pd.DataFrame()
 
 
-def fetch_recent_historical(kite, symbol, days=30):
+def fetch_historical_candles(kite, symbol, interval="day", days=30):
     """
-    Fetch daily candles for recent historical data.
+    Generic wrapper to fetch historical candles.
     """
     try:
-        token = get_instrument_token(kite, symbol)
-        if not token:
-            print(f"❌ Skipping {symbol}, instrument token not found.")
-            return pd.DataFrame()
-
+        instrument = f"NSE:{symbol}"
         to_date = datetime.datetime.now()
         from_date = to_date - datetime.timedelta(days=days)
-
         data = kite.historical_data(
-            instrument_token=token,
+            instrument_token=kite.ltp([instrument])[instrument]["instrument_token"],
             from_date=from_date,
             to_date=to_date,
-            interval="day"
+            interval=interval
         )
         return pd.DataFrame(data)
     except Exception as e:
-        print(f"⚠️ Error fetching historical data for {symbol}: {e}")
+        print(f"⚠️ Error in fetch_historical_candles for {symbol}: {e}")
         return pd.DataFrame()
+
 
 
 def fetch_all_historical(kite, symbol_list, days=60, interval="day", output_dir="historical_data"):

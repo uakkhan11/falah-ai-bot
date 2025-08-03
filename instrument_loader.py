@@ -1,12 +1,12 @@
 # instrument_loader.py
+
 import json
-from kiteconnect import KiteConnect
-from credentials import get_kite  # Uses secrets.json internally
+from credentials import get_kite
 
 def save_token_map():
     kite = get_kite()
     instruments = kite.instruments()
-    
+
     token_map = {str(i["instrument_token"]): i["tradingsymbol"] for i in instruments if i["exchange"] == "NSE"}
     reverse_map = {v: int(k) for k, v in token_map.items()}
 

@@ -15,7 +15,7 @@ from credentials import get_kite
 IST = pytz.timezone("Asia/Kolkata")
 MODEL_PATH = "model.pkl"
 FILTERED_FILE = "final_screened.json"
-THRESHOLD = 0.25  # AI score threshold
+THRESHOLD = 0.15  # ⏬ Relaxed for testing
 
 def run_intraday_scan():
     debug_logs = []
@@ -44,6 +44,7 @@ def run_intraday_scan():
     msg = f"🔍 Loaded {len(symbols)} symbols for intraday scan"
     print(msg)
     debug_logs.append(msg)
+    print(f"📋 Symbols sample: {symbols[:10]}")  # Show preview
 
     # ✅ Load AI model
     try:
@@ -73,14 +74,21 @@ def run_intraday_scan():
                 debug_logs.append(f"⏭ Skipped {symbol}: insufficient data ({len(df) if df is not None else 0})")
                 continue
 
+            print(f"📊 {symbol} - Intraday data preview:\n{df.tail(2)}")
+
             features = extract_features(df)
             if features is None:
                 debug_logs.append(f"⏭ Skipped {symbol}: feature extraction failed")
                 continue
 
+            print(f"🧠 {symbol} - Extracted features: {features}")
+
             X = pd.DataFrame([features])[['rsi', 'ema10', 'ema21', 'atr', 'adx', 'volumechange']]
+            print(f"📥 {symbol} - Model input X:\n{X}")
+
             score = model.predict_proba(X)[0][1]
-            
+            print(f"🤖 {symbol} - AI Score: {round(score, 3)}")
+
             if score >= THRESHOLD:
                 results.append({
                     "symbol": symbol,
@@ -91,7 +99,6 @@ def run_intraday_scan():
                     "volumechange": round(features.get("volumechange", 0), 2),
                     "ai_reasons": features.get("ai_reasons", "N/A")
                 })
-
                 debug_logs.append(f"✅ {symbol} passed with Score {round(score, 3)}")
             else:
                 debug_logs.append(f"❌ {symbol} Score {round(score, 3)} below threshold")
@@ -116,6 +123,7 @@ def run_intraday_scan():
 # 🔧 Debug standalone run
 if __name__ == "__main__":
     df, logs = run_intraday_scan()
-    print(df)
+    print("\n📈 Final Intraday Picks:\n", df)
+    print("\n🧾 Debug Logs:")
     for log in logs:
         print(log)

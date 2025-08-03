@@ -438,3 +438,30 @@ if st.button("📥 Fetch Intraday Data Now"):
 
 if os.path.exists("/root/falah-ai-bot/last_fetch.txt"):
     st.info(f"Last Fetch: {open('/root/falah-ai-bot/last_fetch.txt').read().strip()}")
+
+import subprocess
+import streamlit as st
+import os
+
+# Session state to track websocket started or not
+if "ws_started" not in st.session_state:
+    st.session_state.ws_started = False
+
+st.markdown("### Live WebSocket Price Feed")
+
+if st.toggle("Start WebSocket Workers"):
+    if not st.session_state.ws_started:
+        try:
+            subprocess.Popen(
+                ["python3", "ws_live_prices.py"],
+                cwd="/root/falah-ai-bot/",
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=os.environ.copy()
+            )
+            st.success("✅ WebSocket workers launched successfully.")
+            st.session_state.ws_started = True
+        except Exception as e:
+            st.error(f"❌ Failed to launch WebSocket: {e}")
+    else:
+        st.info("ℹ️ WebSocket already started.")

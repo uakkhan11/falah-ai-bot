@@ -22,7 +22,11 @@ from sheets import log_trade_to_sheet
 from live_price_reader import get_symbol_price_map
 
 with open("symbol_to_token.json") as f:
-    valid_symbols = sorted([s for s in all_symbols if s.isalpha()])
+    symbol_map = json.load(f)
+    all_symbols = list(symbol_map.keys())
+
+# Filter only alphabetic ones (e.g., 'INFY', 'TCS', not '0MOFSL27-N3')
+valid_symbols = sorted([s for s in all_symbols if s.isalpha()])
 
 if st.button("🔄 Refresh Prices"):
     st.rerun()

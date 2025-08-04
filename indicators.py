@@ -33,6 +33,13 @@ def calculate_atr(df, period=14):
     atr = tr.rolling(window=period).mean()
     return atr
 
+def calculate_bollinger_bands(df, period=20, std_dev=2):
+    sma = df['close'].rolling(window=period).mean()
+    std = df['close'].rolling(window=period).std()
+    upper_band = sma + (std_dev * std)
+    lower_band = sma - (std_dev * std)
+    return sma, upper_band, lower_band
+
 # --- Composite Indicator Additions (used in batch) ---
 
 def add_all_indicators(df):
@@ -41,12 +48,18 @@ def add_all_indicators(df):
     df['RSI'] = RSIIndicator(close=df['close'], window=14).rsi()
     df['ATR'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
     df['OBV'] = OnBalanceVolumeIndicator(close=df['close'], volume=df['volume']).on_balance_volume()
+
+    # Add Bollinger Bands
+    middle, upper, lower = calculate_bollinger_bands(df, period=20, std_dev=2)
+    df['BB_Middle'] = middle
+    df['BB_Upper'] = upper
+    df['BB_Lower'] = lower
+
     return df
 
 # --- Strategy Conditions (Relaxed Versions) ---
 
 def detect_bullish_pivot(df, window=3):
-    """Relaxed bullish pivot: dip in middle candle followed by green candle"""
     if len(df) < window + 2:
         return False
     recent = df.tail(window + 2)
@@ -58,7 +71,7 @@ def detect_bullish_pivot(df, window=3):
         if (
             lows[1] < lows[0] and
             lows[1] < lows[2] and
-            closes[2] > opens[2]  # green candle after pivot
+            closes[2] > opens[2]
         ):
             return True
     except:
@@ -66,7 +79,6 @@ def detect_bullish_pivot(df, window=3):
     return False
 
 def detect_macd_bullish_cross(df):
-    """Relaxed MACD bullish crossover: allow in last 3 candles"""
     if "macd" in df.columns and "macd_signal" in df.columns:
         macd = df["macd"].tail(5).values
         signal = df["macd_signal"].tail(5).values
@@ -75,7 +87,6 @@ def detect_macd_bullish_cross(df):
                 return True
         return False
 
-    # Else compute MACD fresh
     exp1 = df['close'].ewm(span=12, adjust=False).mean()
     exp2 = df['close'].ewm(span=26, adjust=False).mean()
     macd = exp1 - exp2
@@ -87,11 +98,9 @@ def detect_macd_bullish_cross(df):
     return False
 
 def detect_supertrend_green(df, lookback=3, period=10, multiplier=3):
-    """Relaxed: Check if supertrend is green in any of last `lookback` candles"""
     if "supertrend_direction" in df.columns:
         return (df["supertrend_direction"].tail(lookback) == "green").any()
 
-    # Else compute inline
     atr = AverageTrueRange(df["high"], df["low"], df["close"], window=period).average_true_range()
     hl2 = (df["high"] + df["low"]) / 2
     upperband = hl2 + (multiplier * atr)
@@ -113,7 +122,6 @@ def detect_supertrend_green(df, lookback=3, period=10, multiplier=3):
 # --- Intraday Signal Utilities ---
 
 def intraday_vwap_bounce_strategy(df):
-    """Detect VWAP bounce pattern in intraday (15/60min) data"""
     df = df.copy()
     df['VWAP'] = (df['high'] + df['low'] + df['close']) / 3
     df['AboveVWAP'] = df['close'] > df['VWAP']
@@ -123,9 +131,9 @@ def intraday_vwap_bounce_strategy(df):
         return df
 
     if (
-        df['close'].iloc[-1] > df['VWAP'].iloc[-1] and  # above VWAP
-        df['low'].iloc[-2] < df['VWAP'].iloc[-2] and    # tested VWAP prev candle
-        df['close'].iloc[-2] < df['VWAP'].iloc[-2]      # closed below VWAP then bounced
+        df['close'].iloc[-1] > df['VWAP'].iloc[-1] and
+        df['low'].iloc[-2] < df['VWAP'].iloc[-2] and
+        df['close'].iloc[-2] < df['VWAP'].iloc[-2]
     ):
         signal = True
 
@@ -133,7 +141,6 @@ def intraday_vwap_bounce_strategy(df):
     return df
 
 def intraday_rsi_breakout_strategy(df, rsi_window=14, rsi_threshold=60):
-    """RSI breakout above threshold on 15m/60m"""
     df = df.copy()
     df['RSI'] = RSIIndicator(close=df['close'], window=rsi_window).rsi()
     signal = False

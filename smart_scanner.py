@@ -5,7 +5,7 @@ import pandas as pd
 from indicators import (
     calculate_rsi, calculate_ema,
     detect_bullish_pivot, detect_macd_bullish_cross,
-    detect_supertrend_green
+    detect_supertrend_green, calculate_bollinger_bands
 )
 from ai_engine import compute_ai_score
 from holdings import get_existing_holdings
@@ -111,6 +111,18 @@ def run_smart_scan():
             skip_reason_dict[symbol] = "Supertrend not green"
             continue
         filter_stats["supertrend_pass"] += 1
+
+        df["bb_upper"], df["bb_middle"], df["bb_lower"] = calculate_bollinger_bands(df["close"])
+
+        ltp = live_prices[symbol]
+        bb_lower = df["bb_lower"].iloc[-1]
+        bb_upper = df["bb_upper"].iloc[-1]
+
+        # ✅ Bollinger Band filter: near lower band (within 5%)
+        if ltp > bb_lower * 1.05:
+            skip_reasons["Not near lower BB"] = skip_reasons.get("Not near lower BB", 0) + 1
+            skip_reason_dict[symbol] = f"LTP {ltp:.2f} not near lower BB {bb_lower:.2f}"
+            continue
 
         ltp = live_prices[symbol]
         ai_score, ai_reasons = compute_ai_score(df)

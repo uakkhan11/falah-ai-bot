@@ -33,13 +33,14 @@ def calculate_atr(df, period=14):
     atr = tr.rolling(window=period).mean()
     return atr
 
-def calculate_bollinger_bands(df, period=20, std_dev=2):
-    sma = df['close'].rolling(window=period).mean()
-    std = df['close'].rolling(window=period).std()
-    upper_band = sma + (std_dev * std)
-    lower_band = sma - (std_dev * std)
-    return sma, upper_band, lower_band
-
+def calculate_bollinger_bands(close_series, window=20, num_std_dev=2):
+    """Returns upper, middle, lower Bollinger Bands"""
+    middle_band = close_series.rolling(window).mean()
+    std = close_series.rolling(window).std()
+    upper_band = middle_band + (num_std_dev * std)
+    lower_band = middle_band - (num_std_dev * std)
+    return upper_band, middle_band, lower_band
+    
 # --- Composite Indicator Additions (used in batch) ---
 
 def add_all_indicators(df):

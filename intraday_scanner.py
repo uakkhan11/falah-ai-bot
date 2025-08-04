@@ -47,10 +47,13 @@ def scan_intraday_folder():
 
     with open(FILTERED_FILE) as f:
         screened_data = json.load(f)
-    allowed_symbols = set(screened_data.keys())
-
-    if not os.path.exists(DATA_FOLDER):
-        print(f"❌ Missing intraday data folder: {DATA_FOLDER}")
+    # Handle both list and dict formats
+    if isinstance(screened_data, dict):
+        allowed_symbols = set(screened_data.keys())
+    elif isinstance(screened_data, list):
+        allowed_symbols = set(screened_data)
+    else:
+        print(f"❌ Unsupported format in {FILTERED_FILE}")
         return pd.DataFrame()
 
     for file in os.listdir(DATA_FOLDER):

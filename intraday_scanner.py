@@ -1,125 +1,64 @@
-import os
+# intraday_scanner.py
+
 import pandas as pd
-from datetime import datetime
-import pytz
+import os
+from ta.trend import EMAIndicator
+from ta.momentum import RSIIndicator
+from ta.volatility import BollingerBands
 import joblib
 
-from kiteconnect import KiteConnect
-from data_fetch import get_intraday_data
-from ai_engine import extract_features
-from indicators import calculate_rsi, calculate_ema, detect_macd_bullish_cross, detect_supertrend_green
-from credentials import get_kite, load_secrets
-from live_price_reader import get_symbol_price_map
-from holdings import get_existing_holdings
-import gspread
+model = joblib.load("model.pkl")
 
-# Constants
-IST = pytz.timezone("Asia/Kolkata")
-MODEL_PATH = "model.pkl"
-VOLUME_SURGE_THRESHOLD = 2.0
-THRESHOLD = 0.25
+def calculate_features(df):
+    df = df.copy()
+    df['EMA10'] = EMAIndicator(close=df['close'], window=10).ema_indicator()
+    df['EMA21'] = EMAIndicator(close=df['close'], window=21).ema_indicator()
+    df['RSI'] = RSIIndicator(close=df['close'], window=14).rsi()
+    bb = BollingerBands(close=df['close'], window=20, window_dev=2)
+    df['bb_upper'] = bb.bollinger_hband()
+    df['bb_lower'] = bb.bollinger_lband()
+    df['bb_signal'] = (df['close'] < df['bb_lower']) & (df['RSI'] > 40)
+    return df
 
-def get_halal_list(sheet_key):
-    gc = gspread.service_account(filename="/root/falah-ai-bot/falah-credentials.json")
-    sheet = gc.open_by_key(sheet_key)
-    ws = sheet.worksheet("HalalList")
-    symbols = ws.col_values(1)[1:]
-    return [s.strip().upper() for s in symbols if s.strip()]
+def apply_ai_model(df):
+    features = ['RSI', 'EMA10', 'EMA21']
+    df = df.dropna()
+    X = df[features]
+    df['ai_score'] = model.predict_proba(X)[:, 1]
+    return df
 
-def run_intraday_scan():
-    debug_logs = []
+def scan_intraday_folder(folder):
     results = []
-
-    # ✅ Load Halal list
-    secrets = load_secrets()
-    symbols = get_halal_list(secrets["google"]["spreadsheet_key"])
-    holdings = get_existing_holdings()
-    live_prices = get_symbol_price_map()
-
-    debug_logs.append(f"🔍 Loaded {len(symbols)} symbols from Halal list")
-
-    if not live_prices:
-        msg = "⚠️ No live prices available. Possibly market is closed."
-        print(msg)
-        return pd.DataFrame(), [msg]
-
-    # ✅ Load model
-    try:
-        model = joblib.load(MODEL_PATH)
-        debug_logs.append("✅ AI model loaded")
-    except Exception as e:
-        msg = f"❌ Failed to load model: {e}"
-        return pd.DataFrame(), [msg]
-
-    kite = get_kite()
-
-    for symbol in sorted(set(symbols)):
-        if symbol in holdings:
-            debug_logs.append(f"⏭ {symbol}: Skipped (already in holdings)")
+    for file in os.listdir(folder):
+        if not file.endswith(".csv"):
             continue
-        if symbol not in live_prices:
-            debug_logs.append(f"⏭ {symbol}: Skipped (no live price)")
-            continue
-
+        symbol = file.replace(".csv", "")
         try:
-            df = get_intraday_data(kite, symbol, interval="15minute", days=1)
-            if df is None or len(df) < 21:
-                debug_logs.append(f"⏭ {symbol}: insufficient data")
+            df = pd.read_csv(os.path.join(folder, file))
+            if df.shape[0] < 30:
                 continue
-
-            df["rsi"] = calculate_rsi(df["close"])
-            df["ema10"] = calculate_ema(df["close"], 10)
-            df["ema21"] = calculate_ema(df["close"], 21)
-
-            rsi = df["rsi"].iloc[-1]
-            ema10 = df["ema10"].iloc[-1]
-            ema21 = df["ema21"].iloc[-1]
-            volume_today = df["volume"].iloc[-1]
-            volume_avg = df["volume"].iloc[-6:-1].mean()
-            volume_ratio = volume_today / volume_avg if volume_avg else 0
-
-            if not (ema10 > ema21):
-                continue
-            if not (35 <= rsi <= 65):
-                continue
-            if not detect_macd_bullish_cross(df):
-                continue
-            if not detect_supertrend_green(df):
-                continue
-            if volume_ratio < VOLUME_SURGE_THRESHOLD:
-                continue
-
-            features = extract_features(df)
-            if features is None:
-                continue
-
-            X = pd.DataFrame([features])[['rsi', 'ema10', 'ema21', 'atr', 'adx', 'volumechange']]
-            score = model.predict_proba(X)[0][1]
-
-            if score >= THRESHOLD:
+            df.columns = [c.lower() for c in df.columns]
+            df = calculate_features(df)
+            df = apply_ai_model(df)
+            row = df.iloc[-1]
+            if (
+                35 < row['RSI'] < 65 and
+                row['EMA10'] > row['EMA21'] and
+                row['ai_score'] > 0.25
+            ) or row['bb_signal']:
                 results.append({
-                    "symbol": symbol,
-                    "Score": round(score, 3),
-                    "rsi": round(rsi, 2),
-                    "ema10": round(ema10, 2),
-                    "ema21": round(ema21, 2),
-                    "volume_ratio": round(volume_ratio, 2),
-                    "ai_reasons": features.get("ai_reasons", "N/A")
+                    'symbol': symbol,
+                    'RSI': round(row['RSI'], 2),
+                    'ai_score': round(row['ai_score'], 3),
+                    'close': row['close'],
+                    'bb_signal': bool(row['bb_signal'])
                 })
-                debug_logs.append(f"✅ {symbol} passed with Score {round(score, 3)}")
-
-        except Exception as e:
-            debug_logs.append(f"⚠️ {symbol}: {e}")
-
-    if not results:
-        debug_logs.append("⚠️ No stocks passed the strategy")
-
-    df_result = pd.DataFrame(results).sort_values(by="Score", ascending=False)
-    return df_result, debug_logs
+        except Exception:
+            continue
+    return pd.DataFrame(results)
 
 if __name__ == "__main__":
-    df, logs = run_intraday_scan()
-    print("\n📈 Final Intraday Picks:\n", df)
-    print("\n🧾 Debug Logs:")
-    for log in logs:
-        print(log)
+    folder = "intraday_data/"
+    df = scan_intraday_folder(folder)
+    df.to_csv("intraday_screening_results.csv", index=False)
+    print(df)

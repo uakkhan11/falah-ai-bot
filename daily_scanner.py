@@ -4,12 +4,10 @@ import pandas as pd
 import os
 from ta.trend import EMAIndicator
 from ta.momentum import RSIIndicator
-from ta.volatility import BollingerBands
-from ta.volatility import AverageTrueRange
+from ta.volatility import BollingerBands, AverageTrueRange
 from ta.volume import OnBalanceVolumeIndicator
-
-# --- AI Model ---
 import joblib
+
 model = joblib.load("model.pkl")
 
 def calculate_features(df):
@@ -47,7 +45,7 @@ def scan_daily_folder(folder):
             df = apply_ai_model(df)
             row = df.iloc[-1]
             if (
-                row['RSI'] > 35 and row['RSI'] < 65 and
+                35 < row['RSI'] < 65 and
                 row['EMA10'] > row['EMA21'] and
                 row['ai_score'] > 0.25
             ) or row['bb_signal']:
@@ -58,7 +56,7 @@ def scan_daily_folder(folder):
                     'close': row['close'],
                     'bb_signal': bool(row['bb_signal'])
                 })
-        except Exception as e:
+        except Exception:
             continue
     return pd.DataFrame(results)
 

@@ -1,126 +1,122 @@
-# intraday_scanner.py
 import os
-import json
 import pandas as pd
 from datetime import datetime
 import pytz
 import joblib
 
 from kiteconnect import KiteConnect
-from data_fetch import get_intraday_data  # Fetches 15min data
+from data_fetch import get_intraday_data
 from ai_engine import extract_features
-from credentials import get_kite
+from indicators import calculate_rsi, calculate_ema, detect_macd_bullish_cross, detect_supertrend_green
+from credentials import get_kite, load_secrets
+from live_price_reader import get_symbol_price_map
+from holdings import get_existing_holdings
+import gspread
 
 # Constants
 IST = pytz.timezone("Asia/Kolkata")
 MODEL_PATH = "model.pkl"
-FILTERED_FILE = "final_screened.json"
-THRESHOLD = 0.15  # ⏬ Relaxed for testing
+VOLUME_SURGE_THRESHOLD = 2.0
+THRESHOLD = 0.25
+
+def get_halal_list(sheet_key):
+    gc = gspread.service_account(filename="/root/falah-ai-bot/falah-credentials.json")
+    sheet = gc.open_by_key(sheet_key)
+    ws = sheet.worksheet("HalalList")
+    symbols = ws.col_values(1)[1:]
+    return [s.strip().upper() for s in symbols if s.strip()]
 
 def run_intraday_scan():
     debug_logs = []
+    results = []
 
-    # ✅ Load filtered stocks
-    if not os.path.exists(FILTERED_FILE):
-        msg = f"❌ Filtered file not found: {FILTERED_FILE}"
+    # ✅ Load Halal list
+    secrets = load_secrets()
+    symbols = get_halal_list(secrets["google"]["spreadsheet_key"])
+    holdings = get_existing_holdings()
+    live_prices = get_symbol_price_map()
+
+    debug_logs.append(f"🔍 Loaded {len(symbols)} symbols from Halal list")
+
+    if not live_prices:
+        msg = "⚠️ No live prices available. Possibly market is closed."
         print(msg)
-        debug_logs.append(msg)
-        return pd.DataFrame(), debug_logs
+        return pd.DataFrame(), [msg]
 
-    with open(FILTERED_FILE) as f:
-        data = json.load(f)
-
-    # ✅ Handle different JSON structures
-    if isinstance(data, dict):
-        symbols = list(data.keys())
-    elif isinstance(data, list):
-        symbols = [d.get("symbol") for d in data if isinstance(d, dict) and "symbol" in d]
-    else:
-        msg = f"❌ Unsupported format in {FILTERED_FILE}"
-        print(msg)
-        debug_logs.append(msg)
-        return pd.DataFrame(), debug_logs
-
-    msg = f"🔍 Loaded {len(symbols)} symbols for intraday scan"
-    print(msg)
-    debug_logs.append(msg)
-    print(f"📋 Symbols sample: {symbols[:10]}")  # Show preview
-
-    # ✅ Load AI model
+    # ✅ Load model
     try:
         model = joblib.load(MODEL_PATH)
         debug_logs.append("✅ AI model loaded")
     except Exception as e:
         msg = f"❌ Failed to load model: {e}"
-        print(msg)
-        debug_logs.append(msg)
-        return pd.DataFrame(), debug_logs
+        return pd.DataFrame(), [msg]
 
-    # ✅ Get live kite session
-    try:
-        kite = get_kite()
-    except Exception as e:
-        msg = f"❌ Failed to connect to Kite: {e}"
-        debug_logs.append(msg)
-        return pd.DataFrame(), debug_logs
+    kite = get_kite()
 
-    results = []
+    for symbol in sorted(set(symbols)):
+        if symbol in holdings:
+            debug_logs.append(f"⏭ {symbol}: Skipped (already in holdings)")
+            continue
+        if symbol not in live_prices:
+            debug_logs.append(f"⏭ {symbol}: Skipped (no live price)")
+            continue
 
-    # ✅ Run scan per symbol
-    for symbol in symbols:
         try:
             df = get_intraday_data(kite, symbol, interval="15minute", days=1)
             if df is None or len(df) < 21:
-                debug_logs.append(f"⏭ Skipped {symbol}: insufficient data ({len(df) if df is not None else 0})")
+                debug_logs.append(f"⏭ {symbol}: insufficient data")
                 continue
 
-            print(f"📊 {symbol} - Intraday data preview:\n{df.tail(2)}")
+            df["rsi"] = calculate_rsi(df["close"])
+            df["ema10"] = calculate_ema(df["close"], 10)
+            df["ema21"] = calculate_ema(df["close"], 21)
+
+            rsi = df["rsi"].iloc[-1]
+            ema10 = df["ema10"].iloc[-1]
+            ema21 = df["ema21"].iloc[-1]
+            volume_today = df["volume"].iloc[-1]
+            volume_avg = df["volume"].iloc[-6:-1].mean()
+            volume_ratio = volume_today / volume_avg if volume_avg else 0
+
+            if not (ema10 > ema21):
+                continue
+            if not (35 <= rsi <= 65):
+                continue
+            if not detect_macd_bullish_cross(df):
+                continue
+            if not detect_supertrend_green(df):
+                continue
+            if volume_ratio < VOLUME_SURGE_THRESHOLD:
+                continue
 
             features = extract_features(df)
             if features is None:
-                debug_logs.append(f"⏭ Skipped {symbol}: feature extraction failed")
                 continue
 
-            print(f"🧠 {symbol} - Extracted features: {features}")
-
             X = pd.DataFrame([features])[['rsi', 'ema10', 'ema21', 'atr', 'adx', 'volumechange']]
-            print(f"📥 {symbol} - Model input X:\n{X}")
-
             score = model.predict_proba(X)[0][1]
-            print(f"🤖 {symbol} - AI Score: {round(score, 3)}")
 
             if score >= THRESHOLD:
                 results.append({
                     "symbol": symbol,
                     "Score": round(score, 3),
-                    "rsi": round(features.get("rsi", 0), 2),
-                    "ema10": round(features.get("ema10", 0), 2),
-                    "ema21": round(features.get("ema21", 0), 2),
-                    "volumechange": round(features.get("volumechange", 0), 2),
+                    "rsi": round(rsi, 2),
+                    "ema10": round(ema10, 2),
+                    "ema21": round(ema21, 2),
+                    "volume_ratio": round(volume_ratio, 2),
                     "ai_reasons": features.get("ai_reasons", "N/A")
                 })
                 debug_logs.append(f"✅ {symbol} passed with Score {round(score, 3)}")
-            else:
-                debug_logs.append(f"❌ {symbol} Score {round(score, 3)} below threshold")
 
         except Exception as e:
-            msg = f"⚠️ {symbol}: {e}"
-            print(msg)
-            debug_logs.append(msg)
-            continue
+            debug_logs.append(f"⚠️ {symbol}: {e}")
 
-    # ✅ Final result
     if not results:
-        msg = "⚠️ No stocks passed AI intraday filters"
-        print(msg)
-        debug_logs.append(msg)
-        return pd.DataFrame(), debug_logs
+        debug_logs.append("⚠️ No stocks passed the strategy")
 
     df_result = pd.DataFrame(results).sort_values(by="Score", ascending=False)
     return df_result, debug_logs
 
-
-# 🔧 Debug standalone run
 if __name__ == "__main__":
     df, logs = run_intraday_scan()
     print("\n📈 Final Intraday Picks:\n", df)

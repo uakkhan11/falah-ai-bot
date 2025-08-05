@@ -44,7 +44,18 @@ def calculate_features(df):
 
 def apply_ai_score(df):
     X = df[FEATURES].copy()
-    df = df.copy()
+
+    # Replace inf/-inf with NaN, then drop them
+    X = X.replace([float("inf"), float("-inf")], pd.NA)
+    X = X.dropna()
+
+    # Align df to cleaned X
+    df = df.loc[X.index].copy()
+
+    # Convert all features to float32 for safety
+    X = X.astype("float32")
+
+    # Predict AI score
     df.loc[:, "ai_score"] = model.predict_proba(X)[:, 1]
     return df
 
@@ -73,14 +84,26 @@ def run_backtest():
             continue
 
         try:
-            df = calculate_features(df)
-        except Exception as e:
-            print(f"❌ Feature calc failed for {symbol}: {e}")
-            continue
+            def calculate_features(df):
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df.dropna(subset=["open", "high", "low", "close", "volume"], inplace=True)
 
-        df.dropna(subset=FEATURES, inplace=True)
-        if df.empty:
-            continue
+    df["EMA10"] = ta.ema(df["close"], length=10)
+    df["EMA21"] = ta.ema(df["close"], length=21)
+    df["RSI"] = ta.rsi(df["close"], length=14)
+    df["ATR"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+    df["ADX"] = ta.adx(df["high"], df["low"], df["close"], length=14)["ADX_14"]
+    df["VolumeChange"] = df["volume"].pct_change()
+
+    st = ta.supertrend(df["high"], df["low"], df["close"], length=10, multiplier=3.0)
+    df["Supertrend"] = st["SUPERT_10_3.0"]
+
+    # Clean infinities
+    df.replace([float("inf"), float("-inf")], pd.NA, inplace=True)
+    df.dropna(inplace=True)
+
+    return df
 
         df = apply_ai_score(df)
 

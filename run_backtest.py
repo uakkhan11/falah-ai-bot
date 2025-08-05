@@ -1,135 +1,161 @@
-# run_backtest.py
 import os
 import pandas as pd
-import numpy as np
-import joblib
 import pandas_ta as ta
-from datetime import datetime, timedelta
+import joblib
+from datetime import datetime
 
 HISTORICAL_DIR = "/root/falah-ai-bot/historical_data/"
-MODEL_FILE = "model.pkl"
+MODEL_PATH = "/root/falah-ai-bot/model.pkl"
 START_CAPITAL = 1000000
-RISK_PER_TRADE = 0.02  # 2% per trade
-DRAWNDOWN_EXIT = 7  # 7% portfolio drawdown
+RISK_PER_TRADE = 0.02  # 2% of capital risked per trade
+
+# Track stats
+indicator_pass_count = {
+    "RSI": 0,
+    "EMA": 0,
+    "Supertrend": 0,
+    "AI_Score": 0
+}
+exit_reason_count = {}
 
 # Load model
-model = joblib.load(MODEL_FILE)
+model = joblib.load(MODEL_PATH)
+FEATURES = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"]
 
-ENTRY_FEATURES = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"]
-
-indicator_stats = {f: {"pass": 0, "fail": 0} for f in ENTRY_FEATURES + ["Supertrend", "AI_Score"]}
 
 def calculate_features(df):
+    # Ensure numeric OHLCV
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df.dropna(subset=["open", "high", "low", "close", "volume"], inplace=True)
+
     df["EMA10"] = ta.ema(df["close"], length=10)
     df["EMA21"] = ta.ema(df["close"], length=21)
     df["RSI"] = ta.rsi(df["close"], length=14)
     df["ATR"] = ta.atr(df["high"], df["low"], df["close"], length=14)
     df["ADX"] = ta.adx(df["high"], df["low"], df["close"], length=14)["ADX_14"]
     df["VolumeChange"] = df["volume"].pct_change()
+
     st = ta.supertrend(df["high"], df["low"], df["close"], length=10, multiplier=3.0)
     df["Supertrend"] = st["SUPERT_10_3.0"]
+
     return df
 
+
 def apply_ai_score(df):
-    X = df[ENTRY_FEATURES].replace([np.inf, -np.inf], np.nan).dropna()
-    if X.empty:
-        df["ai_score"] = np.nan
-        return df
-    df.loc[X.index, "ai_score"] = model.predict_proba(X)[:, 1]
+    X = df[FEATURES].copy()
+    df = df.copy()
+    df.loc[:, "ai_score"] = model.predict_proba(X)[:, 1]
     return df
+
+
+def track_exit_reason(reason):
+    exit_reason_count[reason] = exit_reason_count.get(reason, 0) + 1
+
 
 def run_backtest():
     capital = START_CAPITAL
-    equity_peak = capital
     trades = []
-    active_trades = []
-    
     files = [f for f in os.listdir(HISTORICAL_DIR) if f.endswith(".csv")]
 
     for file in files:
         symbol = file.replace(".csv", "")
         df = pd.read_csv(os.path.join(HISTORICAL_DIR, file))
+        df.columns = [c.lower() for c in df.columns]
+
+        # Clean numeric data
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df.dropna(subset=["open", "high", "low", "close", "volume"], inplace=True)
+
         if len(df) < 200:
+            print(f"⚠️ Skipping {symbol}: insufficient clean data")
             continue
 
-        df.columns = [c.lower() for c in df.columns]
-        df = calculate_features(df)
+        try:
+            df = calculate_features(df)
+        except Exception as e:
+            print(f"❌ Feature calc failed for {symbol}: {e}")
+            continue
+
+        df.dropna(subset=FEATURES, inplace=True)
+        if df.empty:
+            continue
+
         df = apply_ai_score(df)
 
-        for i in range(200, len(df)):
+        for i in range(len(df) - 1):
             row = df.iloc[i]
-            if pd.isna(row["ai_score"]):
-                continue
 
-            # Portfolio drawdown check
-            equity_value = capital + sum(t["qty"] * row["close"] for t in active_trades if t["symbol"] == symbol)
-            equity_peak = max(equity_peak, equity_value)
-            if (equity_peak - equity_value) / equity_peak * 100 >= DRAWNDOWN_EXIT:
-                for t in active_trades:
-                    trades.append({**t, "exit_reason": "Portfolio Drawdown", "exit_price": row["close"], "exit_date": row["date"], "pnl": (row["close"] - t["entry_price"]) * t["qty"]})
-                active_trades.clear()
-                break
+            # Track indicator passes
+            rsi_pass = 35 < row["RSI"] < 65
+            ema_pass = row["EMA10"] > row["EMA21"]
+            st_pass = row["close"] > row["Supertrend"]
+            ai_pass = row["ai_score"] > 0.25
 
-            # Entry check
-            conditions = {
-                "RSI": 35 < row["RSI"] < 65,
-                "EMA": row["EMA10"] > row["EMA21"],
-                "Supertrend": row["close"] > row["Supertrend"],
-                "AI_Score": row["ai_score"] > 0.25
-            }
-            for ind, passed in conditions.items():
-                indicator_stats[ind if ind != "EMA" else "EMA10"]["pass" if passed else "fail"] += 1
+            if rsi_pass: indicator_pass_count["RSI"] += 1
+            if ema_pass: indicator_pass_count["EMA"] += 1
+            if st_pass: indicator_pass_count["Supertrend"] += 1
+            if ai_pass: indicator_pass_count["AI_Score"] += 1
 
-            if all(conditions.values()):
-                risk_amount = capital * RISK_PER_TRADE
-                qty = int(risk_amount / row["close"])
-                if qty > 0:
-                    active_trades.append({
-                        "symbol": symbol,
-                        "entry_price": row["close"],
-                        "qty": qty,
-                        "entry_date": row["date"],
-                        "highest_price": row["close"]
-                    })
-                    capital -= qty * row["close"]
+            # Entry condition
+            if rsi_pass and ema_pass and st_pass and ai_pass:
+                entry_price = row["close"]
+                atr = row["ATR"]
+                qty = int((capital * RISK_PER_TRADE) / atr)
 
-            # Exit check
-            for t in active_trades.copy():
-                if t["symbol"] != symbol:
-                    continue
-                t["highest_price"] = max(t["highest_price"], row["close"])
-                atr_sl = row["close"] - 1.5 * row["ATR"]
-                recent_low_sl = df["low"].iloc[max(0, i-7):i].min()
-                trailing_sl = max(atr_sl, recent_low_sl)
+                # Simulate trade until exit
+                for j in range(i + 1, len(df)):
+                    exit_row = df.iloc[j]
+                    ltp = exit_row["close"]
 
-                exit_reason = None
-                if row["close"] < t["entry_price"] * 0.98:
-                    exit_reason = "Fixed SL -2%"
-                elif row["close"] < trailing_sl:
-                    exit_reason = "Trailing SL"
-                elif row["close"] >= t["entry_price"] * 1.12:
-                    exit_reason = "Profit 12%"
+                    # Exit logic (mirrors monitor.py)
+                    reason = None
+                    if ltp < entry_price * 0.98:
+                        reason = "Fixed SL breach (-2%)"
+                    elif ltp < ltp - 1.5 * atr:
+                        reason = "Trailing SL breached"
+                    elif ltp >= entry_price * 1.12:
+                        reason = "Profit >=12% hit"
 
-                if exit_reason:
-                    pnl = (row["close"] - t["entry_price"]) * t["qty"]
-                    capital += row["close"] * t["qty"]
-                    trades.append({**t, "exit_reason": exit_reason, "exit_price": row["close"], "exit_date": row["date"], "pnl": pnl})
-                    active_trades.remove(t)
+                    if reason:
+                        pnl = (ltp - entry_price) * qty
+                        capital += pnl
+                        trades.append({
+                            "symbol": symbol,
+                            "entry_date": df.index[i],
+                            "exit_date": df.index[j],
+                            "entry_price": entry_price,
+                            "exit_price": ltp,
+                            "qty": qty,
+                            "pnl": pnl,
+                            "reason": reason
+                        })
+                        track_exit_reason(reason)
+                        break
 
     # Summary
-    df_trades = pd.DataFrame(trades)
-    df_trades.to_csv("backtest_trades.csv", index=False)
-    profitable = df_trades[df_trades["pnl"] > 0]
+    total_trades = len(trades)
+    wins = len([t for t in trades if t["pnl"] > 0])
+    pnl_total = sum(t["pnl"] for t in trades)
+
     print("\n===== BACKTEST SUMMARY =====")
-    print(f"Total Trades: {len(df_trades)}")
-    print(f"Profitable Trades: {len(profitable)} ({len(profitable)/len(df_trades)*100:.2f}%)")
-    print(f"Total PnL: ₹{df_trades['pnl'].sum():,.2f}")
+    print(f"Total Trades: {total_trades}")
+    print(f"Profitable Trades: {wins} ({wins / total_trades * 100:.2f}%)")
+    print(f"Total PnL: ₹{pnl_total:,.2f}")
     print(f"Final Capital: ₹{capital:,.2f}")
-    print("\nIndicator Pass/Fail:")
-    for ind, counts in indicator_stats.items():
-        print(f"{ind}: Pass {counts['pass']}, Fail {counts['fail']}")
-    print("\nExit Reasons:")
-    print(df_trades["exit_reason"].value_counts())
+
+    print("\nIndicator Pass Counts:")
+    for k, v in indicator_pass_count.items():
+        print(f"{k}: {v}")
+
+    print("\nExit Reason Counts:")
+    for k, v in exit_reason_count.items():
+        print(f"{k}: {v}")
+
+    pd.DataFrame(trades).to_csv("backtest_trades.csv", index=False)
+    print("\n✅ backtest_trades.csv saved.")
+
 
 if __name__ == "__main__":
     run_backtest()

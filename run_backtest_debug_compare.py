@@ -17,18 +17,20 @@ CSV_TRADE_LOG = "backtest_trades.csv"
 # Load AI model
 model = joblib.load(MODEL_PATH)
 
+# Detect feature names from model
+if hasattr(model, "feature_names_in_"):
+    MODEL_FEATURES = list(model.feature_names_in_)
+else:
+    MODEL_FEATURES = ["RSI", "EMA10", "EMA21", "ATR", "VolumeChange", "MACD_Hist"]
+
 # Summary stats
 total_trades = 0
 profitable_trades = 0
 total_pnl = 0
 indicator_pass_counts = {"RSI": 0, "EMA": 0, "Supertrend": 0, "AI_Score": 0}
 skip_reasons = {
-    "AI score fail": 0,
-    "EMA fail": 0,
-    "RSI fail": 0,
-    "Supertrend fail": 0,
-    "Insufficient data": 0,
-    "NaN in features": 0
+    "AI score fail": 0, "EMA fail": 0, "RSI fail": 0,
+    "Supertrend fail": 0, "Insufficient data": 0, "NaN in features": 0
 }
 exit_reasons = {
     "Fixed SL breach (-3%)": 0,
@@ -36,6 +38,7 @@ exit_reasons = {
     "Trailing SL breached": 0
 }
 trade_log = []
+
 
 def calculate_indicators(df):
     df["rsi"] = ta.rsi(df["close"], length=14)
@@ -45,12 +48,11 @@ def calculate_indicators(df):
     df["supertrend"] = st["SUPERTd_10_3.0"]
     df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
 
-    # Extra features for AI model
     df["volume_change"] = df["volume"].pct_change().fillna(0)
     macd = ta.macd(df["close"])
     df["macd_hist"] = macd["MACDh_12_26_9"]
-
     return df
+
 
 def run_backtest():
     global total_trades, profitable_trades, total_pnl
@@ -72,10 +74,10 @@ def run_backtest():
             skip_reasons["Insufficient data"] += 1
             continue
 
-        # Fix date parsing (tz-aware safe)
+        # Fix date parsing with tz-safe handling
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         if df["date"].dt.tz is None:
-            df["date"] = df["date"].dt.tz_localize("Asia/Kolkata", nonexistent="NaT", ambiguous="NaT")
+            df["date"] = df["date"].dt.tz_localize("Asia/Kolkata", ambiguous="NaT", nonexistent="NaT")
         else:
             df["date"] = df["date"].dt.tz_convert("Asia/Kolkata")
 
@@ -92,27 +94,39 @@ def run_backtest():
         for i in range(len(df)):
             row = df.iloc[i]
 
-            # RSI check
+            # RSI filter
             if not (35 <= row["rsi"] <= 70):
                 skip_reasons["RSI fail"] += 1
                 continue
             indicator_pass_counts["RSI"] += 1
 
-            # EMA check
+            # EMA filter
             if row["ema10"] <= row["ema21"]:
                 skip_reasons["EMA fail"] += 1
                 continue
             indicator_pass_counts["EMA"] += 1
 
-            # Supertrend check
+            # Supertrend filter
             if row["supertrend"] != 1:
                 skip_reasons["Supertrend fail"] += 1
                 continue
             indicator_pass_counts["Supertrend"] += 1
 
-            # AI Score check
-            feature_names = ["rsi", "ema10", "ema21", "atr", "volume_change", "macd_hist"]
-            features_df = pd.DataFrame([[row[f] for f in feature_names]], columns=feature_names)
+            # AI features — map to model's expected names
+            feature_map = {
+                "RSI": row["rsi"],
+                "EMA10": row["ema10"],
+                "EMA21": row["ema21"],
+                "ATR": row["atr"],
+                "VolumeChange": row["volume_change"],
+                "MACD_Hist": row["macd_hist"]
+            }
+
+            try:
+                features_df = pd.DataFrame([[feature_map[f] for f in MODEL_FEATURES]], columns=MODEL_FEATURES)
+            except KeyError as e:
+                skip_reasons["NaN in features"] += 1
+                continue
 
             if features_df.isnull().any(axis=1).iloc[0]:
                 skip_reasons["NaN in features"] += 1
@@ -124,7 +138,7 @@ def run_backtest():
                 continue
             indicator_pass_counts["AI_Score"] += 1
 
-            # === Entry ===
+            # Entry trade
             entry_price = row["close"]
             atr_value = row["atr"]
             stop_loss_price = entry_price * (1 - STOP_LOSS_PCT)
@@ -137,7 +151,7 @@ def run_backtest():
 
                 # Fixed SL
                 if ltp <= stop_loss_price:
-                    pnl = ltp - entry_price
+                    pnl = (ltp - entry_price)
                     exit_reasons["Fixed SL breach (-3%)"] += 1
                     total_trades += 1
                     total_pnl += pnl
@@ -148,7 +162,7 @@ def run_backtest():
 
                 # Profit target
                 if ltp >= target_price:
-                    pnl = ltp - entry_price
+                    pnl = (ltp - entry_price)
                     exit_reasons["Profit >=8% hit"] += 1
                     total_trades += 1
                     total_pnl += pnl
@@ -156,10 +170,10 @@ def run_backtest():
                     trade_log.append([symbol, entry_price, ltp, pnl, "Profit >=8% hit"])
                     break
 
-                # Trailing SL update
+                # Trailing SL
                 trailing_sl = max(trailing_sl, ltp - TRAILING_SL_MULTIPLIER * atr_value)
                 if ltp <= trailing_sl:
-                    pnl = ltp - entry_price
+                    pnl = (ltp - entry_price)
                     exit_reasons["Trailing SL breached"] += 1
                     total_trades += 1
                     total_pnl += pnl
@@ -176,7 +190,7 @@ def run_backtest():
     else:
         print("Profitable Trades: 0 (0.00%)")
     print(f"Total PnL: ₹{total_pnl:,.2f}")
-    print(f"Final Capital: ₹{total_pnl:,.2f}\n")
+    print(f"Final Capital: ₹{(total_pnl):,.2f}\n")
 
     print("Indicator Pass Counts:")
     for k, v in indicator_pass_counts.items():
@@ -190,12 +204,10 @@ def run_backtest():
     for k, v in exit_reasons.items():
         print(f"{k}: {v}")
 
-    # Save trade log
-    pd.DataFrame(
-        trade_log,
-        columns=["Symbol", "Entry Price", "Exit Price", "PnL", "Exit Reason"]
-    ).to_csv(CSV_TRADE_LOG, index=False)
+    # Save trades
+    pd.DataFrame(trade_log, columns=["Symbol", "Entry Price", "Exit Price", "PnL", "Exit Reason"]).to_csv(CSV_TRADE_LOG, index=False)
     print(f"\n✅ {CSV_TRADE_LOG} saved.")
+
 
 if __name__ == "__main__":
     run_backtest()

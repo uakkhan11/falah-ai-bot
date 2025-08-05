@@ -38,16 +38,17 @@ exit_reasons = {
 trade_log = []
 
 def calculate_indicators(df):
-    """Calculate all required indicators & features."""
-    df["rsi"] = ta.rsi(df["close"], length=14)
-    df["ema10"] = ta.ema(df["close"], length=10)
-    df["ema21"] = ta.ema(df["close"], length=21)
+    import pandas_ta as ta
+    df["RSI"] = ta.rsi(df["close"], length=14)
+    df["EMA10"] = ta.ema(df["close"], length=10)
+    df["EMA21"] = ta.ema(df["close"], length=21)
     st = ta.supertrend(df["high"], df["low"], df["close"], length=10, multiplier=3.0)
-    df["supertrend"] = st["SUPERTd_10_3.0"]
-    df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
-    df["volume_change"] = df["volume"].pct_change().fillna(0)
-    macd = ta.macd(df["close"])
-    df["macd_hist"] = macd["MACDh_12_26_9"]
+    df["Supertrend"] = st["SUPERTd_10_3.0"]
+    df["ATR"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+    df["ADX"] = ta.adx(df["high"], df["low"], df["close"], length=14)["ADX_14"]
+
+    df["VolumeChange"] = df["volume"].pct_change().fillna(0)
+
     return df
 
 def run_backtest():
@@ -115,14 +116,13 @@ def run_backtest():
 
             # AI Score check
             features_df = pd.DataFrame([[
-                row["rsi"],            # from calculated indicators
-                row["ema10"],
-                row["ema21"],
-                row["atr"],
-                row["volume_change"],
-                row["macd_hist"]
-            ]], columns=["RSI", "EMA10", "EMA21", "ATR", "volume_change", "MACD_Hist"])
-
+                row["RSI"],
+                row["EMA10"],
+                row["EMA21"],
+                row["ATR"],
+                row["ADX"],
+                row["VolumeChange"]
+            ]], columns=["RSI", "EMA10", "EMA21", "ATR", "ADX", "VolumeChange"])
             if features_df.isnull().values.any():
                 skip_reasons["NaN in features"] += 1
                 continue

@@ -115,7 +115,12 @@ def run_backtest():
 
             # AI Score check
             features_df = pd.DataFrame([[
-                row["RSI"], row["EMA10"], row["EMA21"], row["ATR"], row["volume_change"], row["MACD_Hist"]
+                row["rsi"],            # from calculated indicators
+                row["ema10"],
+                row["ema21"],
+                row["atr"],
+                row["volume_change"],
+                row["macd_hist"]
             ]], columns=["RSI", "EMA10", "EMA21", "ATR", "volume_change", "MACD_Hist"])
 
             if features_df.isnull().values.any():

@@ -99,15 +99,20 @@ def run_backtest():
             indicator_pass_counts["Supertrend"] += 1
 
             # AI Score check
-            features = [[
+            import pandas as pd
+            
+            feature_names = ["rsi", "ema10", "ema21", "atr", "volume_change", "macd_hist"]
+            
+            features_df = pd.DataFrame([[
                 row["rsi"], 
                 row["ema10"], 
                 row["ema21"], 
                 row["atr"], 
                 row["volume_change"], 
                 row["macd_hist"]
-            ]]
-            ai_score = model.predict_proba(features)[0][1]
+            ]], columns=feature_names)
+            
+            ai_score = model.predict_proba(features_df)[0][1]
             if ai_score < 0.25:
                 skip_reasons["AI score fail"] += 1
                 continue

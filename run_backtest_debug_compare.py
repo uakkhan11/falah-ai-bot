@@ -116,12 +116,12 @@ def run_backtest():
 
             # AI Score check
             features_df = pd.DataFrame([[
-                row["RSI"],
-                row["EMA10"],
-                row["EMA21"],
-                row["ATR"],
-                row["ADX"],
-                row["VolumeChange"]
+                row["rsi"],
+                row["ema10"],
+                row["ema21"],
+                row["atr"],
+                row["adx"],
+                row["volume_change"]
             ]], columns=["RSI", "EMA10", "EMA21", "ATR", "ADX", "VolumeChange"])
             if features_df.isnull().values.any():
                 skip_reasons["NaN in features"] += 1

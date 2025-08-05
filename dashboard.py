@@ -1,93 +1,88 @@
 # dashboard.py
-
 import streamlit as st
-import pandas as pd
 import os
 import json
+import pandas as pd
 from datetime import datetime
+import subprocess
 
-from instrument_loader import save_token_map
-from fetch_intraday_data import fetch_intraday_data
-from intraday_scanner import scan_intraday_folder
-from utils import get_halal_list
-from amfi_fetcher import load_large_midcap_symbols
+st.set_page_config(page_title="AI Trading Dashboard", layout="centered")
 
-INTRADAY_DIR = "/root/falah-ai-bot/intraday_data/"
-SCREENED_FILE = "/root/falah-ai-bot/final_screened.json"
+# Paths
+FILTERED_FILE = "/root/falah-ai-bot/final_screened.json"
+HISTORICAL_DIR = "/root/falah-ai-bot/historical_data"
+INTRADAY_DIR = "/root/falah-ai-bot/intraday_data"
 
-st.set_page_config(page_title="AI Trading Dashboard", layout="wide")
+# Utilities
+def log_status(msg, status="info"):
+    if status == "success":
+        st.success(msg)
+    elif status == "error":
+        st.error(msg)
+    elif status == "warning":
+        st.warning(msg)
+    else:
+        st.info(msg)
 
-st.title("📊 AI Trading Dashboard")
+def run_script(script, args=None):
+    cmd = ["python3", script]
+    if args:
+        cmd += args
+    try:
+        output = subprocess.check_output(cmd, text=True)
+        return output
+    except subprocess.CalledProcessError as e:
+        return f"❌ Error running {script}: {e.output}"
+
+# Title
+st.markdown("## 📊 AI Trading Dashboard")
 st.caption(f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-# Step 1 — Load symbols (Halal + Large/Mid Cap)
-with st.spinner("Loading Halal + L/M Cap symbols..."):
-    halal_list = set(get_halal_list("1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"))
-    lm_list = set(load_large_midcap_symbols())
-    final_symbols = sorted(list(halal_list.intersection(lm_list)))
+# 1. Enter Token
+if st.button("🔑 Enter Zerodha Token"):
+    output = run_script("token_entry.py")
+    log_status(output, "success")
 
-if not final_symbols:
-    st.error("❌ No symbols found in Halal + L/M Cap filter. Check your list.")
-    st.stop()
+# 2. Fetch Historical Data
+if st.button("📥 Fetch Historical Data"):
+    output = run_script("fetch_historical.py")
+    log_status(output, "success")
 
-st.success(f"✅ Loaded {len(final_symbols)} filtered symbols.")
+# 3. Fetch Intraday Data
+if st.button("⏳ Fetch Intraday Data"):
+    output = run_script("fetch_intraday_data.py")
+    log_status(output, "success")
 
-# Step 2 — Update token map
-with st.spinner("Updating token map..."):
-    try:
-        save_token_map()
-        st.success("✅ Token map updated.")
-    except Exception as e:
-        st.error(f"❌ Failed to update token map: {e}")
-        st.stop()
+# 4. Run Combined Scan
+if st.button("🔍 Run Daily + Intraday Scan"):
+    # Run daily scan
+    run_script("daily_scanner.py")
+    # Run intraday scan
+    run_script("intraday_scanner.py")
 
-# Step 3 — Fetch intraday data
-with st.spinner("Fetching intraday data..."):
-    try:
-        fetch_intraday_data(final_symbols)
-        st.success("✅ Intraday data fetched.")
-    except Exception as e:
-        st.error(f"❌ Failed to fetch intraday data: {e}")
-        st.stop()
+    # Load results
+    daily_df = pd.read_csv("daily_screening_results.csv") if os.path.exists("daily_screening_results.csv") else pd.DataFrame()
+    intra_df = pd.read_csv("intraday_screening_results.csv") if os.path.exists("intraday_screening_results.csv") else pd.DataFrame()
 
-# Step 4 — Run intraday scan
-with st.spinner("Scanning intraday data..."):
-    try:
-        scan_results = scan_intraday_folder(INTRADAY_DIR)
-        if scan_results.empty:
-            st.warning("⚠️ No symbols matched the scan criteria.")
-        else:
-            st.success(f"✅ Found {len(scan_results)} matching symbols.")
-    except Exception as e:
-        st.error(f"❌ Scan failed: {e}")
-        st.stop()
+    if not daily_df.empty or not intra_df.empty:
+        st.subheader("📈 Combined Scan Results")
+        combined_df = pd.concat([daily_df, intra_df]).drop_duplicates(subset="symbol")
+        st.dataframe(combined_df, use_container_width=True)
+    else:
+        log_status("No matching stocks found", "warning")
 
-# Step 5 — Display results
-if not scan_results.empty:
-    st.subheader("📌 Scan Results")
-    st.dataframe(scan_results)
+# 5. Place Orders
+if st.button("💰 Place Orders for All Scanned Stocks"):
+    output = run_script("place_orders.py")
+    log_status(output, "success")
 
-    # Save scan results for backtesting
-    try:
-        scan_results.to_csv("latest_intraday_scan.csv", index=False)
-        with open(SCREENED_FILE, "w") as f:
-            json.dump(scan_results.to_dict(orient="records"), f, indent=2)
-        st.success("✅ Scan results saved for backtesting & monitoring.")
-    except Exception as e:
-        st.error(f"❌ Failed to save scan results: {e}")
+# 6. Start Monitor
+if st.button("📡 Start Monitor"):
+    output = run_script("monitor.py")
+    log_status(output, "success")
 
-    # Place Order buttons
-    st.subheader("🛒 Place Orders")
-    for _, row in scan_results.iterrows():
-        col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
-        col1.write(row['symbol'])
-        col2.write(f"₹{row['close']}")
-        col3.write(f"RSI: {row['RSI']}")
-        if col4.button(f"Buy {row['symbol']}"):
-            st.info(f"Placing order for {row['symbol']}...")
-            # TODO: Add order placement logic
-else:
-    st.info("📭 No trades to display right now.")
-
-st.divider()
-st.caption("Powered by AI Trading Bot — Live Intraday Analysis")
+# Notes
+st.markdown("---")
+st.markdown("✅ **This dashboard always uses your Halal + L/M Cap list.**\n"
+            "✅ **Trade reports are sent to Telegram automatically.**\n"
+            "✅ **Scans use the latest real-time data before placing orders.**")

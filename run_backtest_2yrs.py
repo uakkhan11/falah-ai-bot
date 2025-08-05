@@ -2,28 +2,32 @@ import os
 import pandas as pd
 import pandas_ta as ta
 import joblib
-from datetime import datetime, timedelta
-import pytz
+from datetime import datetime, timedelta, timezone
 
 # ==== CONFIG ====
 HISTORICAL_DIR = "/root/falah-ai-bot/historical_data/"
 MODEL_PATH = "/root/falah-ai-bot/model.pkl"
-START_CAPITAL = 1000000
-RISK_PER_TRADE = 0.02  # 2% risk per trade
+START_CAPITAL = 1_000_000
+RISK_PER_TRADE = 0.02
+SLIPPAGE_PCT = 0.002   # 0.2% slippage
+BROKERAGE = 20         # flat per trade
+
+# Load model
+model = joblib.load(MODEL_PATH)
 FEATURES = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"]
 
-# ==== TIMEZONE & DATE FILTER ====
-IST = pytz.timezone("Asia/Kolkata")
-CUTOFF_DATE = IST.localize(datetime.now() - timedelta(days=730))  # last 2 years
-
-# ==== TRACKERS ====
+# Stats tracking
 indicator_pass_count = {"RSI": 0, "EMA": 0, "Supertrend": 0, "AI_Score": 0}
+skip_reasons = {}
 exit_reason_count = {}
 
-# ==== MODEL ====
-model = joblib.load(MODEL_PATH)
+# Helpers
+def track_skip(reason):
+    skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
 
-# ==== FUNCTIONS ====
+def track_exit(reason):
+    exit_reason_count[reason] = exit_reason_count.get(reason, 0) + 1
+
 def calculate_features(df):
     for col in ["open", "high", "low", "close", "volume"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -43,25 +47,20 @@ def calculate_features(df):
     df.dropna(inplace=True)
     return df
 
-
 def apply_ai_score(df):
     X = df[FEATURES].copy()
     X = X.replace([float("inf"), float("-inf")], pd.NA)
     X = X.dropna()
     df = df.loc[X.index].copy()
     X = X.astype("float32")
-    df.loc[:, "ai_score"] = model.predict_proba(X)[:, 1]
+    df["ai_score"] = model.predict_proba(X)[:, 1]
     return df
 
-
-def track_exit_reason(reason):
-    exit_reason_count[reason] = exit_reason_count.get(reason, 0) + 1
-
-
-# ==== BACKTEST ====
 def run_backtest():
     capital = START_CAPITAL
     trades = []
+
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=730)  # 2 years
     files = [f for f in os.listdir(HISTORICAL_DIR) if f.endswith(".csv")]
 
     for file in files:
@@ -70,28 +69,21 @@ def run_backtest():
         df.columns = [c.lower() for c in df.columns]
 
         if "date" not in df.columns:
-            print(f"⚠️ Skipping {symbol}: No date column")
-            continue
+            track_skip("Missing date"); continue
 
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        if df["date"].dt.tz is None:
-            df["date"] = df["date"].dt.tz_localize(IST)
-        else:
-            df["date"] = df["date"].dt.tz_convert(IST)
+        df["date"] = pd.to_datetime(df["date"], errors="coerce", utc=True)
+        df = df[df["date"] >= cutoff_date]
 
-        df = df[df["date"] >= CUTOFF_DATE]
-        if df.empty or len(df) < 200:
-            print(f"⚠️ Skipping {symbol}: insufficient recent data")
-            continue
+        if len(df) < 50:
+            track_skip("Insufficient data"); continue
 
         df = calculate_features(df)
-        if df.empty:
-            continue
         df = apply_ai_score(df)
 
         for i in range(len(df) - 1):
             row = df.iloc[i]
 
+            # Indicator passes
             rsi_pass = 35 < row["RSI"] < 65
             ema_pass = row["EMA10"] > row["EMA21"]
             st_pass = row["close"] > row["Supertrend"]
@@ -102,51 +94,56 @@ def run_backtest():
             if st_pass: indicator_pass_count["Supertrend"] += 1
             if ai_pass: indicator_pass_count["AI_Score"] += 1
 
-            if rsi_pass and ema_pass and st_pass and ai_pass:
-                entry_price = row["close"]
-                atr = row["ATR"]
-                qty = int((capital * RISK_PER_TRADE) / atr)
-                if qty <= 0:
-                    continue
+            if not (rsi_pass and ema_pass and st_pass and ai_pass):
+                if not rsi_pass: track_skip("RSI fail")
+                if not ema_pass: track_skip("EMA fail")
+                if not st_pass: track_skip("Supertrend fail")
+                if not ai_pass: track_skip("AI score fail")
+                continue
 
-                for j in range(i + 1, len(df)):
-                    exit_row = df.iloc[j]
-                    ltp = exit_row["close"]
-                    atr_value = exit_row["ATR"]
+            # Entry
+            entry_price = row["close"] * (1 + SLIPPAGE_PCT)
+            atr = row["ATR"]
+            qty = int((capital * RISK_PER_TRADE) / atr)
+            if qty <= 0: track_skip("Zero qty"); continue
 
-                    reason = None
-                    if ltp < entry_price * 0.98:
-                        reason = "Fixed SL breach (-2%)"
-                    elif ltp < max(ltp - 1.5 * atr_value,
-                                   df["low"].iloc[max(0, j-7):j+1].min()):
-                        reason = "Trailing SL breached"
-                    elif ltp >= entry_price * 1.12:
-                        reason = "Profit >=12% hit"
+            # Hold until exit
+            for j in range(i + 1, len(df)):
+                exit_row = df.iloc[j]
+                ltp = exit_row["close"]
+                reason = None
+                if ltp <= entry_price * 0.98:
+                    reason = "Fixed SL breach (-2%)"
+                elif ltp <= max(ltp - 1.5 * atr, df["low"].iloc[max(0, j - 7):j + 1].min()):
+                    reason = "Trailing SL breached"
+                elif ltp >= entry_price * 1.12:
+                    reason = "Profit >=12% hit"
 
-                    if reason:
-                        pnl = (ltp - entry_price) * qty
-                        capital += pnl
-                        trades.append({
-                            "symbol": symbol,
-                            "entry_date": df["date"].iloc[i],
-                            "exit_date": df["date"].iloc[j],
-                            "entry_price": entry_price,
-                            "exit_price": ltp,
-                            "qty": qty,
-                            "pnl": pnl,
-                            "reason": reason
-                        })
-                        track_exit_reason(reason)
-                        break
+                if reason:
+                    sell_price = ltp * (1 - SLIPPAGE_PCT)
+                    pnl = (sell_price - entry_price) * qty - BROKERAGE
+                    capital += pnl
+                    trades.append({
+                        "symbol": symbol,
+                        "entry_date": row["date"],
+                        "exit_date": exit_row["date"],
+                        "entry_price": entry_price,
+                        "exit_price": sell_price,
+                        "qty": qty,
+                        "pnl": pnl,
+                        "reason": reason
+                    })
+                    track_exit(reason)
+                    break
 
+    # Summary
     total_trades = len(trades)
-    wins = sum(1 for t in trades if t["pnl"] > 0)
+    wins = len([t for t in trades if t["pnl"] > 0])
     pnl_total = sum(t["pnl"] for t in trades)
 
-    print("\n===== BACKTEST SUMMARY =====")
-    print(f"Period: Last 2 years")
+    print(f"\nPeriod: Last 2 years")
     print(f"Total Trades: {total_trades}")
-    print(f"Profitable Trades: {wins} ({wins / total_trades * 100:.2f}%)" if total_trades > 0 else "No trades")
+    print(f"Profitable Trades: {wins} ({wins / total_trades * 100:.2f}%)")
     print(f"Total PnL: ₹{pnl_total:,.2f}")
     print(f"Final Capital: ₹{capital:,.2f}")
 
@@ -154,14 +151,16 @@ def run_backtest():
     for k, v in indicator_pass_count.items():
         print(f"{k}: {v}")
 
+    print("\nSkip Reasons:")
+    for k, v in skip_reasons.items():
+        print(f"{k}: {v}")
+
     print("\nExit Reason Counts:")
     for k, v in exit_reason_count.items():
         print(f"{k}: {v}")
 
-    if trades:
-        pd.DataFrame(trades).to_csv("backtest_trades.csv", index=False)
-        print("\n✅ backtest_trades.csv saved.")
-
+    pd.DataFrame(trades).to_csv("backtest_trades.csv", index=False)
+    print("\n✅ backtest_trades.csv saved.")
 
 if __name__ == "__main__":
     run_backtest()

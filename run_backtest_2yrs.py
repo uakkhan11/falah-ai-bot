@@ -43,7 +43,6 @@ def calculate_features(df):
     st = ta.supertrend(df["high"], df["low"], df["close"], length=10, multiplier=3.0)
     df["Supertrend"] = st["SUPERT_10_3.0"]
 
-    # Clean infinities
     df.replace([float("inf"), float("-inf")], pd.NA, inplace=True)
     df.dropna(inplace=True)
     return df
@@ -61,14 +60,13 @@ def apply_ai_score(df):
 
 
 def track_exit_reason(reason):
-    """Count exit reason frequency."""
     exit_reason_count[reason] = exit_reason_count.get(reason, 0) + 1
 
 
 def run_backtest():
     capital = START_CAPITAL
     trades = []
-    cutoff_date = datetime.now() - timedelta(days=YEARS * 365)
+    cutoff_date = (datetime.now() - timedelta(days=YEARS * 365)).replace(tzinfo=None)
 
     files = [f for f in os.listdir(HISTORICAL_DIR) if f.endswith(".csv")]
 
@@ -77,13 +75,15 @@ def run_backtest():
         df = pd.read_csv(os.path.join(HISTORICAL_DIR, file))
         df.columns = [c.lower() for c in df.columns]
 
-        # Ensure 'date' is datetime
-        if "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"], errors="coerce")
-            df.dropna(subset=["date"], inplace=True)
-            df = df[df["date"] >= cutoff_date]
-        else:
+        if "date" not in df.columns:
             continue
+
+        # Parse dates and remove timezone info
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
+        df.dropna(subset=["date"], inplace=True)
+
+        # Filter last 2 years
+        df = df[df["date"] >= cutoff_date]
 
         if len(df) < 200:
             continue
@@ -98,7 +98,6 @@ def run_backtest():
         for i in range(len(df) - 1):
             row = df.iloc[i]
 
-            # === Indicator passes tracking ===
             rsi_pass = 35 < row["RSI"] < 65
             ema_pass = row["EMA10"] > row["EMA21"]
             st_pass = row["close"] > row["Supertrend"]
@@ -109,13 +108,11 @@ def run_backtest():
             if st_pass: indicator_pass_count["Supertrend"] += 1
             if ai_pass: indicator_pass_count["AI_Score"] += 1
 
-            # === ENTRY ===
             if rsi_pass and ema_pass and st_pass and ai_pass:
                 entry_price = row["close"]
                 atr_value = row["ATR"]
                 qty = int((capital * RISK_PER_TRADE) / atr_value)
 
-                # === EXIT LOOP ===
                 for j in range(i + 1, len(df)):
                     exit_row = df.iloc[j]
                     ltp = exit_row["close"]
@@ -145,7 +142,6 @@ def run_backtest():
                         track_exit_reason(reason)
                         break
 
-    # === SUMMARY ===
     total_trades = len(trades)
     wins = len([t for t in trades if t["pnl"] > 0])
     pnl_total = sum(t["pnl"] for t in trades)
@@ -153,7 +149,8 @@ def run_backtest():
     print("\n===== BACKTEST SUMMARY =====")
     print(f"Period: Last {YEARS} years")
     print(f"Total Trades: {total_trades}")
-    print(f"Profitable Trades: {wins} ({wins / total_trades * 100:.2f}%)" if total_trades else "Profitable Trades: 0")
+    if total_trades:
+        print(f"Profitable Trades: {wins} ({wins / total_trades * 100:.2f}%)")
     print(f"Total PnL: ₹{pnl_total:,.2f}")
     print(f"Final Capital: ₹{capital:,.2f}")
 
@@ -171,4 +168,3 @@ def run_backtest():
 
 if __name__ == "__main__":
     run_backtest()
-

@@ -5,34 +5,31 @@ import joblib
 from datetime import datetime, timedelta
 import pytz
 
-# ===== CONFIG =====
+# === CONFIG ===
 HISTORICAL_DIR = "/root/falah-ai-bot/historical_data/"
 MODEL_PATH = "/root/falah-ai-bot/model.pkl"
 START_CAPITAL = 1000000
-RISK_PER_TRADE = 0.02  # 2% risk per trade
-PERIOD_DAYS = 730  # Last 2 years
+RISK_PER_TRADE = 0.02
+FIXED_SL_PCT = -0.03  # -3%
+PROFIT_TARGET_PCT = 0.08  # 8%
+TRAILING_ATR_MULTIPLIER = 1.2
+TRAILING_LOOKBACK = 5
+PERIOD_YEARS = 2
 
-# ===== STATS =====
+# === STATS TRACKERS ===
 indicator_pass_count = {"RSI": 0, "EMA": 0, "Supertrend": 0, "AI_Score": 0}
-skip_reasons = {}
 exit_reason_count = {}
+skip_reason_count = {}
 
-# ===== MODEL =====
+# === MODEL ===
 model = joblib.load(MODEL_PATH)
 FEATURES = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"]
 
-# ===== TIMEZONE =====
-IST = pytz.timezone("Asia/Kolkata")
-cutoff_date = IST.localize(datetime.now() - timedelta(days=PERIOD_DAYS))
-
-
-def count_skip(reason):
-    skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
-
+def record_skip(reason):
+    skip_reason_count[reason] = skip_reason_count.get(reason, 0) + 1
 
 def track_exit_reason(reason):
     exit_reason_count[reason] = exit_reason_count.get(reason, 0) + 1
-
 
 def calculate_features(df):
     for col in ["open", "high", "low", "close", "volume"]:
@@ -45,14 +42,13 @@ def calculate_features(df):
     df["ATR"] = ta.atr(df["high"], df["low"], df["close"], length=14)
     df["ADX"] = ta.adx(df["high"], df["low"], df["close"], length=14)["ADX_14"]
     df["VolumeChange"] = df["volume"].pct_change()
+
     st = ta.supertrend(df["high"], df["low"], df["close"], length=10, multiplier=3.0)
     df["Supertrend"] = st["SUPERT_10_3.0"]
 
     df.replace([float("inf"), float("-inf")], pd.NA, inplace=True)
     df.dropna(inplace=True)
-
     return df
-
 
 def apply_ai_score(df):
     X = df[FEATURES].copy()
@@ -62,29 +58,28 @@ def apply_ai_score(df):
     df["ai_score"] = model.predict_proba(X)[:, 1]
     return df
 
-
 def run_backtest():
+    global START_CAPITAL
     capital = START_CAPITAL
     trades = []
-    files = [f for f in os.listdir(HISTORICAL_DIR) if f.endswith(".csv")]
+    cutoff_date = datetime.now(pytz.timezone("Asia/Kolkata")) - timedelta(days=PERIOD_YEARS * 365)
 
+    files = [f for f in os.listdir(HISTORICAL_DIR) if f.endswith(".csv")]
     for file in files:
         symbol = file.replace(".csv", "")
         df = pd.read_csv(os.path.join(HISTORICAL_DIR, file))
         df.columns = [c.lower() for c in df.columns]
 
-        # Fix date column
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        if df["date"].dt.tz is None:
-            df["date"] = df["date"].dt.tz_localize(IST)
-        else:
-            df["date"] = df["date"].dt.tz_convert(IST)
+        if "date" not in df.columns:
+            record_skip("No date col")
+            continue
 
-        # Filter last 2 years
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize("Asia/Kolkata", ambiguous='NaT', nonexistent='NaT')
+        df = df.dropna(subset=["date"])
         df = df[df["date"] >= cutoff_date]
 
-        if len(df) < 200:
-            count_skip("Insufficient data")
+        if len(df) < 50:
+            record_skip("Insufficient data")
             continue
 
         df = calculate_features(df)
@@ -93,85 +88,81 @@ def run_backtest():
         for i in range(len(df) - 1):
             row = df.iloc[i]
 
-            # Loosened filters
             rsi_pass = 30 < row["RSI"] < 70
             ema_pass = row["EMA10"] > row["EMA21"]
             st_pass = row["close"] > row["Supertrend"]
             ai_pass = row["ai_score"] > 0.20
 
-            if not rsi_pass:
-                count_skip("RSI fail")
-                continue
-            if not ema_pass:
-                count_skip("EMA fail")
-                continue
-            if not st_pass:
-                count_skip("Supertrend fail")
-                continue
-            if not ai_pass:
-                count_skip("AI score fail")
-                continue
+            if not rsi_pass: record_skip("RSI fail")
+            if not ema_pass: record_skip("EMA fail")
+            if not st_pass: record_skip("Supertrend fail")
+            if not ai_pass: record_skip("AI score fail")
 
-            indicator_pass_count["RSI"] += 1
-            indicator_pass_count["EMA"] += 1
-            indicator_pass_count["Supertrend"] += 1
-            indicator_pass_count["AI_Score"] += 1
+            if rsi_pass: indicator_pass_count["RSI"] += 1
+            if ema_pass: indicator_pass_count["EMA"] += 1
+            if st_pass: indicator_pass_count["Supertrend"] += 1
+            if ai_pass: indicator_pass_count["AI_Score"] += 1
 
-            entry_price = row["close"]
-            atr = row["ATR"]
-            qty = int((capital * RISK_PER_TRADE) / atr)
-            if qty <= 0:
-                count_skip("Zero qty")
-                continue
+            if rsi_pass and ema_pass and st_pass and ai_pass:
+                entry_price = row["close"]
+                atr_value = row["ATR"]
+                qty = int((capital * RISK_PER_TRADE) / atr_value)
+                if qty <= 0:
+                    record_skip("Zero qty")
+                    continue
 
-            # Simulate trade exit
-            for j in range(i + 1, len(df)):
-                exit_row = df.iloc[j]
-                ltp = exit_row["close"]
-                atr_value = exit_row["ATR"]
-                trailing_sl = max(ltp - 1.5 * atr_value, df["low"].iloc[max(0, j - 7):j + 1].min())
+                peak_price = entry_price
+                for j in range(i + 1, len(df)):
+                    exit_row = df.iloc[j]
+                    ltp = exit_row["close"]
 
-                reason = None
-                if ltp < entry_price * 0.97:
-                    reason = "Fixed SL breach (-3%)"
-                elif ltp < trailing_sl:
-                    reason = "Trailing SL breached"
-                elif ltp >= entry_price * 1.15:
-                    reason = "Profit >=15% hit"
+                    if ltp > peak_price:
+                        peak_price = ltp
 
-                if reason:
-                    pnl = (ltp - entry_price) * qty
-                    capital += pnl
-                    trades.append({
-                        "symbol": symbol,
-                        "entry_date": df["date"].iloc[i],
-                        "exit_date": df["date"].iloc[j],
-                        "entry_price": entry_price,
-                        "exit_price": ltp,
-                        "qty": qty,
-                        "pnl": pnl,
-                        "reason": reason
-                    })
-                    track_exit_reason(reason)
-                    break
+                    trailing_sl_atr = peak_price - TRAILING_ATR_MULTIPLIER * atr_value
+                    trailing_sl_recent = df["low"].iloc[max(j - TRAILING_LOOKBACK, 0): j+1].min()
+                    trailing_sl = max(trailing_sl_atr, trailing_sl_recent)
 
-    # Summary
+                    reason = None
+                    if ltp <= entry_price * (1 + FIXED_SL_PCT):
+                        reason = f"Fixed SL breach ({FIXED_SL_PCT*100:.0f}%)"
+                    elif ltp <= trailing_sl:
+                        reason = "Trailing SL breached"
+                    elif ltp >= entry_price * (1 + PROFIT_TARGET_PCT):
+                        reason = f"Profit >={PROFIT_TARGET_PCT*100:.0f}% hit"
+
+                    if reason:
+                        pnl = (ltp - entry_price) * qty
+                        capital += pnl
+                        trades.append({
+                            "symbol": symbol,
+                            "entry_date": df["date"].iloc[i],
+                            "exit_date": df["date"].iloc[j],
+                            "entry_price": entry_price,
+                            "exit_price": ltp,
+                            "qty": qty,
+                            "pnl": pnl,
+                            "reason": reason
+                        })
+                        track_exit_reason(reason)
+                        break
+
     total_trades = len(trades)
     wins = len([t for t in trades if t["pnl"] > 0])
     pnl_total = sum(t["pnl"] for t in trades)
 
-    print(f"Period: Last {PERIOD_DAYS//365} years")
+    print(f"\nPeriod: Last {PERIOD_YEARS} years")
     print(f"Total Trades: {total_trades}")
     print(f"Profitable Trades: {wins} ({wins / total_trades * 100:.2f}%)")
     print(f"Total PnL: ₹{pnl_total:,.2f}")
-    print(f"Final Capital: ₹{capital:,.2f}\n")
+    print(f"Final Capital: ₹{capital:,.2f}")
 
-    print("Indicator Pass Counts:")
+    print("\nIndicator Pass Counts:")
     for k, v in indicator_pass_count.items():
         print(f"{k}: {v}")
 
     print("\nSkip Reasons:")
-    for k, v in skip_reasons.items():
+    for k, v in skip_reason_count.items():
         print(f"{k}: {v}")
 
     print("\nExit Reason Counts:")
@@ -180,7 +171,6 @@ def run_backtest():
 
     pd.DataFrame(trades).to_csv("backtest_trades.csv", index=False)
     print("\n✅ backtest_trades.csv saved.")
-
 
 if __name__ == "__main__":
     run_backtest()

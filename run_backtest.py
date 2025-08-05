@@ -28,7 +28,7 @@ def calculate_features(df):
 
 def apply_ai_score(df):
     features = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"]
-    df = df.dropna(subset=features)
+    df = df.dropna(subset=features).copy()  # Make a copy to avoid SettingWithCopyWarning
     X = df[features]
     df['ai_score'] = model.predict_proba(X)[:, 1]
     return df

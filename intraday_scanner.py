@@ -1,5 +1,3 @@
-# intraday_scanner.py
-
 import os
 import json
 import pandas as pd
@@ -39,35 +37,36 @@ def apply_ai_model(df):
 def scan_intraday_folder():
     """Scan intraday data for trade candidates."""
     results = []
+    logs = []
 
     # Load only Halal + Large/Mid Cap symbols
     if not os.path.exists(FILTERED_FILE):
-        print(f"❌ Missing filtered file: {FILTERED_FILE}")
-        return pd.DataFrame()
+        logs.append(f"❌ Missing filtered file: {FILTERED_FILE}")
+        return pd.DataFrame(), logs
 
     with open(FILTERED_FILE) as f:
         screened_data = json.load(f)
-    # Handle both list and dict formats
+
     if isinstance(screened_data, dict):
         allowed_symbols = set(screened_data.keys())
     elif isinstance(screened_data, list):
         allowed_symbols = set(screened_data)
     else:
-        print(f"❌ Unsupported format in {FILTERED_FILE}")
-        return pd.DataFrame()
+        logs.append(f"❌ Unsupported format in {FILTERED_FILE}")
+        return pd.DataFrame(), logs
 
     for file in os.listdir(DATA_FOLDER):
         if not file.endswith(".csv"):
             continue
         symbol = file.replace(".csv", "")
         if symbol not in allowed_symbols:
-            print(f"⏭ Skipping {symbol} (Not in Halal + L/M Cap list)")
+            logs.append(f"⏭ Skipping {symbol} (Not in Halal + L/M Cap list)")
             continue
 
         try:
             df = pd.read_csv(os.path.join(DATA_FOLDER, file))
             if df.shape[0] < 30:
-                print(f"⚠️ {symbol} skipped: Not enough candles")
+                logs.append(f"⚠️ {symbol} skipped: Not enough candles")
                 continue
 
             df.columns = [c.lower() for c in df.columns]
@@ -75,7 +74,7 @@ def scan_intraday_folder():
             df = apply_ai_model(df)
 
             if df.empty:
-                print(f"⚠️ {symbol} skipped: Missing required features")
+                logs.append(f"⚠️ {symbol} skipped: Missing required features")
                 continue
 
             row = df.iloc[-1]
@@ -90,7 +89,7 @@ def scan_intraday_folder():
                 reason = f"AI score too low ({row['ai_score']:.3f})"
 
             if reason:
-                print(f"⏭ {symbol} skipped: {reason}")
+                logs.append(f"⏭ {symbol} skipped: {reason}")
                 continue
 
             results.append({
@@ -104,15 +103,24 @@ def scan_intraday_folder():
                 'ai_score': round(row['ai_score'], 3),
                 'close': row['close']
             })
-            print(f"✅ {symbol} passed scan.")
+            logs.append(f"✅ {symbol} passed scan.")
 
         except Exception as e:
-            print(f"❌ {symbol} failed: {e}")
+            logs.append(f"❌ {symbol} failed: {e}")
 
-    return pd.DataFrame(results)
+    return pd.DataFrame(results), logs
+
+# ✅ Wrapper for Dashboard
+def run_intraday_scan():
+    """Run intraday scan and return (DataFrame, logs) for dashboard."""
+    df, logs = scan_intraday_folder()
+    if not df.empty:
+        df.to_csv(OUTPUT_FILE, index=False)
+    return df, logs
 
 if __name__ == "__main__":
-    df = scan_intraday_folder()
+    df, logs = scan_intraday_folder()
     df.to_csv(OUTPUT_FILE, index=False)
+    print("\n".join(logs))
     print(f"\n📊 Scan complete. {len(df)} symbols found.")
     print(df)

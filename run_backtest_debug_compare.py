@@ -27,12 +27,19 @@ exit_reasons = {"Fixed SL breach (-3%)": 0, "Profit >=8% hit": 0, "Trailing SL b
 trade_log = []
 
 def calculate_indicators(df):
+    import pandas_ta as ta
     df["rsi"] = ta.rsi(df["close"], length=14)
     df["ema10"] = ta.ema(df["close"], length=10)
     df["ema21"] = ta.ema(df["close"], length=21)
     st = ta.supertrend(df["high"], df["low"], df["close"], length=10, multiplier=3.0)
     df["supertrend"] = st["SUPERTd_10_3.0"]
     df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+
+    # Extra features for AI model
+    df["volume_change"] = df["volume"].pct_change().fillna(0)
+    macd = ta.macd(df["close"])
+    df["macd_hist"] = macd["MACDh_12_26_9"]
+
     return df
 
 def run_backtest():
@@ -92,9 +99,15 @@ def run_backtest():
             indicator_pass_counts["Supertrend"] += 1
 
             # AI Score check
-            features = [[row["rsi"], row["ema10"], row["ema21"], row["atr"]]]
+            features = [[
+                row["rsi"], 
+                row["ema10"], 
+                row["ema21"], 
+                row["atr"], 
+                row["volume_change"], 
+                row["macd_hist"]
+            ]]
             ai_score = model.predict_proba(features)[0][1]
-
             if ai_score < 0.25:
                 skip_reasons["AI score fail"] += 1
                 continue

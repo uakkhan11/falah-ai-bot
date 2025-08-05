@@ -36,6 +36,9 @@ def calculate_features(df):
     st = ta.supertrend(df["high"], df["low"], df["close"], length=10, multiplier=3.0)
     df["Supertrend"] = st["SUPERT_10_3.0"]
 
+    # Precompute trailing low for last 7 days
+    df["rolling_low_7"] = df["low"].rolling(window=7).min()
+
     # Clean infinities & NaNs
     df.replace([float("inf"), float("-inf")], pd.NA, inplace=True)
     df.dropna(inplace=True)
@@ -106,7 +109,7 @@ def run_backtest():
 
                 if ltp < entry_price * 0.98:
                     reason = "Fixed SL breach (-2%)"
-                elif ltp < max(ltp - 1.5 * atr_value, row["low"].rolling(7).min()):
+                elif ltp < max(entry_price - 1.5 * atr_value, row["rolling_low_7"]):
                     reason = "Trailing SL breached"
                 elif ltp >= entry_price * 1.12:
                     reason = "Profit >=12% hit"

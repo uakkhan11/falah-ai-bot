@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import pytz
 import joblib
+import pandas_ta as ta
 
 # === CONFIG ===
 HISTORICAL_PATH = "/root/falah-ai-bot/historical_data"
@@ -23,11 +24,9 @@ total_pnl = 0
 indicator_pass_counts = {"RSI": 0, "EMA": 0, "Supertrend": 0, "AI_Score": 0}
 skip_reasons = {"AI score fail": 0, "EMA fail": 0, "RSI fail": 0, "Supertrend fail": 0, "Insufficient data": 0}
 exit_reasons = {"Fixed SL breach (-3%)": 0, "Profit >=8% hit": 0, "Trailing SL breached": 0}
-
 trade_log = []
 
 def calculate_indicators(df):
-    import pandas_ta as ta
     df["rsi"] = ta.rsi(df["close"], length=14)
     df["ema10"] = ta.ema(df["close"], length=10)
     df["ema21"] = ta.ema(df["close"], length=21)
@@ -38,6 +37,7 @@ def calculate_indicators(df):
 
 def run_backtest():
     global total_trades, profitable_trades, total_pnl
+
     cutoff_date = datetime.now(pytz.timezone("Asia/Kolkata")) - timedelta(days=PERIOD_YEARS * 365)
 
     for file in os.listdir(HISTORICAL_PATH):
@@ -64,6 +64,7 @@ def run_backtest():
 
         # Filter for last 2 years
         df = df[df["date"] >= cutoff_date]
+
         if len(df) < 50:
             skip_reasons["Insufficient data"] += 1
             continue
@@ -93,6 +94,7 @@ def run_backtest():
             # AI Score check
             features = [[row["rsi"], row["ema10"], row["ema21"], row["atr"]]]
             ai_score = model.predict_proba(features)[0][1]
+
             if ai_score < 0.25:
                 skip_reasons["AI score fail"] += 1
                 continue
@@ -148,12 +150,15 @@ def run_backtest():
     print(f"Profitable Trades: {profitable_trades} ({(profitable_trades / total_trades * 100):.2f}%)")
     print(f"Total PnL: ₹{total_pnl:,.2f}")
     print(f"Final Capital: ₹{(total_pnl):,.2f}\n")
+
     print("Indicator Pass Counts:")
     for k, v in indicator_pass_counts.items():
         print(f"{k}: {v}")
+
     print("\nSkip Reasons:")
     for k, v in skip_reasons.items():
         print(f"{k}: {v}")
+
     print("\nExit Reason Counts:")
     for k, v in exit_reasons.items():
         print(f"{k}: {v}")

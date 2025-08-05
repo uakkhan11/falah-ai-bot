@@ -19,12 +19,22 @@ def calculate_features(df):
     for col in ['open', 'high', 'low', 'close', 'volume']:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
+    # Drop rows with missing OHLC
+    df.dropna(subset=['open', 'high', 'low', 'close'], inplace=True)
+
+    # Indicators
     df['EMA10'] = ta.ema(df['close'], length=10)
     df['EMA21'] = ta.ema(df['close'], length=21)
     df['RSI'] = ta.rsi(df['close'], length=14)
     df['ATR'] = ta.atr(df['high'], df['low'], df['close'], length=14)
     df['ADX'] = ta.adx(df['high'], df['low'], df['close'], length=14)['ADX_14']
     df['VolumeChange'] = df['volume'].pct_change()
+
+    # ✅ Add Supertrend
+    st = ta.supertrend(df['high'], df['low'], df['close'], length=10, multiplier=3.0)
+    # pandas_ta returns columns like 'SUPERT_10_3.0', 'SUPERTd_10_3.0', 'SUPERTl_10_3.0'
+    df['Supertrend'] = st[f"SUPERT_10_3.0"]
+
     return df
 
 def apply_ai_score(df):

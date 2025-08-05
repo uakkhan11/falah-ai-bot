@@ -38,10 +38,26 @@ def calculate_features(df):
     return df
 
 def apply_ai_score(df):
-    features = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"]
-    df = df.dropna(subset=features).copy()  # Make a copy to avoid SettingWithCopyWarning
+    features = ["RSI", "ADX", "ATR", "EMA10", "EMA21", "VolumeChange"]
+
+    # Keep only the required features
+    df = df.copy()
+
+    # Replace infinite values with NaN
+    df[features] = df[features].replace([float('inf'), float('-inf')], float('nan'))
+
+    # Drop rows with missing values
+    df.dropna(subset=features, inplace=True)
+
+    # Clip extreme values to avoid overflow
+    df[features] = df[features].clip(lower=-1e6, upper=1e6)
+
+    # Prepare features in exact same order as model was trained
     X = df[features]
-    df['ai_score'] = model.predict_proba(X)[:, 1]
+
+    # Predict AI scores
+    df.loc[:, 'ai_score'] = model.predict_proba(X)[:, 1]
+
     return df
     
 def run_backtest():

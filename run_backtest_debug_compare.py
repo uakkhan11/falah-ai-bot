@@ -38,8 +38,6 @@ def calculate_indicators(df):
 
     # Volume change and MACD hist (keep feature names consistent with model if needed)
     df["VolumeChange"] = df["volume"].pct_change().fillna(0)
-    macd = ta.macd(df["close"])
-    df["MACD_Hist"] = macd["MACDh_12_26_9"]
 
     return df
 
@@ -100,7 +98,7 @@ def run_backtest():
             indicator_pass_counts["Supertrend"] += 1
 
             # Prepare features for AI model prediction
-            features = ["RSI", "EMA10", "EMA21", "ATR", "VolumeChange", "MACD_Hist"]
+            features = ["RSI", "EMA10", "EMA21", "ATR", "VolumeChange", "ADX"]
 
             # Check if any NaNs in features, skip if yes
             if any(pd.isna(row[feat]) for feat in features):

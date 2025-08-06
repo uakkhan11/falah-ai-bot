@@ -9,56 +9,47 @@ import pandas_ta as ta
 HISTORICAL_PATH = "/root/falah-ai-bot/historical_data"
 MODEL_PATH = "/root/falah-ai-bot/model.pkl"
 PERIOD_YEARS = 2
-TARGET_PROFIT_PCT = 0.08   # 8% target
-STOP_LOSS_PCT = 0.03       # 3% fixed SL
-TRAILING_SL_MULTIPLIER = 1.5
+ATR_MULTIPLIER = 1.5
+STAGE1_TARGET_PCT = 0.05   # +5% partial exit
+FINAL_TARGET_PCT = 0.08    # +8% full target
+PARTIAL_EXIT_RATIO = 0.5   # 50% exit at stage 1
+CSV_TRADE_LOG = "backtest_trades.csv"
 
 # Load AI model
 model = joblib.load(MODEL_PATH)
 
-# Counters
+# Stats tracking
 primary_trades = 0
 primary_wins = 0
 bb_trades = 0
 bb_wins = 0
-total_pnl = 0
 indicator_pass_counts = {"RSI": 0, "EMA": 0, "Supertrend": 0, "AI_Score": 0}
 skip_reasons = {"AI score fail": 0, "EMA fail": 0, "RSI fail": 0, "Supertrend fail": 0, "Insufficient data": 0}
 exit_reasons = {
-    "Fixed SL breach (-3%)": 0,
-    "Profit >=8% hit": 0,
-    "Trailing SL breached": 0,
+    "Initial SL hit": 0,
+    "Stage1 Hit": 0,
+    "Final Target": 0,
+    "Trailing SL pre-Stage1": 0,
+    "Trailing SL after Stage1": 0,
     "BB SL": 0,
     "BB Target": 0
 }
 
 def calculate_indicators(df):
-    # Ensure numeric for all price/volume columns
-    for col in ["open", "high", "low", "close", "volume"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
     df["rsi"] = ta.rsi(df["close"], length=14)
     df["ema10"] = ta.ema(df["close"], length=10)
     df["ema21"] = ta.ema(df["close"], length=21)
-
     st = ta.supertrend(df["high"], df["low"], df["close"], length=10, multiplier=3.0)
     df["supertrend"] = st["SUPERTd_10_3.0"]
-
     df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
     df["volumechange"] = df["volume"].pct_change().fillna(0)
-
-    macd = ta.macd(df["close"])
-    df["macd_hist"] = macd["MACDh_12_26_9"]
-
     bb = ta.bbands(df["close"], length=20, std=2)
     df["bb_lower"] = bb["BBL_20_2.0"]
     df["bb_upper"] = bb["BBU_20_2.0"]
-
     return df
 
 def run_backtest():
-    global primary_trades, primary_wins, bb_trades, bb_wins, total_pnl
+    global primary_trades, primary_wins, bb_trades, bb_wins
 
     cutoff_date = datetime.now(pytz.timezone("Asia/Kolkata")) - timedelta(days=PERIOD_YEARS * 365)
 
@@ -77,7 +68,6 @@ def run_backtest():
             skip_reasons["Insufficient data"] += 1
             continue
 
-        # Fix date parsing
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         if df["date"].dt.tz is None:
             df["date"] = df["date"].dt.tz_localize("Asia/Kolkata", nonexistent="NaT")
@@ -85,6 +75,7 @@ def run_backtest():
             df["date"] = df["date"].dt.tz_convert("Asia/Kolkata")
 
         df = df[df["date"] >= cutoff_date]
+
         if len(df) < 50:
             skip_reasons["Insufficient data"] += 1
             continue
@@ -119,31 +110,45 @@ def run_backtest():
 
                 entry_price = row["close"]
                 atr_value = row["atr"]
-                stop_loss_price = entry_price * (1 - STOP_LOSS_PCT)
-                target_price = entry_price * (1 + TARGET_PROFIT_PCT)
-                trailing_sl = entry_price - TRAILING_SL_MULTIPLIER * atr_value
+                stop_loss_price = entry_price - ATR_MULTIPLIER * atr_value
+                stage1_target_price = entry_price * (1 + STAGE1_TARGET_PCT)
+                final_target_price = entry_price * (1 + FINAL_TARGET_PCT)
+                trailing_sl = stop_loss_price
+
+                stage1_hit = False
+                primary_trades += 1
 
                 for j in range(i + 1, len(df)):
                     future_price = df.iloc[j]["close"]
 
-                    if future_price <= stop_loss_price:
-                        primary_trades += 1
-                        exit_reasons["Fixed SL breach (-3%)"] += 1
-                        break
+                    # Stage 1 partial profit
+                    if not stage1_hit and future_price >= stage1_target_price:
+                        stage1_hit = True
+                        exit_reasons["Stage1 Hit"] += 1
+                        trailing_sl = max(trailing_sl, future_price - ATR_MULTIPLIER * atr_value)
+                        continue
 
-                    if future_price >= target_price:
-                        primary_trades += 1
-                        exit_reasons["Profit >=8% hit"] += 1
+                    # Final target
+                    if future_price >= final_target_price:
                         primary_wins += 1
+                        exit_reasons["Final Target"] += 1
                         break
 
-                    trailing_sl = max(trailing_sl, future_price - TRAILING_SL_MULTIPLIER * atr_value)
+                    # Trailing SL
+                    trailing_sl = max(trailing_sl, future_price - ATR_MULTIPLIER * atr_value)
                     if future_price <= trailing_sl:
-                        primary_trades += 1
-                        exit_reasons["Trailing SL breached"] += 1
+                        if stage1_hit:
+                            exit_reasons["Trailing SL after Stage1"] += 1
+                        else:
+                            exit_reasons["Trailing SL pre-Stage1"] += 1
                         break
 
-            # === Fallback Bollinger Band Strategy ===
+                    # Initial SL hit
+                    if future_price <= stop_loss_price:
+                        exit_reasons["Initial SL hit"] += 1
+                        break
+
+            # === Fallback BB Strategy ===
             elif row["close"] <= row["bb_lower"]:
                 bb_trades += 1
                 entry_price = row["close"]
@@ -165,22 +170,25 @@ def run_backtest():
     # === Summary ===
     total_trades = primary_trades + bb_trades
     total_wins = primary_wins + bb_wins
-    primary_win_pct = (primary_wins / primary_trades * 100) if primary_trades else 0
-    bb_win_pct = (bb_wins / bb_trades * 100) if bb_trades else 0
-    overall_win_pct = (total_wins / total_trades * 100) if total_trades else 0
+    primary_win_pct = (primary_wins / primary_trades * 100) if primary_trades > 0 else 0
+    bb_win_pct = (bb_wins / bb_trades * 100) if bb_trades > 0 else 0
+    overall_win_pct = (total_wins / total_trades * 100) if total_trades > 0 else 0
 
     print("\n=== BACKTEST SUMMARY ===")
     print(f"Period: Last {PERIOD_YEARS} years")
     print(f"Total Trades: {total_trades}")
     print(f"Primary Trades: {primary_trades} | Wins: {primary_wins} ({primary_win_pct:.2f}%)")
     print(f"BB Trades: {bb_trades} | Wins: {bb_wins} ({bb_win_pct:.2f}%)")
-    print(f"Overall Win %: {overall_win_pct:.2f}%")
-    print("\nIndicator Pass Counts:")
+    print(f"Overall Win %: {overall_win_pct:.2f}%\n")
+
+    print("Indicator Pass Counts:")
     for k, v in indicator_pass_counts.items():
         print(f"  {k}: {v}")
+
     print("\nSkip Reasons:")
     for k, v in skip_reasons.items():
         print(f"  {k}: {v}")
+
     print("\nExit Reason Counts:")
     for k, v in exit_reasons.items():
         print(f"  {k}: {v}")

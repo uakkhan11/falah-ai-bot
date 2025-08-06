@@ -2,6 +2,7 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import classification_report
+from sklearn.model_selection import GridSearchCV
 import joblib
 
 # ✅ Step 1: Load historical data
@@ -26,9 +27,21 @@ y = df_recent["Outcome"]
 
 print(f"✅ Dataset ready: {X.shape[0]} samples | Positive cases: {y.sum()} | Negative cases: {(y==0).sum()}")
 
-# ✅ Step 6: Train Model with Class Balancing
-model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
-model.fit(X, y)
+# ✅ Step 6: Hyperparameter Tuning
+param_grid = {
+    'n_estimators': [100, 200],
+    'max_depth': [None, 10, 20],
+    'min_samples_split': [2, 5],
+    'class_weight': ['balanced', None]
+}
+
+print("🔍 Running GridSearchCV for best RandomForest parameters...")
+grid_search = GridSearchCV(RandomForestClassifier(random_state=42), param_grid, cv=5, n_jobs=-1)
+grid_search.fit(X, y)
+
+model = grid_search.best_estimator_
+print(f"✅ Best Params: {grid_search.best_params_}")
+
 
 # ✅ Step 7: Cross Validation
 scores = cross_val_score(model, X, y, cv=5)

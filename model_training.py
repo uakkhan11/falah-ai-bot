@@ -11,6 +11,7 @@ import pandas_ta as ta
 # ======================
 df = pd.read_csv("your_training_data.csv")
 df.columns = [c.lower() for c in df.columns]
+print("CSV Columns:", df.columns.tolist())
 
 # ======================
 # Step 2: Calculate Technical Indicators

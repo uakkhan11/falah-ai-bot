@@ -12,6 +12,7 @@ PERIOD_YEARS = 2
 TARGET_PROFIT_PCT = 0.08   # 8% target
 STOP_LOSS_PCT = 0.03       # 3% fixed SL
 TRAILING_SL_MULTIPLIER = 1.5
+AI_SCORE_THRESHOLD = 0.30  # configurable AI score filter
 CSV_TRADE_LOG = "backtest_trades.csv"
 
 # Load AI model
@@ -34,13 +35,16 @@ exit_reasons = {
 }
 trade_log = []
 
+
 def calculate_indicators(df):
+    """Calculate all required indicators."""
     df["RSI"] = ta.rsi(df["close"], length=14)
     df["EMA10"] = ta.ema(df["close"], length=10)
     df["EMA21"] = ta.ema(df["close"], length=21)
     st = ta.supertrend(df["high"], df["low"], df["close"], length=10, multiplier=3.0)
     df["supertrend"] = st["SUPERTd_10_3.0"]
     df["ATR"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+    df["ADX"] = ta.adx(df["high"], df["low"], df["close"], length=14)["ADX_14"]
     df["VolumeChange"] = df["volume"].pct_change().fillna(0)
     macd = ta.macd(df["close"])
     df["MACD_Hist"] = macd["MACDh_12_26_9"]
@@ -51,6 +55,7 @@ def calculate_indicators(df):
     df["BB_upper"] = bb["BBU_20_2.0"]
 
     return df
+
 
 def run_backtest():
     global primary_trades, primary_wins, bb_trades, bb_wins, total_pnl
@@ -93,12 +98,9 @@ def run_backtest():
 
             # Primary strategy
             if 35 <= row["RSI"] <= 70 and row["EMA10"] > row["EMA21"] and row["supertrend"] == 1:
-                indicator_pass_counts["RSI"] += 1
-                indicator_pass_counts["EMA"] += 1
-                indicator_pass_counts["Supertrend"] += 1
-
+                # Prepare AI input
                 features_df = pd.DataFrame([[
-                    row["RSI"], row["ATR"], row["ADX"] if "ADX" in row else 0,
+                    row["RSI"], row["ATR"], row["ADX"],
                     row["EMA10"], row["EMA21"], row["VolumeChange"]
                 ]], columns=["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"])
 
@@ -108,9 +110,14 @@ def run_backtest():
                     skip_reasons["AI score fail"] += 1
                     continue
 
-                if ai_score < 0.25:
+                if ai_score < AI_SCORE_THRESHOLD:
                     skip_reasons["AI score fail"] += 1
                     continue
+
+                # Count only when trade triggered
+                indicator_pass_counts["RSI"] += 1
+                indicator_pass_counts["EMA"] += 1
+                indicator_pass_counts["Supertrend"] += 1
                 indicator_pass_counts["AI_Score"] += 1
 
                 entry_price = row["close"]
@@ -119,28 +126,35 @@ def run_backtest():
                 target_price = entry_price * (1 + TARGET_PROFIT_PCT)
                 trailing_sl = entry_price - TRAILING_SL_MULTIPLIER * atr_value
 
+                # Look forward for exit
                 for j in range(i + 1, len(df)):
                     future_price = df.iloc[j]["close"]
+                    trade_exit_date = df.iloc[j]["date"]
 
                     if future_price <= stop_loss_price:
                         primary_trades += 1
                         exit_reasons["Fixed SL breach (-3%)"] += 1
-                        if future_price > entry_price:
-                            primary_wins += 1
+                        pnl = future_price - entry_price
+                        total_pnl += pnl
+                        trade_log.append([trade_exit_date, symbol, entry_price, future_price, ai_score, "SL", pnl])
                         break
 
                     if future_price >= target_price:
                         primary_trades += 1
-                        exit_reasons["Profit >=8% hit"] += 1
                         primary_wins += 1
+                        exit_reasons["Profit >=8% hit"] += 1
+                        pnl = future_price - entry_price
+                        total_pnl += pnl
+                        trade_log.append([trade_exit_date, symbol, entry_price, future_price, ai_score, "Target", pnl])
                         break
 
                     trailing_sl = max(trailing_sl, future_price - TRAILING_SL_MULTIPLIER * atr_value)
                     if future_price <= trailing_sl:
                         primary_trades += 1
                         exit_reasons["Trailing SL breached"] += 1
-                        if future_price > entry_price:
-                            primary_wins += 1
+                        pnl = future_price - entry_price
+                        total_pnl += pnl
+                        trade_log.append([trade_exit_date, symbol, entry_price, future_price, ai_score, "Trailing SL", pnl])
                         break
 
             # Fallback BB strategy
@@ -152,14 +166,21 @@ def run_backtest():
 
                 for j in range(i + 1, len(df)):
                     future_price = df.iloc[j]["close"]
+                    trade_exit_date = df.iloc[j]["date"]
 
                     if future_price <= stop_loss_price:
                         exit_reasons["BB SL"] += 1
+                        pnl = future_price - entry_price
+                        total_pnl += pnl
+                        trade_log.append([trade_exit_date, symbol, entry_price, future_price, 0, "BB SL", pnl])
                         break
 
                     if future_price >= target_price:
                         bb_wins += 1
                         exit_reasons["BB Target"] += 1
+                        pnl = future_price - entry_price
+                        total_pnl += pnl
+                        trade_log.append([trade_exit_date, symbol, entry_price, future_price, 0, "BB Target", pnl])
                         break
 
     # === Safe division to avoid ZeroDivisionError ===
@@ -188,6 +209,11 @@ def run_backtest():
     print("\nExit Reason Counts:")
     for k, v in exit_reasons.items():
         print(f"{k}: {v}")
+
+    # Save trades
+    pd.DataFrame(trade_log, columns=["Exit_Date", "Symbol", "Entry_Price", "Exit_Price", "AI_Score", "Exit_Reason", "PnL"]).to_csv(CSV_TRADE_LOG, index=False)
+    print(f"\n✅ Trade log saved to {CSV_TRADE_LOG}")
+
 
 if __name__ == "__main__":
     run_backtest()

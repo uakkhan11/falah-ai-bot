@@ -100,9 +100,14 @@ def run_backtest():
                 indicator_pass_counts["EMA"] += 1
                 indicator_pass_counts["Supertrend"] += 1
 
-                features_df = pd.DataFrame([[row["rsi"], row["atr"], row["adx"] if "adx" in df.columns else 0,
-                             row["ema10"], row["ema21"], row["volumechange"]]],
-                           columns=["rsi", "atr", "adx", "ema10", "ema21", "volumechange"])
+               features_df = pd.DataFrame([[ 
+                    row["rsi"], 
+                    row["atr"], 
+                    row["adx"] if "adx" in df.columns else 0,
+                    row["ema10"], 
+                    row["ema21"], 
+                    row["volumechange"]
+                ]], columns=["rsi", "atr", "adx", "ema10", "ema21", "volumechange"])
 
                 try:
                     ai_score = model.predict_proba(features_df)[0][1]

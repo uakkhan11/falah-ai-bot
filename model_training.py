@@ -31,7 +31,7 @@ features = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"]
 df = df.dropna(subset=features + ["Outcome"])
 
 # Step 5: Filter for last 2 years
-df["date"] = pd.to_datetime(df["date"])
+df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)  # Remove timezone
 cutoff = pd.to_datetime("today") - pd.Timedelta(days=730)
 df_recent = df[df["date"] >= cutoff]
 

@@ -10,6 +10,7 @@ import pandas_ta as ta
 # Step 1: Load historical data
 # ======================
 df = pd.read_csv("your_training_data.csv")
+df.columns = [c.lower() for c in df.columns]
 
 # ======================
 # Step 2: Calculate Technical Indicators

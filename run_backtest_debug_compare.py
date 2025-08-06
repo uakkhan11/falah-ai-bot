@@ -33,13 +33,13 @@ exit_reasons = {
 }
 
 def calculate_indicators(df):
-    df["RSI"] = ta.rsi(df["close"], length=14)
-    df["EMA10"] = ta.ema(df["close"], length=10)
-    df["EMA21"] = ta.ema(df["close"], length=21)
+    df["rsi"] = ta.rsi(df["close"], length=14)
+    df["ema10"] = ta.ema(df["close"], length=10)
+    df["ema21"] = ta.ema(df["close"], length=21)
     st = ta.supertrend(df["high"], df["low"], df["close"], length=10, multiplier=3.0)
     df["supertrend"] = st["SUPERTd_10_3.0"]
-    df["ATR"] = ta.atr(df["high"], df["low"], df["close"], length=14)
-    df["VolumeChange"] = df["volume"].pct_change().fillna(0)
+    df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+    df["volumechange"] = df["volume"].pct_change().fillna(0)
     bb = ta.bbands(df["close"], length=20, std=2)
     df["BB_lower"] = bb["BBL_20_2.0"]
     df["BB_upper"] = bb["BBU_20_2.0"]
@@ -101,8 +101,8 @@ def run_backtest():
                 indicator_pass_counts["Supertrend"] += 1
 
                 features_df = pd.DataFrame([[row["rsi"], row["atr"], row["adx"] if "adx" in df.columns else 0,
-                                             row["ema10"], row["ema21"], row["volumechange"]]],
-                                           columns=["rsi", "atr", "adx", "ema10", "ema21", "volumechange"])
+                             row["ema10"], row["ema21"], row["volumechange"]]],
+                           columns=["rsi", "atr", "adx", "ema10", "ema21", "volumechange"])
 
                 try:
                     ai_score = model.predict_proba(features_df)[0][1]

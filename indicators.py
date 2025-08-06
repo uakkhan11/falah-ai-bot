@@ -2,6 +2,7 @@
 
 import pandas as pd
 import numpy as np
+import pandas_ta as ta
 from ta.trend import EMAIndicator
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
@@ -40,20 +41,26 @@ def calculate_bollinger_bands(close_series, window=20, num_std_dev=2):
     upper_band = middle_band + (num_std_dev * std)
     lower_band = middle_band - (num_std_dev * std)
     return upper_band, middle_band, lower_band
-    
-# --- Composite Indicator Additions (used in batch) ---
+
+# --- Composite Indicator Additions (full set from both versions) ---
 
 def add_all_indicators(df):
-    df['EMA10'] = EMAIndicator(close=df['close'], window=10).ema_indicator()
-    df['EMA21'] = EMAIndicator(close=df['close'], window=21).ema_indicator()
-    df['RSI'] = RSIIndicator(close=df['close'], window=14).rsi()
-    df['ATR'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
+    # Pandas TA core indicators
+    df["RSI"] = ta.rsi(df["close"], length=14)
+    df["EMA10"] = ta.ema(df["close"], length=10)
+    df["EMA21"] = ta.ema(df["close"], length=21)
+    df["ATR"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+    df["MACD"] = ta.macd(df["close"])["MACDh_12_26_9"]
+    df["Stochastic"] = ta.stoch(df["high"], df["low"], df["close"])["STOCHK_14_3"]
+    df["VolumeChange"] = df["volume"].pct_change().fillna(0)
+
+    # TA library extras
     df['OBV'] = OnBalanceVolumeIndicator(close=df['close'], volume=df['volume']).on_balance_volume()
 
-    # Add Bollinger Bands
-    middle, upper, lower = calculate_bollinger_bands(df, period=20, std_dev=2)
-    df['BB_Middle'] = middle
+    # Bollinger Bands
+    upper, middle, lower = calculate_bollinger_bands(df['close'], window=20, num_std_dev=2)
     df['BB_Upper'] = upper
+    df['BB_Middle'] = middle
     df['BB_Lower'] = lower
 
     return df
@@ -80,8 +87,8 @@ def detect_bullish_pivot(df, window=3):
     return False
 
 def detect_macd_bullish_cross(df):
-    if "macd" in df.columns and "macd_signal" in df.columns:
-        macd = df["macd"].tail(5).values
+    if "MACD" in df.columns and "macd_signal" in df.columns:
+        macd = df["MACD"].tail(5).values
         signal = df["macd_signal"].tail(5).values
         for i in range(1, len(macd)):
             if macd[i - 1] < signal[i - 1] and macd[i] > signal[i]:

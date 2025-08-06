@@ -9,27 +9,36 @@ import pandas_ta as ta
 HISTORICAL_PATH = "/root/falah-ai-bot/historical_data"
 MODEL_PATH = "/root/falah-ai-bot/model.pkl"
 PERIOD_YEARS = 2
-TARGET_PROFIT_PCT = 0.08
-STOP_LOSS_PCT = 0.03
+TARGET_PROFIT_PCT = 0.08   # 8% target
+STOP_LOSS_PCT = 0.03       # 3% fixed SL
 TRAILING_SL_MULTIPLIER = 1.5
-POSITION_SIZE = 10000  # ₹ per trade
-BROKERAGE_PCT = 0.001  # 0.1%
-SLIPPAGE_PCT = 0.0005  # 0.05%
+START_CAPITAL = 100000
 
 # Load AI model
 model = joblib.load(MODEL_PATH)
 
 # Summary stats
-overall_results = {
-    "primary_trades": 0, "primary_wins": 0,
-    "bb_trades": 0, "bb_wins": 0,
-    "capital": 100000, "pnl": 0
-}
+primary_trades = 0
+primary_wins = 0
+bb_trades = 0
+bb_wins = 0
+total_pnl = 0
+capital = START_CAPITAL
+
 indicator_pass_counts = {"RSI": 0, "EMA": 0, "Supertrend": 0, "AI_Score": 0}
-skip_reasons = {"AI score fail": 0, "EMA fail": 0, "RSI fail": 0, "Supertrend fail": 0, "Insufficient data": 0}
+skip_reasons = {
+    "AI score fail": 0,
+    "EMA fail": 0,
+    "RSI fail": 0,
+    "Supertrend fail": 0,
+    "Insufficient data": 0
+}
 exit_reasons = {
-    "Fixed SL": 0, "Target": 0, "Trailing SL": 0,
-    "BB SL": 0, "BB Target": 0
+    "Fixed SL breach (-3%)": 0,
+    "Profit >=8% hit": 0,
+    "Trailing SL breached": 0,
+    "BB SL": 0,
+    "BB Target": 0
 }
 
 def calculate_indicators(df):
@@ -40,14 +49,19 @@ def calculate_indicators(df):
     df["supertrend"] = st["SUPERTd_10_3.0"]
     df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
     df["volumechange"] = df["volume"].pct_change().fillna(0)
+
+    macd = ta.macd(df["close"])
+    df["macd_hist"] = macd["MACDh_12_26_9"]
+
     bb = ta.bbands(df["close"], length=20, std=2)
-    df["BB_lower"] = bb["BBL_20_2.0"]
-    df["BB_upper"] = bb["BBU_20_2.0"]
+    df["bb_lower"] = bb["BBL_20_2.0"]
+    df["bb_upper"] = bb["BBU_20_2.0"]
     return df
 
 def run_backtest():
+    global primary_trades, primary_wins, bb_trades, bb_wins, total_pnl, capital
+
     cutoff_date = datetime.now(pytz.timezone("Asia/Kolkata")) - timedelta(days=PERIOD_YEARS * 365)
-    start_capital = overall_results["capital"]
 
     for file in os.listdir(HISTORICAL_PATH):
         if not file.endswith(".csv"):
@@ -56,11 +70,12 @@ def run_backtest():
         symbol = file.replace(".csv", "")
         try:
             df = pd.read_csv(os.path.join(HISTORICAL_PATH, file))
-        except:
+        except Exception:
             skip_reasons["Insufficient data"] += 1
             continue
 
-        if "date" not in df.columns:
+        df.columns = [c.lower() for c in df.columns]  # ensure lowercase
+        if "date" not in df.columns or "close" not in df.columns:
             skip_reasons["Insufficient data"] += 1
             continue
 
@@ -69,8 +84,8 @@ def run_backtest():
             df["date"] = df["date"].dt.tz_localize("Asia/Kolkata", nonexistent="NaT")
         else:
             df["date"] = df["date"].dt.tz_convert("Asia/Kolkata")
-        df = df[df["date"] >= cutoff_date]
 
+        df = df[df["date"] >= cutoff_date]
         if len(df) < 50:
             skip_reasons["Insufficient data"] += 1
             continue
@@ -78,40 +93,23 @@ def run_backtest():
         df = calculate_indicators(df)
         df.dropna(inplace=True)
 
-        symbol_stats = {
-            "primary_trades": 0, "primary_wins": 0,
-            "bb_trades": 0, "bb_wins": 0,
-            "skip": skip_reasons.copy(),
-            "exit": exit_reasons.copy(),
-            "pnl": 0
-        }
-
-        open_trade = False
-
         for i in range(len(df)):
-            if open_trade:
-                continue  # only one active trade at a time per symbol
-
             row = df.iloc[i]
 
-            # === Primary Strategy ===
+            # PRIMARY STRATEGY
             if 35 <= row["rsi"] <= 70 and row["ema10"] > row["ema21"] and row["supertrend"] == 1:
                 indicator_pass_counts["RSI"] += 1
                 indicator_pass_counts["EMA"] += 1
                 indicator_pass_counts["Supertrend"] += 1
 
-               features_df = pd.DataFrame([[ 
-                    row["rsi"], 
-                    row["atr"], 
-                    row["adx"] if "adx" in df.columns else 0,
-                    row["ema10"], 
-                    row["ema21"], 
-                    row["volumechange"]
+                features_df = pd.DataFrame([[
+                    row.get("rsi", 0), row.get("atr", 0), row.get("adx", 0),
+                    row.get("ema10", 0), row.get("ema21", 0), row.get("volumechange", 0)
                 ]], columns=["rsi", "atr", "adx", "ema10", "ema21", "volumechange"])
 
                 try:
                     ai_score = model.predict_proba(features_df)[0][1]
-                except:
+                except Exception:
                     skip_reasons["AI score fail"] += 1
                     continue
 
@@ -121,8 +119,7 @@ def run_backtest():
                 indicator_pass_counts["AI_Score"] += 1
 
                 entry_price = row["close"]
-                qty = POSITION_SIZE / entry_price
-                atr_value = row["ATR"]
+                atr_value = row["atr"]
                 stop_loss_price = entry_price * (1 - STOP_LOSS_PCT)
                 target_price = entry_price * (1 + TARGET_PROFIT_PCT)
                 trailing_sl = entry_price - TRAILING_SL_MULTIPLIER * atr_value
@@ -131,79 +128,71 @@ def run_backtest():
                     future_price = df.iloc[j]["close"]
 
                     if future_price <= stop_loss_price:
-                        pnl = (future_price - entry_price) * qty
-                        pnl -= POSITION_SIZE * (BROKERAGE_PCT + SLIPPAGE_PCT) * 2
-                        overall_results["pnl"] += pnl
-                        symbol_stats["pnl"] += pnl
-                        symbol_stats["primary_trades"] += 1
-                        exit_reasons["Fixed SL"] += 1
+                        primary_trades += 1
+                        capital -= STOP_LOSS_PCT * capital / 100
+                        exit_reasons["Fixed SL breach (-3%)"] += 1
                         break
 
                     if future_price >= target_price:
-                        pnl = (future_price - entry_price) * qty
-                        pnl -= POSITION_SIZE * (BROKERAGE_PCT + SLIPPAGE_PCT) * 2
-                        overall_results["pnl"] += pnl
-                        symbol_stats["pnl"] += pnl
-                        symbol_stats["primary_trades"] += 1
-                        symbol_stats["primary_wins"] += 1
-                        exit_reasons["Target"] += 1
+                        primary_trades += 1
+                        primary_wins += 1
+                        capital += TARGET_PROFIT_PCT * capital / 100
+                        exit_reasons["Profit >=8% hit"] += 1
                         break
 
                     trailing_sl = max(trailing_sl, future_price - TRAILING_SL_MULTIPLIER * atr_value)
                     if future_price <= trailing_sl:
-                        pnl = (future_price - entry_price) * qty
-                        pnl -= POSITION_SIZE * (BROKERAGE_PCT + SLIPPAGE_PCT) * 2
-                        overall_results["pnl"] += pnl
-                        symbol_stats["pnl"] += pnl
-                        symbol_stats["primary_trades"] += 1
-                        exit_reasons["Trailing SL"] += 1
+                        primary_trades += 1
+                        exit_reasons["Trailing SL breached"] += 1
                         break
 
-                open_trade = True
-
-            # === Fallback BB Strategy ===
-            elif row["close"] <= row["BB_lower"]:
-                qty = POSITION_SIZE / row["close"]
-                stop_loss_price = row["BB_lower"] * 0.98
-                target_price = row["BB_upper"]
+            # BB STRATEGY
+            elif row["close"] <= row["bb_lower"]:
+                bb_trades += 1
+                entry_price = row["close"]
+                stop_loss_price = row["bb_lower"] * 0.98
+                target_price = row["bb_upper"]
 
                 for j in range(i + 1, len(df)):
                     future_price = df.iloc[j]["close"]
 
                     if future_price <= stop_loss_price:
-                        pnl = (future_price - row["close"]) * qty
-                        pnl -= POSITION_SIZE * (BROKERAGE_PCT + SLIPPAGE_PCT) * 2
-                        overall_results["pnl"] += pnl
-                        symbol_stats["pnl"] += pnl
-                        symbol_stats["bb_trades"] += 1
                         exit_reasons["BB SL"] += 1
                         break
 
                     if future_price >= target_price:
-                        pnl = (future_price - row["close"]) * qty
-                        pnl -= POSITION_SIZE * (BROKERAGE_PCT + SLIPPAGE_PCT) * 2
-                        overall_results["pnl"] += pnl
-                        symbol_stats["pnl"] += pnl
-                        symbol_stats["bb_trades"] += 1
-                        symbol_stats["bb_wins"] += 1
+                        bb_wins += 1
                         exit_reasons["BB Target"] += 1
                         break
 
-                open_trade = True
+    # === SUMMARY ===
+    total_trades = primary_trades + bb_trades
+    total_wins = primary_wins + bb_wins
+    total_pnl = capital - START_CAPITAL
 
-        # Micro-summary for this symbol
-        print(f"\n📌 {symbol} Summary:")
-        print(f" Primary Trades: {symbol_stats['primary_trades']} | Wins: {symbol_stats['primary_wins']}")
-        print(f" BB Trades: {symbol_stats['bb_trades']} | Wins: {symbol_stats['bb_wins']}")
-        print(f" PnL: ₹{symbol_stats['pnl']:.2f}")
+    primary_win_pct = (primary_wins / primary_trades * 100) if primary_trades > 0 else 0
+    bb_win_pct = (bb_wins / bb_trades * 100) if bb_trades > 0 else 0
+    overall_win_pct = (total_wins / total_trades * 100) if total_trades > 0 else 0
 
-    # Overall summary
-    end_capital = start_capital + overall_results["pnl"]
-    print("\n====== OVERALL SUMMARY ======")
-    print(f"Start Capital: ₹{start_capital:,.2f}")
-    print(f"End Capital: ₹{end_capital:,.2f}")
-    print(f"Net Profit: ₹{overall_results['pnl']:,.2f}")
-    print(f"Total Trades: {overall_results['primary_trades'] + overall_results['bb_trades']}")
+    print(f"Start Capital: ₹{START_CAPITAL:,.2f}")
+    print(f"End Capital: ₹{capital:,.2f}")
+    print(f"Net Profit: ₹{total_pnl:,.2f}")
+    print(f"Total Trades: {total_trades}")
+    print(f"Primary Trades: {primary_trades} | Wins: {primary_wins} ({primary_win_pct:.2f}%)")
+    print(f"BB Trades: {bb_trades} | Wins: {bb_wins} ({bb_win_pct:.2f}%)")
+    print(f"Overall Win %: {overall_win_pct:.2f}%\n")
+
+    print("Indicator Pass Counts:")
+    for k, v in indicator_pass_counts.items():
+        print(f"{k}: {v}")
+
+    print("\nSkip Reasons:")
+    for k, v in skip_reasons.items():
+        print(f"{k}: {v}")
+
+    print("\nExit Reasons:")
+    for k, v in exit_reasons.items():
+        print(f"{k}: {v}")
 
 if __name__ == "__main__":
     run_backtest()

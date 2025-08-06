@@ -247,23 +247,34 @@ if st.button("📥 Fetch Now"):
         st.success("✅ Data fetched.")
     except Exception as e:
         st.error(f"❌ {e}")
-# ========== Main.py ==========
+        
+# ========== Model run ==========
+
 import subprocess
 import streamlit as st
+import os
 
-st.sidebar.markdown("## 🔄 System Control")
+st.markdown("## 🤖 AI Model Training")
 
-if st.sidebar.button("📊 Train Model & Start Bot"):
-    st.info("Starting AI Trading Bot...")
-    subprocess.Popen(["python3", "main.py"])
-    st.success("Bot started in background!")
+if st.button("🔄 Retrain AI Model"):
+    with st.spinner("Training AI Model... Please wait, this may take a few minutes."):
+        try:
+            # Run the training script and capture output
+            process = subprocess.Popen(
+                ["python3", "model_training_auto.py"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            stdout, stderr = process.communicate()
 
-if st.sidebar.button("📈 Train Model Only"):
-    st.info("Training model...")
-    subprocess.Popen(["python3", "model_training.py"])
-    st.success("Model training started!")
+            # Show the output logs inside Streamlit
+            st.text_area("Training Logs", stdout + "\n" + stderr, height=400)
 
-if st.sidebar.button("👀 Start Monitoring Only"):
-    st.info("Starting monitoring...")
-    subprocess.Popen(["python3", "monitor.py"])
-    st.success("Monitoring started in background!")
+            if process.returncode == 0:
+                st.success("✅ Model retrained successfully! model.pkl updated.")
+            else:
+                st.error("❌ Training failed. Check logs above.")
+        except Exception as e:
+            st.error(f"Error while training: {e}")
+

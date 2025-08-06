@@ -7,18 +7,11 @@ import datetime
 import argparse
 import pandas as pd
 import pandas_ta as ta
-import gspread
 from kiteconnect import KiteConnect
 from oauth2client.service_account import ServiceAccountCredentials
+from trade_helpers import (compute_trailing_sl, send_telegram, log_trade_to_sheet, is_market_open)
 
-from trade_helpers import (
-    compute_trailing_sl,
-    send_telegram,
-    log_trade_to_sheet,
-    is_market_open
-)
-
-# ✅ Load credentials
+# Load credentials
 with open("/root/falah-ai-bot/secrets.json") as f:
     secrets = json.load(f)
 
@@ -36,17 +29,15 @@ sheet = gc.open_by_key(SPREADSHEET_KEY)
 log_sheet = sheet.worksheet("TradeLog")
 monitor_sheet = sheet.worksheet("MonitoredStocks")
 
-
 def monitor_positions(loop=True):
     send_telegram(BOT_TOKEN, CHAT_ID, "✅ Falāh Monitoring Started ✅")
     equity_peak = None
-
     while True:
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         positions = kite.positions()["net"]
         holdings = kite.holdings()
 
-        # ✅ Merge holdings + positions
+        # Merge holdings + positions
         merged_positions = {}
         for h in holdings:
             qty = h["quantity"] + h["t1_quantity"]
@@ -76,12 +67,9 @@ def monitor_positions(loop=True):
         if equity_peak is None: equity_peak = portfolio_value
         if portfolio_value > equity_peak: equity_peak = portfolio_value
         drawdown_pct = (equity_peak - portfolio_value) / equity_peak * 100
-
         print(f"\n{timestamp} ✅ Monitoring {len(merged_positions)} stocks | Drawdown: {drawdown_pct:.2f}%")
 
-        all_rows = []
-
-        # ✅ Max Drawdown Full Exit
+        # Max Drawdown Full Exit
         if drawdown_pct >= 7:
             send_telegram(BOT_TOKEN, CHAT_ID, f"❌ Drawdown {drawdown_pct:.2f}% triggered. Full Exit initiated.")
             for symbol, pos in merged_positions.items():
@@ -92,7 +80,7 @@ def monitor_positions(loop=True):
                 )
             break
 
-        # ✅ Individual Monitoring
+        # Individual Monitoring
         for symbol, pos in merged_positions.items():
             qty, avg_price, exchange = pos["quantity"], pos["average_price"], pos["exchange"]
             try:
@@ -102,14 +90,13 @@ def monitor_positions(loop=True):
 
             print(f"\n▶️ {symbol} | Qty:{qty} | LTP:{ltp:.2f}")
 
-            # ✅ Load historical data
+            # Load historical data
             try:
                 df = pd.read_csv(f"/root/falah-ai-bot/historical_data/{symbol}.csv")
             except FileNotFoundError:
                 print(f"⚠️ No data for {symbol}, skipping."); continue
 
             df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
-
             trailing_sl_atr = ltp - 1.5 * df["atr"].iloc[-1]
             trailing_sl_recent = df["low"].rolling(7).min().iloc[-1]
             trailing_sl = max(trailing_sl_atr, trailing_sl_recent)
@@ -117,31 +104,21 @@ def monitor_positions(loop=True):
             print(f"🔹 Trailing SL: {trailing_sl:.2f} | ATR SL: {trailing_sl_atr:.2f} | Recent Low SL: {trailing_sl_recent:.2f}")
 
             ai_score, reasons = 0, []
-
             if ltp < avg_price * 0.98:
                 ai_score += 25; reasons.append("Fixed SL breach (-2%)")
-
             if ltp < trailing_sl:
                 ai_score += 20; reasons.append("Trailing SL breached")
-
             if ltp >= avg_price * 1.12:
                 ai_score += 10; reasons.append("Profit >=12% hit")
 
             print(f"⚡ AI Score: {ai_score} | Reasons: {', '.join(reasons) or 'Holding'}")
 
-            # ✅ Exit Logic
+            # Exit Logic
             exit_qty, exit_reason = 0, ""
             if ai_score >= 30:
                 exit_qty, exit_reason = qty, "Full Exit"
             elif 15 <= ai_score < 30:
                 exit_qty, exit_reason = qty // 2, "Partial Exit"
-
-            pnl = (ltp - avg_price) * exit_qty if exit_qty > 0 else 0
-
-            all_rows.append([
-                timestamp, symbol, qty, avg_price, ltp,
-                trailing_sl, ai_score, ", ".join(reasons) or "Holding", pnl
-            ])
 
             if exit_qty > 0 and is_market_open():
                 kite.place_order(
@@ -150,18 +127,11 @@ def monitor_positions(loop=True):
                     quantity=exit_qty, order_type=kite.ORDER_TYPE_MARKET, product=kite.PRODUCT_CNC
                 )
                 send_telegram(BOT_TOKEN, CHAT_ID,
-                    f"⚠️ {exit_reason}: {symbol} {exit_qty} qty exited | PnL ₹{pnl:.2f}")
-                log_trade_to_sheet(
-                    log_sheet, timestamp, symbol, exit_qty, avg_price, ltp,
-                    "", "", "", ai_score, "SELL", exit_reason, pnl, 1 if pnl >= 0 else 0
+                    f"⚠️ {exit_reason}: {symbol} {exit_qty} qty exited | PnL ₹{(ltp - avg_price) * exit_qty:.2f}"
                 )
-
-        if all_rows:
-            monitor_sheet.append_rows(all_rows, value_input_option="USER_ENTERED")
 
         if not loop: break
         time.sleep(900)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

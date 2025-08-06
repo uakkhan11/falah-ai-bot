@@ -25,7 +25,7 @@ df["Stochastic"] = ta.stoch(df["high"], df["low"], df["close"])["STOCHK_14_3"]
 df["VolumeChange"] = df["volume"].pct_change().fillna(0)
 
 # ADX calculation
-df["ADX"] = ta.adx(df["high"], df["low"], df["close"])["ADX_14"]
+df.rename(columns={"atr": "ATR", "rsi": "RSI", "ema10": "EMA10", "ema21": "EMA21", "volumechange": "VolumeChange", "adx": "ADX"}, inplace=True)
 
 # ======================
 # Step 3: Define Outcome (Next 10-day +5% target)
@@ -36,7 +36,7 @@ df['Outcome'] = (df['Future_High'] >= df['close'] * 1.05).astype(int)
 # ======================
 # Step 4: Feature List
 # ======================
-features = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange", "MACD", "Stochastic"]
+features = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"]
 
 # Remove missing data
 df = df.dropna(subset=features + ["Outcome"])

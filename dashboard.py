@@ -247,3 +247,23 @@ if st.button("📥 Fetch Now"):
         st.success("✅ Data fetched.")
     except Exception as e:
         st.error(f"❌ {e}")
+# ========== Main.py ==========
+import subprocess
+import streamlit as st
+
+st.sidebar.markdown("## 🔄 System Control")
+
+if st.sidebar.button("📊 Train Model & Start Bot"):
+    st.info("Starting AI Trading Bot...")
+    subprocess.Popen(["python3", "main.py"])
+    st.success("Bot started in background!")
+
+if st.sidebar.button("📈 Train Model Only"):
+    st.info("Training model...")
+    subprocess.Popen(["python3", "model_training.py"])
+    st.success("Model training started!")
+
+if st.sidebar.button("👀 Start Monitoring Only"):
+    st.info("Starting monitoring...")
+    subprocess.Popen(["python3", "monitor.py"])
+    st.success("Monitoring started in background!")

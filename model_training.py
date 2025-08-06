@@ -1,71 +1,99 @@
-# model_training_auto.py
+# model_training.py
 
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score, GridSearchCV
 import joblib
+import pandas_ta as ta
 
+# ======================
 # Step 1: Load historical data
+# ======================
 df = pd.read_csv("your_training_data.csv")
 df.columns = [c.lower() for c in df.columns]
 print("CSV Columns:", df.columns.tolist())
 
-# Step 2: Rename columns to match model feature names
-df.rename(columns={
-    "rsi": "RSI",
-    "atr": "ATR",
-    "adx": "ADX",
-    "ema10": "EMA10",
-    "ema21": "EMA21",
-    "volumechange": "VolumeChange"
-}, inplace=True)
+# ======================
+# Step 2: Calculate Technical Indicators (if missing)
+# ======================
+if "rsi" not in df.columns:
+    df["rsi"] = ta.rsi(df["close"], length=14)
+if "ema10" not in df.columns:
+    df["ema10"] = ta.ema(df["close"], length=10)
+if "ema21" not in df.columns:
+    df["ema21"] = ta.ema(df["close"], length=21)
+if "atr" not in df.columns:
+    df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+if "adx" not in df.columns:
+    df["adx"] = ta.adx(df["high"], df["low"], df["close"], length=14)["ADX_14"]
+if "volumechange" not in df.columns:
+    df["volumechange"] = df["volume"].pct_change().fillna(0)
 
-# Step 3: Define Outcome (Next 10-day +5% target)
-df['Future_High'] = df['close'].rolling(window=10, min_periods=1).max().shift(-1)
-df['Outcome'] = (df['Future_High'] >= df['close'] * 1.05).astype(int)
+# ======================
+# Step 3: Define Outcome
+# ======================
+df['future_high'] = df['close'].rolling(window=10, min_periods=1).max().shift(-1)
+df['outcome'] = (df['future_high'] >= df['close'] * 1.05).astype(int)
 
+# ======================
 # Step 4: Feature List
-features = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"]
+# ======================
+features = ["rsi", "atr", "adx", "ema10", "ema21", "volumechange"]
 
 # Remove missing data
-df = df.dropna(subset=features + ["Outcome"])
+df = df.dropna(subset=features + ["outcome"])
 
-# Step 5: Filter for last 2 years
-df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)  # Remove timezone
-cutoff = pd.to_datetime("today") - pd.Timedelta(days=730)
+# ======================
+# Step 5: Filter last 2 years
+# ======================
+df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+cutoff = pd.to_datetime("today").tz_localize(None) - pd.Timedelta(days=730)
 df_recent = df[df["date"] >= cutoff]
 
+# ======================
 # Step 6: Prepare Inputs
+# ======================
 X = df_recent[features]
-y = df_recent["Outcome"]
+y = df_recent["outcome"]
 
 print(f"✅ Dataset ready: {X.shape[0]} samples | Positives: {y.sum()} | Negatives: {(y==0).sum()}")
 
-# Step 7: Hyperparameter Tuning with GridSearchCV
+# ======================
+# Step 7: Hyperparameter tuning (FAST - 20% sample)
+# ======================
+df_sample = df_recent.sample(frac=0.2, random_state=42)
+X_sample = df_sample[features]
+y_sample = df_sample["outcome"]
+
 param_grid = {
     'n_estimators': [100, 200],
-    'max_depth': [None, 10, 20],
+    'max_depth': [None, 10],
     'min_samples_split': [2, 5],
-    'class_weight': ['balanced', None]
+    'class_weight': ['balanced']
 }
 
-print("🔍 Running GridSearchCV for best RandomForest parameters...")
-grid_search = GridSearchCV(RandomForestClassifier(random_state=42), param_grid, cv=5, n_jobs=-1)
-grid_search.fit(X, y)
+print("🔍 Running GridSearchCV on 20% sample...")
+grid_search = GridSearchCV(RandomForestClassifier(random_state=42), param_grid, cv=3, n_jobs=-1)
+grid_search.fit(X_sample, y_sample)
+best_params = grid_search.best_params_
+print(f"✅ Best Params: {best_params}")
 
-model = grid_search.best_estimator_
-print(f"✅ Best Params: {grid_search.best_params_}")
+# ======================
+# Step 8: Train FINAL model on FULL data
+# ======================
+final_model = RandomForestClassifier(**best_params, random_state=42)
+final_model.fit(X, y)
 
-# Step 8: Cross-validation Accuracy
-scores = cross_val_score(model, X, y, cv=5)
+# Cross-validation accuracy
+scores = cross_val_score(final_model, X, y, cv=5)
 print(f"✅ Cross-Validation Accuracy: {scores.mean():.4f}")
 
-# Step 9: Feature Importance
-importances = model.feature_importances_
+# Feature Importance
+importances = final_model.feature_importances_
 print("✅ Feature Importance:")
 for f, imp in zip(features, importances):
     print(f"{f}: {imp:.4f}")
 
-# Step 10: Save Model
-joblib.dump(model, "model.pkl")
+# Save model
+joblib.dump(final_model, "model.pkl")
 print("✅ Final model saved as model.pkl")

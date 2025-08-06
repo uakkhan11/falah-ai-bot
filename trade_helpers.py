@@ -17,15 +17,27 @@ def calculate_atr(df, period=14):
     return atr
 
 # ========================
-# Compute Trailing Stop Loss
+# Compute Trailing Stop Loss (ATR-based or Entry-based)
 # ========================
-def compute_trailing_sl(df, atr_multiplier=1.5, lookback=10):
-    df = df.copy()
-    df.columns = [c.strip().lower() for c in df.columns]
-    atr = calculate_atr(df).iloc[-1]
-    highest_close = df["close"].rolling(lookback).max().iloc[-1]
-    trailing_sl = highest_close - atr * atr_multiplier
-    return round(trailing_sl, 2)
+def compute_trailing_sl(entry_price=None, atr_value=None, df=None, atr_multiplier=1.5, lookback=10):
+    """
+    - If entry_price and atr_value are provided → compute based on them directly
+    - If df is provided → compute ATR and highest close from df
+    """
+    if entry_price is not None and atr_value is not None:
+        # Direct formula version
+        return round(entry_price - (atr_multiplier * atr_value), 2)
+
+    if df is not None:
+        # DataFrame-based version
+        df = df.copy()
+        df.columns = [c.strip().lower() for c in df.columns]
+        atr = calculate_atr(df).iloc[-1]
+        highest_close = df["close"].rolling(lookback).max().iloc[-1]
+        trailing_sl = highest_close - atr * atr_multiplier
+        return round(trailing_sl, 2)
+
+    raise ValueError("Either (entry_price & atr_value) or (df) must be provided to compute trailing SL.")
 
 # ========================
 # Market Hours Check
@@ -53,7 +65,12 @@ def send_telegram(bot_token, chat_id, message):
 # ========================
 # Log Trade to Google Sheet
 # ========================
-def log_trade_to_sheet(log_sheet, timestamp, symbol, qty, ltp, reason, extra=""):
-    log_sheet.append_row([
-        timestamp, symbol, "SELL", qty, ltp, reason, extra
-    ])
+def log_trade_to_sheet(sheet, timestamp, symbol, qty, avg_price, ltp, *args):
+    """
+    - sheet: Google Sheet API object
+    - args: extra fields (e.g., reason, notes, etc.)
+    """
+    try:
+        sheet.append_row([timestamp, symbol, qty, avg_price, ltp] + list(args))
+    except Exception as e:
+        print(f"[Sheet Log Error] {e}")

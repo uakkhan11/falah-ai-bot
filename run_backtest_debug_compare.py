@@ -87,9 +87,11 @@ def run_backtest():
                 row["EMA10"] > row["EMA21"] and 
                 row["supertrend"] == 1):
                 
-                features_df = pd.DataFrame([[row["RSI"], row["ATR"], row.get("ADX", 0),
-                                             row["EMA10"], row["EMA21"], row["VolumeChange"]]],
-                                           columns=["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange"])
+                features_df = pd.DataFrame([[
+                    row["RSI"], row["ATR"], row.get("ADX", 0),
+                    row["EMA10"], row["EMA21"], row["VolumeChange"]
+                ]], columns=["rsi", "atr", "adx", "ema10", "ema21", "volumechange"])
+
                 
                 ai_score = model.predict_proba(features_df)[0][1]
                 if ai_score < 0.25:

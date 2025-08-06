@@ -1,94 +1,79 @@
-# model_training.py
+# model_training_auto.py
 
-from datetime import datetime
-import pytz
-import gspread
-from utils import get_cnc_holdings, send_telegram, analyze_exit_signals
-from indicators import (
-    calculate_atr_trailing_sl,
-    check_supertrend_flip,
-    check_rsi_bearish_divergence,
-    check_vwap_cross,
-)
-from sheets import log_exit_to_sheet
-from holdings_state import load_previous_exits, update_exit_log
+import pandas as pd
+import pandas_ta as ta
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import GridSearchCV
+import joblib
 
-IST = pytz.timezone("Asia/Kolkata")
+# =========================
+# Step 1: Load raw OHLCV data
+# =========================
+df = pd.read_csv("your_training_data.csv")  # Needs columns: date, open, high, low, close, volume
+df["date"] = pd.to_datetime(df["date"])
 
-def monitor_once(kite, token_map, log):
-    now = datetime.now(IST)
-    market_open = now.weekday() < 5 and (
-        (now.hour > 9 or (now.hour == 9 and now.minute >= 15))
-        and (now.hour < 15 or (now.hour == 15 and now.minute < 30))
-    )
-    today_str = now.strftime("%Y-%m-%d")
+# =========================
+# Step 2: Calculate Indicators
+# =========================
+df["RSI"] = ta.rsi(df["close"], length=14)
+df["ATR"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+df["ADX"] = ta.adx(df["high"], df["low"], df["close"], length=14)["ADX_14"]
+df["EMA10"] = ta.ema(df["close"], length=10)
+df["EMA21"] = ta.ema(df["close"], length=21)
+df["VolumeChange"] = df["volume"].pct_change().fillna(0)
+df["MACD"] = ta.macd(df["close"])["MACDh_12_26_9"]
+df["Stochastic"] = ta.stoch(df["high"], df["low"], df["close"])["STOCHK_14_3"]
 
-    try:
-        holdings = get_cnc_holdings(kite)
-    except Exception as e:
-        log(f"❌ Error fetching CNC holdings: {e}")
-        return
+# =========================
+# Step 3: Create Outcome Variable (Next 10-day +5%)
+# =========================
+df['Future_High'] = df['close'].rolling(window=10, min_periods=1).max().shift(-1)
+df['Outcome'] = (df['Future_High'] >= df['close'] * 1.05).astype(int)
 
-    if not holdings:
-        log("❌ No CNC holdings found.")
-        return
+# =========================
+# Step 4: Filter recent 2 years & clean data
+# =========================
+cutoff = pd.to_datetime("today") - pd.Timedelta(days=730)
+df = df[df["date"] >= cutoff]
 
-    exited = load_previous_exits("/root/falah-ai-bot/exited_stocks.json")
-    if not isinstance(exited, dict):
-        log("⚠️ exited_stocks.json invalid format, resetting.")
-        exited = {}
+features = ["RSI", "ATR", "ADX", "EMA10", "EMA21", "VolumeChange", "MACD", "Stochastic"]
+df = df.dropna(subset=features + ["Outcome"])
 
-    gc = gspread.service_account(filename="/root/falah-credentials.json")
-    sheet = gc.open_by_key("1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c")
-    monitor_tab = sheet.worksheet("MonitoredStocks")
-    existing_rows = monitor_tab.get_all_records()
+# =========================
+# Step 5: Prepare Inputs
+# =========================
+X = df[features]
+y = df["Outcome"]
 
-    for stock in holdings:
-        symbol = stock.get("tradingsymbol") or stock.get("symbol")
-        quantity = stock.get("quantity")
-        avg_price = stock.get("average_price")
+print(f"✅ Dataset ready: {X.shape[0]} samples | Positive cases: {y.sum()} | Negative cases: {(y==0).sum()}")
 
-        # ✅ REST API fetch live price
-        try:
-            ltp_data = kite.ltp(f"NSE:{symbol}")
-            cmp = ltp_data[f"NSE:{symbol}"]["last_price"]
-        except Exception as e:
-            log(f"⚠️ Failed to fetch LTP for {symbol}: {e}")
-            continue
+# =========================
+# Step 6: Hyperparameter Tuning
+# =========================
+param_grid = {
+    'n_estimators': [100, 200],
+    'max_depth': [None, 10, 20],
+    'min_samples_split': [2, 5],
+    'class_weight': ['balanced', None]
+}
 
-        exposure = round(cmp * quantity, 2)
+grid_search = GridSearchCV(RandomForestClassifier(random_state=42), param_grid, cv=5, n_jobs=-1)
+grid_search.fit(X, y)
 
-        if exited.get(symbol) == today_str:
-            log(f"🔁 {symbol} already exited today. Skipping.")
-            continue
+best_model = grid_search.best_estimator_
 
-        sl_price = calculate_atr_trailing_sl(kite, symbol, cmp)
-        sl_hit = sl_price and cmp <= sl_price
-        st_flip_daily = check_supertrend_flip(kite, symbol)
-        st_flip_15m = check_supertrend_flip(kite, symbol)
-        rsi_div = check_rsi_bearish_divergence(kite, symbol)
-        vwap_cross = check_vwap_cross(kite, symbol)
-        ai_exit = analyze_exit_signals(symbol, avg_price, cmp)
+# =========================
+# Step 7: Save Models
+# =========================
+joblib.dump(best_model, "best_model.pkl")
+joblib.dump(best_model, "model.pkl")  # For bot compatibility
 
-        reasons = []
-        if sl_hit:
-            reasons.append(f"ATR SL hit ({sl_price})")
-        if st_flip_daily and st_flip_15m:
-            reasons.append("Supertrend flip")
-        if rsi_div:
-            reasons.append("RSI divergence")
-        if vwap_cross:
-            reasons.append("VWAP cross")
-        if ai_exit:
-            reasons.append("AI exit")
+print("✅ Best model saved as best_model.pkl & model.pkl")
 
-        if reasons:
-            reason_str = ", ".join(reasons)
-            log(f"🚨 Exit triggered for {symbol}: {reason_str}")
-            update_exit_log("/root/falah-ai-bot/exited_stocks.json", symbol)
-            send_telegram(
-                f"🚨 Auto Exit\nSymbol: {symbol}\nPrice: {cmp}\nReasons: {reason_str}"
-            )
-            log_exit_to_sheet("MonitoredStocks", "MonitoredStocks", symbol, cmp, reason_str)
-        else:
-            log(f"✅ {symbol}: Holding.")
+# =========================
+# Step 8: Feature Importance
+# =========================
+importances = best_model.feature_importances_
+print("✅ Feature Importance:")
+for f, imp in zip(features, importances):
+    print(f"{f}: {imp:.4f}")

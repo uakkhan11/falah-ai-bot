@@ -95,7 +95,7 @@ def run_backtest():
             row = df.iloc[i]
 
             # === Primary Strategy ===
-            if 35 <= row["RSI"] <= 70 and row["EMA10"] > row["EMA21"] and row["supertrend"] == 1:
+            if 35 <= row["rsi"] <= 70 and row["ema10"] > row["ema21"] and row["supertrend"] == 1:
                 indicator_pass_counts["RSI"] += 1
                 indicator_pass_counts["EMA"] += 1
                 indicator_pass_counts["Supertrend"] += 1

@@ -6,7 +6,7 @@ from sklearn.model_selection import train_test_split
 import os
 
 # ---- Step 1: Load CSV ----
-filename = "model_training_data.csv"  # or change to your CSV filename
+filename = "training_data.csv"  # or change to your CSV filename
 if not os.path.exists(filename):
     raise FileNotFoundError(f"❌ File '{filename}' not found!")
 

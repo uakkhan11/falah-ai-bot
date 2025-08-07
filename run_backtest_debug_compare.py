@@ -31,8 +31,18 @@ if "date" in df.columns:
 
 # === FEATURE ENGINEERING ===
 # Ensure numeric
-numeric_cols = ["close", "rsi", "atr", "adx", "ema10", "ema21", "volumechange"]
+numeric_cols = ["RSI", "ATR", "ADX"]
 df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
+
+# Drop rows with missing values
+df.dropna(subset=numeric_cols + ["Target"], inplace=True)
+
+# Feature set and target
+features = ["RSI", "ATR", "ADX"]
+target = "Target"
+
+X = df[features]
+y = df[target].astype(int)
 
 # MACD
 macd = ta.macd(df["close"])

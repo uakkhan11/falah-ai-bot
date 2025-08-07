@@ -10,9 +10,11 @@ def generate_features(input_csv, output_csv):
 
     df = pd.read_csv(input_csv)
     numeric_cols = ['close', 'high', 'low', 'volume']
-for col in numeric_cols:
-    df[col] = pd.to_numeric(df[col], errors='coerce')
-    print(f"✅ Loaded: {input_csv} — Columns: {list(df.columns)}")
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    # ✅ Drop rows with missing or invalid numeric data
     df.dropna(subset=numeric_cols, inplace=True)
 
     if "close" not in df.columns:

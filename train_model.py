@@ -58,7 +58,14 @@ df["stoch_d"] = stoch["STOCHd_14_3_3"]
 df["obv"] = ta.obv(df["close"], df["volume"])
 
 # VWAP
-df["vwap"] = ta.vwap(df["high"], df["low"], df["close"], df["volume"])
+if "date" in df.columns:
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df.set_index("date", inplace=True)
+    df["vwap"] = ta.vwap(df["high"], df["low"], df["close"], df["volume"])
+    df.reset_index(inplace=True)
+else:
+    print("⚠️  VWAP not computed — 'date' column not available for datetime index.")
+    df["vwap"] = np.nan
 
 # EMA10 & EMA21
 df["ema10"] = ta.ema(df["close"], length=10)

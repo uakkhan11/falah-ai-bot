@@ -19,7 +19,11 @@ df = pd.read_csv(CSV_PATH)
 print(f"CSV Columns: {df.columns.tolist()}")
 
 # Ensure date parsing
-df["date"] = pd.to_datetime(df["date"], errors="coerce")
+if "date" in df.columns:
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df.dropna(subset=["date"], inplace=True)
+else:
+    print("⚠️  'date' column not found — skipping date processing.")
 df.dropna(subset=["date"], inplace=True)
 
 # Sort by date

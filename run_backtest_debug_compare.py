@@ -24,7 +24,6 @@ if "date" in df.columns:
     df.dropna(subset=["date"], inplace=True)
 else:
     print("⚠️  'date' column not found — skipping date processing.")
-df.dropna(subset=["date"], inplace=True)
 
 # Sort by date
 df.sort_values("date", inplace=True)

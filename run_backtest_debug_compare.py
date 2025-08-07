@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV, train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
@@ -23,10 +23,11 @@ if "date" in df.columns:
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df.dropna(subset=["date"], inplace=True)
 else:
-    print("⚠️  'date' column not found — skipping date processing.")
+    print("\u26a0\ufe0f  'date' column not found — skipping date processing.")
 
 # Sort by date
-df.sort_values("date", inplace=True)
+if "date" in df.columns:
+    df.sort_values("date", inplace=True)
 
 # === FEATURE ENGINEERING ===
 # Ensure numeric
@@ -61,6 +62,10 @@ features = [
 ]
 
 target = "outcome"
+
+# Validate target column
+if target not in df.columns:
+    raise ValueError(f"Target column '{target}' not found in dataset.")
 
 X = df[features]
 y = df[target]

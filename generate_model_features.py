@@ -13,7 +13,7 @@ def generate_features(input_csv, output_csv):
 for col in numeric_cols:
     df[col] = pd.to_numeric(df[col], errors='coerce')
     print(f"✅ Loaded: {input_csv} — Columns: {list(df.columns)}")
-df.dropna(subset=numeric_cols, inplace=True)
+    df.dropna(subset=numeric_cols, inplace=True)
 
     if "close" not in df.columns:
         raise ValueError("❌ 'close' column is required for feature generation")

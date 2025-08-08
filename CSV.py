@@ -45,8 +45,9 @@ else:
 
 # MACD calculation
 macd = ta.macd(df['close'])
-df['macd_hist'] = macd['macdh_12_26_9']
-df['macd_signal'] = macd['macds_12_26_9']
+df['macd_hist'] = macd['MACDh_12_26_9']
+df['macd_signal'] = macd['MACDs_12_26_9']
+print(macd.columns.tolist())
 
 if all(col in df.columns for col in ['high', 'low', 'volume']):
     stoch = ta.stoch(df['high'], df['low'], df['close'])

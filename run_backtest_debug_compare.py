@@ -9,7 +9,7 @@ from sklearn.metrics import classification_report
 import joblib
 
 # Load data
-df = pd.read_csv(CSV_PATH)
+df = pd.read_csv("/root/falah-ai-bot/your_training_data.csv")
 df.columns = [c.lower() for c in df.columns]
 
 required_cols = ['date', 'close', 'high', 'low', 'volume', 'rsi', 'atr', 'adx', 'target', 'outcome']

@@ -72,7 +72,7 @@ if 'sma200' not in df.columns:
 # Calculate MACD for trend confirmation
 macd_data = ta.macd(df['close'])
 df['macd_line'] = macd_data['MACD_12_26_9']
-df['macd_signal'] = macd_data['MACDs_12_26_9']
+df['macd_signal_line'] = macd_data['MACDs_12_26_9']
 df['macd_hist'] = macd_data['MACDh_12_26_9']
 
 print(f"Using features: {available_features}")
@@ -121,14 +121,14 @@ combined_buy_condition = (
     (df['ml_probability'] > 0.65) &  # High confidence ML signal
     (df['rsi'] < 65) &  # Not overbought
     df['trend_bullish'] &  # Bullish trend
-    (df['macd_line'] > df['macd_signal'])  # MACD bullish
+    (df['macd_line'] > df['macd_signal_line'])  # MACD bullish
 )
 df.loc[combined_buy_condition, 'combined_signal'] = 1
 
 combined_sell_condition = (
     (df['rsi'] > 75) | 
     (df['trend_bearish']) |
-    (df['macd_line'] < df['macd_signal'])
+    (df['macd_line'] < df['macd_signal_line'])
 )
 df.loc[combined_sell_condition, 'combined_signal'] = -1
 
@@ -169,13 +169,11 @@ def enhanced_trailing_backtest(df, signal_column, initial_capital=INITIAL_CAPITA
                 highest_price_since_entry = current_price
             
             pct_change = (current_price - entry_price) / entry_price
-            unrealized_profit_pct = pct_change * 100
             
             # Activate profit trailing after reaching trigger threshold
             if not profit_trail_active and pct_change >= PROFIT_TRAIL_TRIGGER:
                 profit_trail_active = True
                 trailing_stop_price = highest_price_since_entry * (1 - TRAILING_STOP_PCT)
-                print(f"Profit trailing activated at {unrealized_profit_pct:.2f}% profit")
             
             # Update trailing stop if profit trailing is active
             if profit_trail_active:
@@ -348,4 +346,29 @@ Trailing Stop Performance:
 
 # Print enhanced results
 print(calculate_enhanced_metrics(ml_results, ml_final_cash, "ML"))
-print(calculate_enhanced_metrics(rsi_results, rsi_final_cash, "Enhance
+print(calculate_enhanced_metrics(rsi_results, rsi_final_cash, "Enhanced RSI"))
+print(calculate_enhanced_metrics(combined_results, combined_final_cash, "Enhanced Combined"))
+
+# ======================
+# Save Enhanced Results
+# ======================
+if len(ml_results) > 0:
+    ml_results.to_csv('ml_enhanced_trailing_backtest.csv', index=False)
+
+if len(rsi_results) > 0:
+    rsi_results.to_csv('rsi_enhanced_trailing_backtest.csv', index=False)
+    
+if len(combined_results) > 0:
+    combined_results.to_csv('combined_enhanced_trailing_backtest.csv', index=False)
+
+print("\n" + "="*60)
+print("ENHANCED TRAILING STOP BACKTESTING COMPLETE")
+print("="*60)
+print("Key Enhancements:")
+print("• Trailing stop loss: 3% (tighter than 5% initial)")
+print("• Profit trailing: Activated after 5% gain")
+print("• Take profit target: 10% maintained")
+print("• Enhanced RSI: Trend-filtered with momentum")
+print("• Better signals: MACD + SMA trend confirmation")
+print("• Detailed exit analysis included")
+print("• All results saved with '_enhanced_trailing' suffix")

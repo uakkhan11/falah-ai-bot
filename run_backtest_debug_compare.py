@@ -8,8 +8,11 @@ from sklearn.model_selection import GridSearchCV, train_test_split, cross_val_sc
 from sklearn.metrics import classification_report
 import joblib
 
+CSV_PATH = "/root/falah-ai-bot/your_training_data.csv"
+MODEL_PATH = "/root/falah-ai-bot/model.pkl"
+
 # Load data
-df = pd.read_csv("/root/falah-ai-bot/your_training_data.csv")
+df = pd.read_csv(CSV_PATH)
 df.columns = [c.lower() for c in df.columns]
 
 required_cols = ['date', 'close', 'high', 'low', 'volume', 'rsi', 'atr', 'adx', 'target', 'outcome']

@@ -7,18 +7,18 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # ======================
-# Enhanced Strategy Configurations
+# Enhanced 15% Target Configurations
 # ======================
 CSV_PATH = "your_training_data.csv"
 MODEL_PATH = "model.pkl"
 
-# Trading parameters (in Indian Rupees)
+# Enhanced Trading parameters (in Indian Rupees)
 INITIAL_CAPITAL = 1000000  # ₹10 Lakhs starting capital
 FIXED_POSITION_SIZE = 100000  # ₹1 Lakh per trade
 INITIAL_STOP_LOSS_PCT = 0.05  # 5% initial stop loss
-TAKE_PROFIT_PCT = 0.10  # 10% take profit target (starting with 10%)
-PROFIT_TRAIL_TRIGGER = 0.06  # Start trailing after 6% profit
-ATR_MULTIPLIER = 2.5  # ATR multiplier for dynamic trailing
+TAKE_PROFIT_PCT = 0.15  # 15% take profit target (INCREASED)
+PROFIT_TRAIL_TRIGGER = 0.08  # Start trailing after 8% profit (LOWERED)
+ATR_MULTIPLIER = 2.0  # Tighter ATR trailing (REDUCED from 2.5)
 MIN_PRICE = 50.0
 MAX_PRICE = 10000.0
 TRANSACTION_COST = 0.001
@@ -26,7 +26,7 @@ TRANSACTION_COST = 0.001
 # ======================
 # Load and Clean Data
 # ======================
-print("Loading data and model for enhanced strategies...")
+print("Loading data and model for 15% target enhanced strategies...")
 df = pd.read_csv(CSV_PATH)
 df.columns = [c.lower() for c in df.columns]
 
@@ -40,7 +40,7 @@ if 'date' in df.columns:
 
 print(f"Loaded {len(df)} rows of data")
 
-# Data cleaning
+# Data cleaning (same as before)
 initial_rows = len(df)
 df = df[
     (df['close'] >= MIN_PRICE) & 
@@ -55,122 +55,107 @@ df = df[df['price_change'] < 0.5].copy()
 print(f"Cleaned dataset: {len(df)} rows (removed {initial_rows - len(df)} rows)")
 
 # ======================
-# Enhanced Technical Indicators
+# Enhanced Technical Indicators (Top 3 Only)
 # ======================
 features = ['rsi', 'atr', 'adx', 'ema10', 'ema21', 'volumechange']
 available_features = [f for f in features if f in df.columns]
 
-# Calculate ATR for dynamic trailing stops (estimate from close if OHLCV not available)
+# Calculate ATR for dynamic trailing stops
 if 'atr' not in df.columns:
     df['atr'] = df['close'].rolling(14).apply(lambda x: x.std() * 1.5)
 
-# STRATEGY 1: BOLLINGER BANDS MEAN REVERSION
-bb_data = ta.bbands(df['close'], length=20, std=2)
-df['bb_upper'] = bb_data['BBU_20_2.0']
-df['bb_lower'] = bb_data['BBL_20_2.0']
-df['bb_middle'] = bb_data['BBM_20_2.0']
+# WILLIAMS %R STRATEGY (Best RSI Alternative)
+df['williams_r'] = ((df['close'].rolling(14).max() - df['close']) / 
+                   (df['close'].rolling(14).max() - df['close'].rolling(14).min())) * -100
 
-# STRATEGY 2: SUPERTREND (using close price approximation)
-df['hl2'] = (df['close'] + df['close'].shift(1)) / 2  # Approximation for HL2
+# SUPERTREND STRATEGY (Trend Following)
+df['hl2'] = (df['close'] + df['close'].shift(1)) / 2
 supertrend_data = ta.supertrend(df['close'], df['close'], df['close'], length=10, multiplier=3)
 if supertrend_data is not None:
     df['supertrend'] = supertrend_data['SUPERT_10_3.0']
     df['supertrend_direction'] = supertrend_data['SUPERTd_10_3.0']
 else:
+    # Fallback SuperTrend calculation
     df['supertrend'] = df['close']
-    df['supertrend_direction'] = 1
-
-# STRATEGY 3: DONCHIAN CHANNELS  
-df['donchian_upper'] = df['close'].rolling(20).max()
-df['donchian_lower'] = df['close'].rolling(20).min()
-df['donchian_middle'] = (df['donchian_upper'] + df['donchian_lower']) / 2
-
-# STRATEGY 4: WILLIAMS %R (approximation using close prices)
-df['williams_r'] = ((df['close'].rolling(14).max() - df['close']) / 
-                   (df['close'].rolling(14).max() - df['close'].rolling(14).min())) * -100
+    df['supertrend_direction'] = np.where(df['close'] > df['close'].shift(10), 1, -1)
 
 print(f"Enhanced features available: {available_features}")
-df = df.dropna(subset=available_features + ['atr', 'bb_upper']).reset_index(drop=True)
+df = df.dropna(subset=available_features + ['atr', 'williams_r']).reset_index(drop=True)
 
 # ======================
-# Strategy Signal Generation
+# Enhanced Strategy Signal Generation (Top 3 Only)
 # ======================
-print("Generating enhanced strategy signals...")
+print("Generating enhanced signals for TOP 3 strategies only...")
 X = df[available_features]
 
 df['ml_signal'] = model.predict(X)
 df['ml_probability'] = model.predict_proba(X)[:, 1]
 
-# BOLLINGER BANDS MEAN REVERSION STRATEGY
-df['bb_signal'] = 0
-bb_buy_condition = (
-    (df['close'] < df['bb_lower']) &  # Price below lower band
-    (df['close'] > df['close'].shift(1)) &  # Price starting to recover
-    (df['close'] > df['bb_middle'].shift(5))  # Still above medium-term average
-)
-df.loc[bb_buy_condition, 'bb_signal'] = 1
-
-bb_sell_condition = (
-    (df['close'] > df['bb_upper']) |  # Overbought
-    (df['close'] < df['bb_middle'])  # Back to mean
-)
-df.loc[bb_sell_condition, 'bb_signal'] = -1
-
-# SUPERTREND STRATEGY
-df['supertrend_signal'] = 0
-if 'supertrend_direction' in df.columns:
-    df.loc[df['supertrend_direction'] == 1, 'supertrend_signal'] = 1
-    df.loc[df['supertrend_direction'] == -1, 'supertrend_signal'] = -1
-
-# DONCHIAN BREAKOUT STRATEGY
-df['donchian_signal'] = 0
-donchian_buy_condition = (
-    (df['close'] > df['donchian_upper'].shift(1)) &  # Breakout above upper channel
-    (df['close'] > df['close'].shift(5))  # Momentum confirmation
-)
-df.loc[donchian_buy_condition, 'donchian_signal'] = 1
-
-donchian_sell_condition = (df['close'] < df['donchian_lower'].shift(1))
-df.loc[donchian_sell_condition, 'donchian_signal'] = -1
-
-# WILLIAMS %R STRATEGY
-df['williams_signal'] = 0
-williams_buy_condition = (
-    (df['williams_r'] < -80) &  # Oversold
-    (df['williams_r'] > df['williams_r'].shift(1))  # Starting to turn up
-)
-df.loc[williams_buy_condition, 'williams_signal'] = 1
-
-williams_sell_condition = (df['williams_r'] > -20)  # Overbought
-df.loc[williams_sell_condition, 'williams_signal'] = -1
-
-# ENHANCED COMBINED STRATEGY
-df['enhanced_combined_signal'] = 0
-combined_buy_condition = (
+# ENHANCED ML STRATEGY (with higher confidence)
+df['enhanced_ml_signal'] = 0
+enhanced_ml_buy_condition = (
     (df['ml_signal'] == 1) & 
-    (df['ml_probability'] > 0.65) &
+    (df['ml_probability'] > 0.70)  # Higher confidence for 15% targets
+)
+df.loc[enhanced_ml_buy_condition, 'enhanced_ml_signal'] = 1
+
+enhanced_ml_sell_condition = (
+    (df['ml_signal'] == 0) & 
+    (df['ml_probability'] < 0.35)
+)
+df.loc[enhanced_ml_sell_condition, 'enhanced_ml_signal'] = -1
+
+# ENHANCED WILLIAMS %R STRATEGY (Best RSI Replacement)
+df['enhanced_williams_signal'] = 0
+enhanced_williams_buy_condition = (
+    (df['williams_r'] < -80) &  # Oversold
+    (df['williams_r'] > df['williams_r'].shift(1)) &  # Starting to turn up
+    (df['williams_r'].shift(1) < df['williams_r'].shift(2)) &  # Was declining
+    (df['close'] > df['close'].shift(3))  # Short-term momentum
+)
+df.loc[enhanced_williams_buy_condition, 'enhanced_williams_signal'] = 1
+
+enhanced_williams_sell_condition = (
+    (df['williams_r'] > -15) |  # Overbought exit
+    (df['close'] < df['close'].shift(5))  # Momentum fading
+)
+df.loc[enhanced_williams_sell_condition, 'enhanced_williams_signal'] = -1
+
+# ENHANCED SUPERTREND STRATEGY
+df['enhanced_supertrend_signal'] = 0
+if 'supertrend_direction' in df.columns:
+    enhanced_supertrend_buy_condition = (
+        (df['supertrend_direction'] == 1) &  # SuperTrend bullish
+        (df['close'] > df['close'].shift(2))  # Price momentum
+    )
+    df.loc[enhanced_supertrend_buy_condition, 'enhanced_supertrend_signal'] = 1
+    
+    enhanced_supertrend_sell_condition = (df['supertrend_direction'] == -1)
+    df.loc[enhanced_supertrend_sell_condition, 'enhanced_supertrend_signal'] = -1
+
+# COMBINED TOP PERFORMERS STRATEGY
+df['top_performers_combined_signal'] = 0
+top_combined_buy_condition = (
+    (df['enhanced_ml_signal'] == 1) &  # ML confidence
     (
-        (df['bb_signal'] == 1) |  # BB mean reversion
-        (df['supertrend_signal'] == 1) |  # Supertrend bullish
-        (df['donchian_signal'] == 1)  # Donchian breakout
+        (df['enhanced_williams_signal'] == 1) |  # Williams %R confirmation
+        (df['enhanced_supertrend_signal'] == 1)   # OR SuperTrend confirmation
     )
 )
-df.loc[combined_buy_condition, 'enhanced_combined_signal'] = 1
+df.loc[top_combined_buy_condition, 'top_performers_combined_signal'] = 1
 
-combined_sell_condition = (
-    (df['bb_signal'] == -1) |
-    (df['supertrend_signal'] == -1) |
-    (df['donchian_signal'] == -1) |
-    (df['williams_signal'] == -1)
+top_combined_sell_condition = (
+    (df['enhanced_williams_signal'] == -1) |
+    (df['enhanced_supertrend_signal'] == -1)
 )
-df.loc[combined_sell_condition, 'enhanced_combined_signal'] = -1
+df.loc[top_combined_sell_condition, 'top_performers_combined_signal'] = -1
 
 # ======================
-# Advanced ATR-Based Trailing Stop Engine
+# Advanced ATR-Based Trailing Stop Engine (Enhanced)
 # ======================
-def advanced_atr_trailing_backtest(df, signal_column, initial_capital=INITIAL_CAPITAL):
+def enhanced_15pct_atr_backtest(df, signal_column, initial_capital=INITIAL_CAPITAL):
     """
-    Advanced backtesting with ATR-based dynamic trailing stops
+    Enhanced backtesting with 15% targets and improved ATR trailing stops
     """
     results = []
     cash = initial_capital
@@ -183,6 +168,8 @@ def advanced_atr_trailing_backtest(df, signal_column, initial_capital=INITIAL_CA
     profit_trail_active = False
     trade_count = 0
     max_trades = 200
+    trailing_activations = 0
+    trailing_exits = 0
     
     for i in range(1, len(df)):
         if trade_count >= max_trades:
@@ -196,19 +183,21 @@ def advanced_atr_trailing_backtest(df, signal_column, initial_capital=INITIAL_CA
         if current_price <= 0 or not np.isfinite(current_price) or pd.isna(current_atr):
             continue
         
-        # Exit logic with ATR-based trailing stops
+        # Enhanced exit logic with improved ATR trailing
         if position_shares > 0 and entry_price > 0:
             if current_price > highest_price_since_entry:
                 highest_price_since_entry = current_price
             
             pct_change = (current_price - entry_price) / entry_price
             
-            # Activate ATR-based trailing after profit trigger
+            # Enhanced ATR trailing activation (8% instead of 6%)
             if not profit_trail_active and pct_change >= PROFIT_TRAIL_TRIGGER:
                 profit_trail_active = True
                 atr_trailing_stop = current_price - (current_atr * ATR_MULTIPLIER)
+                trailing_activations += 1
+                print(f"ATR trailing activated: Entry Rs{entry_price:.2f}, Current Rs{current_price:.2f}, Profit: {pct_change*100:.2f}%")
             
-            # Update ATR trailing stop (only moves up)
+            # Update ATR trailing stop (tighter 2.0x multiplier)
             if profit_trail_active:
                 new_atr_stop = current_price - (current_atr * ATR_MULTIPLIER)
                 if new_atr_stop > atr_trailing_stop:
@@ -217,16 +206,18 @@ def advanced_atr_trailing_backtest(df, signal_column, initial_capital=INITIAL_CA
             should_exit = False
             exit_reason = ""
             
-            # Exit conditions
+            # Enhanced exit conditions
             if current_price <= initial_stop_loss:
                 should_exit = True
                 exit_reason = "Initial Stop Loss"
             elif profit_trail_active and current_price <= atr_trailing_stop:
                 should_exit = True
                 exit_reason = "ATR Trailing Stop"
+                trailing_exits += 1
+                print(f"ATR trailing exit: Rs{current_price:.2f} <= Rs{atr_trailing_stop:.2f}, Profit secured: {pct_change*100:.2f}%")
             elif pct_change >= TAKE_PROFIT_PCT:
                 should_exit = True
-                exit_reason = "Take Profit Target"
+                exit_reason = "Take Profit Target (15%)"
             elif signal == -1:
                 should_exit = True
                 exit_reason = "Signal Exit"
@@ -248,6 +239,7 @@ def advanced_atr_trailing_backtest(df, signal_column, initial_capital=INITIAL_CA
                     'exit_reason': exit_reason,
                     'atr_trail_active': profit_trail_active,
                     'atr_trail_price': atr_trailing_stop if profit_trail_active else 0,
+                    'max_profit_pct': (highest_price_since_entry - entry_price) / entry_price * 100,
                     'portfolio_value': cash
                 })
                 
@@ -261,7 +253,7 @@ def advanced_atr_trailing_backtest(df, signal_column, initial_capital=INITIAL_CA
                 profit_trail_active = False
                 trade_count += 1
         
-        # Entry logic
+        # Entry logic (same as before)
         elif position_shares == 0 and signal == 1 and cash >= FIXED_POSITION_SIZE:
             position_cost = FIXED_POSITION_SIZE * (1 + TRANSACTION_COST)
             
@@ -273,37 +265,36 @@ def advanced_atr_trailing_backtest(df, signal_column, initial_capital=INITIAL_CA
                 initial_stop_loss = entry_price * (1 - INITIAL_STOP_LOSS_PCT)
                 cash -= position_cost
     
+    print(f"ATR Trailing Summary: {trailing_activations} activations, {trailing_exits} exits")
     return pd.DataFrame(results), cash
 
 # ======================
-# Run Enhanced Backtests
+# Run Enhanced 15% Target Backtests
 # ======================
-print("Running enhanced backtests with ATR trailing stops...")
+print("Running enhanced 15% target backtests (TOP 3 + Combined)...")
 
-# Test all strategies with 10% profit targets
-ml_results, ml_final_cash = advanced_atr_trailing_backtest(df, 'ml_signal')
-bb_results, bb_final_cash = advanced_atr_trailing_backtest(df, 'bb_signal')
-supertrend_results, supertrend_final_cash = advanced_atr_trailing_backtest(df, 'supertrend_signal')
-donchian_results, donchian_final_cash = advanced_atr_trailing_backtest(df, 'donchian_signal')
-williams_results, williams_final_cash = advanced_atr_trailing_backtest(df, 'williams_signal')
-enhanced_combined_results, enhanced_combined_final_cash = advanced_atr_trailing_backtest(df, 'enhanced_combined_signal')
+# Test top 3 strategies + combined
+enhanced_ml_results, enhanced_ml_final_cash = enhanced_15pct_atr_backtest(df, 'enhanced_ml_signal')
+enhanced_williams_results, enhanced_williams_final_cash = enhanced_15pct_atr_backtest(df, 'enhanced_williams_signal')
+enhanced_supertrend_results, enhanced_supertrend_final_cash = enhanced_15pct_atr_backtest(df, 'enhanced_supertrend_signal')
+top_combined_results, top_combined_final_cash = enhanced_15pct_atr_backtest(df, 'top_performers_combined_signal')
 
 # ======================
-# Enhanced Performance Metrics (No Emoji)
+# Enhanced Performance Metrics for 15% Targets
 # ======================
-def calculate_enhanced_metrics(results_df, final_cash, strategy_name):
-    """Calculate comprehensive metrics without emoji characters"""
+def calculate_15pct_metrics(results_df, final_cash, strategy_name):
+    """Calculate comprehensive metrics for 15% target strategies"""
     if len(results_df) == 0:
-        return f"\n{strategy_name} Strategy: No trades executed"
+        return f"\n{strategy_name} Strategy (15% Target): No trades executed"
     
     total_trades = len(results_df)
     winning_trades = len(results_df[results_df['profit_loss'] > 0])
     win_rate = winning_trades / total_trades
     
-    # Detailed exit analysis
+    # Enhanced exit analysis
     exit_reasons = results_df['exit_reason'].value_counts()
     atr_trailing_stops = len(results_df[results_df['exit_reason'] == 'ATR Trailing Stop'])
-    profit_targets = len(results_df[results_df['exit_reason'] == 'Take Profit Target'])
+    profit_targets_15 = len(results_df[results_df['exit_reason'] == 'Take Profit Target (15%)'])
     signal_exits = exit_reasons.get('Signal Exit', 0)
     stop_losses = exit_reasons.get('Initial Stop Loss', 0)
     
@@ -312,13 +303,17 @@ def calculate_enhanced_metrics(results_df, final_cash, strategy_name):
     max_return = results_df['return_pct'].max()
     min_return = results_df['return_pct'].min()
     
+    # New metrics for 15% analysis
+    avg_max_profit = results_df['max_profit_pct'].mean()  # Average maximum profit reached
+    trades_above_15 = len(results_df[results_df['max_profit_pct'] >= 15])  # How many could have hit 15%
+    
     total_return = (final_cash - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
     
     # Risk metrics
     std_return = results_df['return_pct'].std()
     sharpe = avg_return / std_return if std_return > 0 else 0
     
-    # Max drawdown calculation
+    # Max drawdown
     portfolio_values = results_df['portfolio_value'].values
     max_drawdown = 0
     if len(portfolio_values) > 0:
@@ -332,10 +327,10 @@ def calculate_enhanced_metrics(results_df, final_cash, strategy_name):
     
     # ATR trailing effectiveness
     atr_trades = results_df[results_df['atr_trail_active'] == True]
-    atr_effectiveness = len(atr_trades[atr_trades['profit_loss'] > 0]) / len(atr_trades) if len(atr_trades) > 0 else 0
+    atr_success_rate = len(atr_trades[atr_trades['profit_loss'] > 0]) / len(atr_trades) if len(atr_trades) > 0 else 0
     
     return f"""
-{strategy_name} Strategy Results (10% Target):
+{strategy_name} Strategy Results (15% Target):
 ===========================================
 TRADE SUMMARY:
 Total Trades: {total_trades}
@@ -350,6 +345,11 @@ Best Trade: {max_return:.2f}%
 Worst Trade: {min_return:.2f}%
 Final Portfolio: Rs{final_cash:,.2f}
 
+15% TARGET ANALYSIS:
+Trades Hitting 15% Target: {profit_targets_15} ({profit_targets_15/total_trades*100:.1f}%)
+Trades Above 15% Peak: {trades_above_15} ({trades_above_15/total_trades*100:.1f}%)
+Avg Maximum Profit: {avg_max_profit:.2f}%
+
 RISK METRICS:
 Volatility: {std_return:.2f}%
 Sharpe Ratio: {sharpe:.2f}
@@ -357,72 +357,70 @@ Max Drawdown: {max_drawdown:.2f}%
 
 EXIT ANALYSIS:
 - ATR Trailing Stops: {atr_trailing_stops} ({atr_trailing_stops/total_trades*100:.1f}%)
-- Profit Targets: {profit_targets} ({profit_targets/total_trades*100:.1f}%)
+- 15% Profit Targets: {profit_targets_15} ({profit_targets_15/total_trades*100:.1f}%)
 - Signal Exits: {signal_exits} ({signal_exits/total_trades*100:.1f}%)
 - Initial Stop Losses: {stop_losses} ({stop_losses/total_trades*100:.1f}%)
 
 ATR TRAILING EFFECTIVENESS:
 - Trades with ATR Trailing: {len(atr_trades)}
-- ATR Success Rate: {atr_effectiveness:.1%}
+- ATR Success Rate: {atr_success_rate:.1%}
 - Avg ATR Trailing Return: {atr_trades['return_pct'].mean():.2f}%
 """
 
-# Print enhanced results
+# Print enhanced 15% results
 print("\n" + "="*70)
-print("ENHANCED STRATEGY BACKTEST RESULTS (10% PROFIT TARGET)")
+print("ENHANCED STRATEGY BACKTEST RESULTS (15% PROFIT TARGET)")
 print("="*70)
 
-print(calculate_enhanced_metrics(ml_results, ml_final_cash, "ML"))
-print(calculate_enhanced_metrics(bb_results, bb_final_cash, "Bollinger Bands"))
-print(calculate_enhanced_metrics(supertrend_results, supertrend_final_cash, "SuperTrend"))
-print(calculate_enhanced_metrics(donchian_results, donchian_final_cash, "Donchian Channels"))
-print(calculate_enhanced_metrics(williams_results, williams_final_cash, "Williams %R"))
-print(calculate_enhanced_metrics(enhanced_combined_results, enhanced_combined_final_cash, "Enhanced Combined"))
+print(calculate_15pct_metrics(enhanced_ml_results, enhanced_ml_final_cash, "Enhanced ML"))
+print(calculate_15pct_metrics(enhanced_williams_results, enhanced_williams_final_cash, "Enhanced Williams %R"))
+print(calculate_15pct_metrics(enhanced_supertrend_results, enhanced_supertrend_final_cash, "Enhanced SuperTrend"))
+print(calculate_15pct_metrics(top_combined_results, top_combined_final_cash, "Top Performers Combined"))
 
 # ======================
-# Performance Ranking
+# 10% vs 15% Comparison Summary
 # ======================
-strategies_data = {
-    'ML': {'trades': len(ml_results), 'win_rate': len(ml_results[ml_results['profit_loss'] > 0])/len(ml_results) if len(ml_results) > 0 else 0, 'final': ml_final_cash},
-    'Bollinger Bands': {'trades': len(bb_results), 'win_rate': len(bb_results[bb_results['profit_loss'] > 0])/len(bb_results) if len(bb_results) > 0 else 0, 'final': bb_final_cash},
-    'SuperTrend': {'trades': len(supertrend_results), 'win_rate': len(supertrend_results[supertrend_results['profit_loss'] > 0])/len(supertrend_results) if len(supertrend_results) > 0 else 0, 'final': supertrend_final_cash},
-    'Donchian': {'trades': len(donchian_results), 'win_rate': len(donchian_results[donchian_results['profit_loss'] > 0])/len(donchian_results) if len(donchian_results) > 0 else 0, 'final': donchian_final_cash},
-    'Williams %R': {'trades': len(williams_results), 'win_rate': len(williams_results[williams_results['profit_loss'] > 0])/len(williams_results) if len(williams_results) > 0 else 0, 'final': williams_final_cash},
-    'Enhanced Combined': {'trades': len(enhanced_combined_results), 'win_rate': len(enhanced_combined_results[enhanced_combined_results['profit_loss'] > 0])/len(enhanced_combined_results) if len(enhanced_combined_results) > 0 else 0, 'final': enhanced_combined_final_cash}
+print("\n" + "="*70)
+print("10% vs 15% TARGET COMPARISON SUMMARY")
+print("="*70)
+
+strategies_15_data = {
+    'Enhanced ML': {'final': enhanced_ml_final_cash, 'trades': len(enhanced_ml_results), 'win_rate': len(enhanced_ml_results[enhanced_ml_results['profit_loss'] > 0])/len(enhanced_ml_results) if len(enhanced_ml_results) > 0 else 0},
+    'Enhanced Williams %R': {'final': enhanced_williams_final_cash, 'trades': len(enhanced_williams_results), 'win_rate': len(enhanced_williams_results[enhanced_williams_results['profit_loss'] > 0])/len(enhanced_williams_results) if len(enhanced_williams_results) > 0 else 0},
+    'Enhanced SuperTrend': {'final': enhanced_supertrend_final_cash, 'trades': len(enhanced_supertrend_results), 'win_rate': len(enhanced_supertrend_results[enhanced_supertrend_results['profit_loss'] > 0])/len(enhanced_supertrend_results) if len(enhanced_supertrend_results) > 0 else 0},
+    'Top Combined': {'final': top_combined_final_cash, 'trades': len(top_combined_results), 'win_rate': len(top_combined_results[top_combined_results['profit_loss'] > 0])/len(top_combined_results) if len(top_combined_results) > 0 else 0}
 }
 
-print(f"\nSTRATEGY RANKING (10% Targets):")
-ranked_strategies = sorted(strategies_data.items(), key=lambda x: x[1]['final'], reverse=True)
-for i, (strategy, stats) in enumerate(ranked_strategies, 1):
+print("STRATEGY RANKING (15% Targets):")
+ranked_15_strategies = sorted(strategies_15_data.items(), key=lambda x: x[1]['final'], reverse=True)
+for i, (strategy, stats) in enumerate(ranked_15_strategies, 1):
     return_pct = (stats['final'] - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
     print(f"{i}. {strategy}: Rs{stats['final']:,.0f} ({return_pct:.1f}% return, {stats['win_rate']:.1%} win rate, {stats['trades']} trades)")
 
 # ======================
-# Save Results
+# Save Enhanced Results
 # ======================
-if len(ml_results) > 0:
-    ml_results.to_csv('ml_enhanced_10pct_backtest.csv', index=False)
+if len(enhanced_ml_results) > 0:
+    enhanced_ml_results.to_csv('enhanced_ml_15pct_backtest.csv', index=False)
 
-if len(bb_results) > 0:
-    bb_results.to_csv('bollinger_bands_10pct_backtest.csv', index=False)
+if len(enhanced_williams_results) > 0:
+    enhanced_williams_results.to_csv('enhanced_williams_15pct_backtest.csv', index=False)
     
-if len(supertrend_results) > 0:
-    supertrend_results.to_csv('supertrend_10pct_backtest.csv', index=False)
+if len(enhanced_supertrend_results) > 0:
+    enhanced_supertrend_results.to_csv('enhanced_supertrend_15pct_backtest.csv', index=False)
 
-if len(donchian_results) > 0:
-    donchian_results.to_csv('donchian_10pct_backtest.csv', index=False)
+if len(top_combined_results) > 0:
+    top_combined_results.to_csv('top_combined_15pct_backtest.csv', index=False)
 
-if len(williams_results) > 0:
-    williams_results.to_csv('williams_r_10pct_backtest.csv', index=False)
-
-if len(enhanced_combined_results) > 0:
-    enhanced_combined_results.to_csv('enhanced_combined_10pct_backtest.csv', index=False)
-
-print(f"\nENHANCED BACKTESTING COMPLETE!")
-print("Key Features:")
-print("- ATR-based trailing stops (2.5x multiplier)")
-print("- 10% take profit targets")
-print("- 6 different strategies tested")
-print("- Dynamic volatility adaptation")
-print("- All results saved with '10pct' suffix")
-print("\nNext: Modify TAKE_PROFIT_PCT to 0.15 for 15% comparison")
+print(f"\nENHANCED 15% TARGET BACKTESTING COMPLETE!")
+print("Key Enhanced Features:")
+print("- 15% profit targets (increased from 10%)")
+print("- 8% ATR trailing trigger (lowered from 6%)")
+print("- 2.0x ATR multiplier (tightened from 2.5x)")
+print("- Higher ML confidence threshold (70%)")
+print("- Enhanced Williams %R with momentum filters")
+print("- Improved SuperTrend with momentum confirmation")
+print("- Top performers combined strategy")
+print("- Detailed 15% target achievement analysis")
+print("- Enhanced exit reason tracking")
+print("- Maximum profit reached per trade analysis")

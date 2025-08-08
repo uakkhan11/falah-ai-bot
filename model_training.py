@@ -6,7 +6,7 @@ from sklearn.metrics import classification_report
 import joblib
 import warnings
 
-warnings.filterwarnings("ignore")  # You can remove or adjust this as needed
+warnings.filterwarnings("ignore")  # Optional, remove if you want all warnings
 
 # ======================
 # Configurations
@@ -19,13 +19,15 @@ TARGET_COLUMN = "outcome"  # Your target column name, lowercase assumed
 # Step 1: Load historical data
 # ======================
 df = pd.read_csv(CSV_PATH)
-df.columns = [c.lower() for c in df.columns]  # Enforce lowercase for consistency
+df.columns = [c.lower() for c in df.columns]  # Enforce lowercase columns
 print("CSV Columns:", df.columns.tolist())
 
-# Make sure 'date' column is datetime if present
+# Make sure 'date' column is datetime if present, remove timezone for safe comparison
 if "date" in df.columns:
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df.dropna(subset=["date"], inplace=True)
+    # Remove timezone info to avoid tz-aware vs tz-naive comparison errors
+    df["date"] = df["date"].dt.tz_localize(None)
     df.sort_values("date", inplace=True)
 else:
     print("⚠️ 'date' column not found - date filtering will be skipped")
@@ -33,12 +35,10 @@ else:
 # ======================
 # Step 2: Calculate Technical Indicators (if missing)
 # ======================
-# Validate required raw columns for indicators
 required_price_cols = ["close"]
 if any(col not in df.columns for col in required_price_cols):
     raise ValueError(f"Required columns missing from dataset: {required_price_cols}")
 
-# Calculate missing features robustly
 if "rsi" not in df.columns:
     df["rsi"] = ta.rsi(df["close"], length=14)
 
@@ -49,7 +49,6 @@ if all(col in df.columns for col in ["high", "low", "close"]):
         adx_df = ta.adx(df["high"], df["low"], df["close"], length=14)
         df["adx"] = adx_df["adx_14"]
 else:
-    # Warn if these features will be missing
     print("⚠️ Missing 'high' or 'low' columns - 'atr' and 'adx' indicators skipped")
 
 if "ema10" not in df.columns:
@@ -66,7 +65,6 @@ else:
 # ======================
 # Step 3: Define Outcome
 # ======================
-# Only create 'future_high' and 'outcome' if target is missing
 if TARGET_COLUMN not in df.columns:
     df["future_high"] = df["close"].rolling(window=10, min_periods=1).max().shift(-1)
     df[TARGET_COLUMN] = (df["future_high"] >= df["close"] * 1.05).astype(int)
@@ -85,14 +83,11 @@ else:
     print("No date filtering applied")
 
 # ======================
-# Step 5: Define features and clean data
+# Step 5: Define features, clean data, and prepare inputs
 # ======================
 features = ["rsi", "atr", "adx", "ema10", "ema21", "volumechange"]
-
-# Remove features that are missing
 features = [f for f in features if f in df_recent.columns]
 
-# Drop rows with missing values in features or target
 before_len = len(df_recent)
 df_recent.dropna(subset=features + [TARGET_COLUMN], inplace=True)
 after_len = len(df_recent)

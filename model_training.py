@@ -1,33 +1,31 @@
 import pandas as pd
 import pandas_ta as ta
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import cross_val_score, GridSearchCV, train_test_split
+from sklearn.model_selection import cross_val_score, RandomizedSearchCV, train_test_split
 from sklearn.metrics import classification_report
 import joblib
 import warnings
 
-warnings.filterwarnings("ignore")  # Optional, remove if you want all warnings
+warnings.filterwarnings("ignore")  # Optional: suppress warnings for cleaner output
 
 # ======================
 # Configurations
 # ======================
 CSV_PATH = "your_training_data.csv"
 MODEL_SAVE_PATH = "model.pkl"
-TARGET_COLUMN = "outcome"  # Your target column name, lowercase assumed
+TARGET_COLUMN = "outcome"  # Lowercase assumed
 
 # ======================
 # Step 1: Load historical data
 # ======================
 df = pd.read_csv(CSV_PATH)
-df.columns = [c.lower() for c in df.columns]  # Enforce lowercase columns
+df.columns = [c.lower() for c in df.columns]  # Standardize column names
 print("CSV Columns:", df.columns.tolist())
 
-# Make sure 'date' column is datetime if present, remove timezone for safe comparison
 if "date" in df.columns:
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df.dropna(subset=["date"], inplace=True)
-    # Remove timezone info to avoid tz-aware vs tz-naive comparison errors
-    df["date"] = df["date"].dt.tz_localize(None)
+    df["date"] = df["date"].dt.tz_localize(None)  # Remove timezone info
     df.sort_values("date", inplace=True)
 else:
     print("⚠️ 'date' column not found - date filtering will be skipped")
@@ -49,7 +47,7 @@ if all(col in df.columns for col in ["high", "low", "close"]):
         adx_df = ta.adx(df["high"], df["low"], df["close"], length=14)
         df["adx"] = adx_df["adx_14"]
 else:
-    print("⚠️ Missing 'high' or 'low' columns - 'atr' and 'adx' indicators skipped")
+    print("⚠️ Missing 'high' or 'low' columns - skipping 'atr' and 'adx' calculations")
 
 if "ema10" not in df.columns:
     df["ema10"] = ta.ema(df["close"], length=10)
@@ -77,7 +75,7 @@ else:
 if "date" in df.columns:
     cutoff = pd.Timestamp.today() - pd.Timedelta(days=730)
     df_recent = df[df["date"] >= cutoff].copy()
-    print(f"Filtered to last 2 years: {df_recent.shape[0]} rows")
+    print(f"Filtered last 2 years data: {df_recent.shape[0]} rows")
 else:
     df_recent = df.copy()
     print("No date filtering applied")
@@ -86,7 +84,7 @@ else:
 # Step 5: Define features, clean data, and prepare inputs
 # ======================
 features = ["rsi", "atr", "adx", "ema10", "ema21", "volumechange"]
-features = [f for f in features if f in df_recent.columns]
+features = [f for f in features if f in df_recent.columns]  # Ensure features exist
 
 before_len = len(df_recent)
 df_recent.dropna(subset=features + [TARGET_COLUMN], inplace=True)
@@ -100,43 +98,44 @@ y = df_recent[TARGET_COLUMN].astype(int)
 print(f"✅ Dataset ready: {X.shape[0]} samples | Positives: {y.sum()} | Negatives: {len(y) - y.sum()}")
 
 # ======================
-# Step 6: Hyperparameter tuning (GridSearch on 20% sample)
+# Step 6: Hyperparameter tuning (RandomizedSearch for faster tuning)
 # ======================
 X_sample, _, y_sample, _ = train_test_split(
-    X, y, test_size=0.8, stratify=y, random_state=42
-)
+    X, y, test_size=0.9, stratify=y, random_state=42
+)  # Using 10% for tuning to speed up (adjust as needed)
 
-param_grid = {
-    "n_estimators": [100, 200],
-    "max_depth": [None, 10, 20],
-    "min_samples_split": [2, 5],
-    "class_weight": ["balanced"]  # balance classes due to potential imbalance
+param_dist = {
+    "n_estimators": [100, 150],
+    "max_depth": [None, 10],
+    "min_samples_split": [2],
+    "class_weight": ["balanced"],  # Important for imbalanced data
 }
 
-print("🔍 Running GridSearchCV on 20% sample...")
-grid_search = GridSearchCV(
+print("🔍 Running RandomizedSearchCV on 10% sample...")
+random_search = RandomizedSearchCV(
     RandomForestClassifier(random_state=42),
-    param_grid,
+    param_distributions=param_dist,
+    n_iter=5,  # Number of parameter settings sampled, adjust as desired
     cv=3,
-    scoring="f1",  # F1-score often better for imbalanced data than accuracy
+    scoring="f1",
     n_jobs=-1,
     verbose=1,
+    random_state=42,
 )
-grid_search.fit(X_sample, y_sample)
-print(f"✅ Best Params: {grid_search.best_params_}")
+random_search.fit(X_sample, y_sample)
+print(f"✅ Best Params: {random_search.best_params_}")
 
 # ======================
 # Step 7: Train final model on full dataset and evaluate
 # ======================
 final_model = RandomForestClassifier(
-    **grid_search.best_params_, random_state=42
+    **random_search.best_params_, random_state=42
 )
 final_model.fit(X, y)
 
 cv_scores = cross_val_score(final_model, X, y, cv=5, scoring="f1")
 print(f"✅ 5-Fold Cross-Validation F1 Score: {cv_scores.mean():.4f}")
 
-# Detailed classification report on training data
 y_pred = final_model.predict(X)
 print("\nClassification report on training data:")
 print(classification_report(y, y_pred))

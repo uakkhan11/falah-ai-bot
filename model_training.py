@@ -1,99 +1,158 @@
-# model_training.py
-
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import cross_val_score, GridSearchCV
-import joblib
 import pandas_ta as ta
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import cross_val_score, GridSearchCV, train_test_split
+from sklearn.metrics import classification_report
+import joblib
+import warnings
+
+warnings.filterwarnings("ignore")  # You can remove or adjust this as needed
+
+# ======================
+# Configurations
+# ======================
+CSV_PATH = "your_training_data.csv"
+MODEL_SAVE_PATH = "model.pkl"
+TARGET_COLUMN = "outcome"  # Your target column name, lowercase assumed
 
 # ======================
 # Step 1: Load historical data
 # ======================
-df = pd.read_csv("your_training_data.csv")
-df.columns = [c.lower() for c in df.columns]
+df = pd.read_csv(CSV_PATH)
+df.columns = [c.lower() for c in df.columns]  # Enforce lowercase for consistency
 print("CSV Columns:", df.columns.tolist())
+
+# Make sure 'date' column is datetime if present
+if "date" in df.columns:
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df.dropna(subset=["date"], inplace=True)
+    df.sort_values("date", inplace=True)
+else:
+    print("⚠️ 'date' column not found - date filtering will be skipped")
 
 # ======================
 # Step 2: Calculate Technical Indicators (if missing)
 # ======================
+# Validate required raw columns for indicators
+required_price_cols = ["close"]
+if any(col not in df.columns for col in required_price_cols):
+    raise ValueError(f"Required columns missing from dataset: {required_price_cols}")
+
+# Calculate missing features robustly
 if "rsi" not in df.columns:
     df["rsi"] = ta.rsi(df["close"], length=14)
+
+if all(col in df.columns for col in ["high", "low", "close"]):
+    if "atr" not in df.columns:
+        df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+    if "adx" not in df.columns:
+        adx_df = ta.adx(df["high"], df["low"], df["close"], length=14)
+        df["adx"] = adx_df["adx_14"]
+else:
+    # Warn if these features will be missing
+    print("⚠️ Missing 'high' or 'low' columns - 'atr' and 'adx' indicators skipped")
+
 if "ema10" not in df.columns:
     df["ema10"] = ta.ema(df["close"], length=10)
 if "ema21" not in df.columns:
     df["ema21"] = ta.ema(df["close"], length=21)
-if "atr" not in df.columns:
-    df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
-if "adx" not in df.columns:
-    df["adx"] = ta.adx(df["high"], df["low"], df["close"], length=14)["ADX_14"]
-if "volumechange" not in df.columns:
-    df["volumechange"] = df["volume"].pct_change().fillna(0)
+
+if "volume" in df.columns:
+    if "volumechange" not in df.columns:
+        df["volumechange"] = df["volume"].pct_change().fillna(0)
+else:
+    print("⚠️ 'volume' column missing - 'volumechange' feature skipped")
 
 # ======================
 # Step 3: Define Outcome
 # ======================
-df['future_high'] = df['close'].rolling(window=10, min_periods=1).max().shift(-1)
-df['outcome'] = (df['future_high'] >= df['close'] * 1.05).astype(int)
+# Only create 'future_high' and 'outcome' if target is missing
+if TARGET_COLUMN not in df.columns:
+    df["future_high"] = df["close"].rolling(window=10, min_periods=1).max().shift(-1)
+    df[TARGET_COLUMN] = (df["future_high"] >= df["close"] * 1.05).astype(int)
+else:
+    print(f"Using existing target column: {TARGET_COLUMN}")
 
 # ======================
-# Step 4: Feature List
+# Step 4: Filter last 2 years if 'date' is present
+# ======================
+if "date" in df.columns:
+    cutoff = pd.Timestamp.today() - pd.Timedelta(days=730)
+    df_recent = df[df["date"] >= cutoff].copy()
+    print(f"Filtered to last 2 years: {df_recent.shape[0]} rows")
+else:
+    df_recent = df.copy()
+    print("No date filtering applied")
+
+# ======================
+# Step 5: Define features and clean data
 # ======================
 features = ["rsi", "atr", "adx", "ema10", "ema21", "volumechange"]
 
-# Remove missing data
-df = df.dropna(subset=features + ["outcome"])
+# Remove features that are missing
+features = [f for f in features if f in df_recent.columns]
 
-# ======================
-# Step 5: Filter last 2 years
-# ======================
-df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
-cutoff = pd.to_datetime("today").tz_localize(None) - pd.Timedelta(days=730)
-df_recent = df[df["date"] >= cutoff]
+# Drop rows with missing values in features or target
+before_len = len(df_recent)
+df_recent.dropna(subset=features + [TARGET_COLUMN], inplace=True)
+after_len = len(df_recent)
 
-# ======================
-# Step 6: Prepare Inputs
-# ======================
+print(f"Dropped {before_len - after_len} rows due to missing data")
+
 X = df_recent[features]
-y = df_recent["outcome"]
+y = df_recent[TARGET_COLUMN].astype(int)
 
-print(f"✅ Dataset ready: {X.shape[0]} samples | Positives: {y.sum()} | Negatives: {(y==0).sum()}")
+print(f"✅ Dataset ready: {X.shape[0]} samples | Positives: {y.sum()} | Negatives: {len(y) - y.sum()}")
 
 # ======================
-# Step 7: Hyperparameter tuning (FAST - 20% sample)
+# Step 6: Hyperparameter tuning (GridSearch on 20% sample)
 # ======================
-df_sample = df_recent.sample(frac=0.2, random_state=42)
-X_sample = df_sample[features]
-y_sample = df_sample["outcome"]
+X_sample, _, y_sample, _ = train_test_split(
+    X, y, test_size=0.8, stratify=y, random_state=42
+)
 
 param_grid = {
-    'n_estimators': [100, 200],
-    'max_depth': [None, 10],
-    'min_samples_split': [2, 5],
-    'class_weight': ['balanced']
+    "n_estimators": [100, 200],
+    "max_depth": [None, 10, 20],
+    "min_samples_split": [2, 5],
+    "class_weight": ["balanced"]  # balance classes due to potential imbalance
 }
 
 print("🔍 Running GridSearchCV on 20% sample...")
-grid_search = GridSearchCV(RandomForestClassifier(random_state=42), param_grid, cv=3, n_jobs=-1)
+grid_search = GridSearchCV(
+    RandomForestClassifier(random_state=42),
+    param_grid,
+    cv=3,
+    scoring="f1",  # F1-score often better for imbalanced data than accuracy
+    n_jobs=-1,
+    verbose=1,
+)
 grid_search.fit(X_sample, y_sample)
-best_params = grid_search.best_params_
-print(f"✅ Best Params: {best_params}")
+print(f"✅ Best Params: {grid_search.best_params_}")
 
 # ======================
-# Step 8: Train FINAL model on FULL data
+# Step 7: Train final model on full dataset and evaluate
 # ======================
-final_model = RandomForestClassifier(**best_params, random_state=42)
+final_model = RandomForestClassifier(
+    **grid_search.best_params_, random_state=42
+)
 final_model.fit(X, y)
 
-# Cross-validation accuracy
-scores = cross_val_score(final_model, X, y, cv=5)
-print(f"✅ Cross-Validation Accuracy: {scores.mean():.4f}")
+cv_scores = cross_val_score(final_model, X, y, cv=5, scoring="f1")
+print(f"✅ 5-Fold Cross-Validation F1 Score: {cv_scores.mean():.4f}")
 
-# Feature Importance
+# Detailed classification report on training data
+y_pred = final_model.predict(X)
+print("\nClassification report on training data:")
+print(classification_report(y, y_pred))
+
+# ======================
+# Step 8: Feature Importances and model save
+# ======================
 importances = final_model.feature_importances_
-print("✅ Feature Importance:")
-for f, imp in zip(features, importances):
-    print(f"{f}: {imp:.4f}")
+print("✅ Feature Importances:")
+for f, imp in sorted(zip(features, importances), key=lambda x: x[1], reverse=True):
+    print(f"  {f}: {imp:.4f}")
 
-# Save model
-joblib.dump(final_model, "model.pkl")
-print("✅ Final model saved as model.pkl")
+joblib.dump(final_model, MODEL_SAVE_PATH)
+print(f"✅ Final model saved as {MODEL_SAVE_PATH}")

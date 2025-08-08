@@ -12,16 +12,17 @@ warnings.filterwarnings("ignore")
 CSV_PATH = "your_training_data.csv"
 MODEL_PATH = "model.pkl"
 
-# Trading parameters
-INITIAL_CAPITAL = 100000
-POSITION_SIZE = 0.05  # Reduced to 5% of capital per trade for safety
+# Trading parameters (in Indian Rupees)
+INITIAL_CAPITAL = 1000000  # ₹10 Lakhs starting capital
+FIXED_POSITION_SIZE = 100000  # ₹1 Lakh per trade
 STOP_LOSS_PCT = 0.05  # 5% stop loss
 TAKE_PROFIT_PCT = 0.10  # 10% take profit
-MIN_PRICE = 10.0  # Minimum price filter to avoid penny stock issues
-MAX_POSITION_SIZE = 0.2  # Maximum 20% of capital per trade
+MIN_PRICE = 50.0  # Minimum ₹50 per share
+MAX_PRICE = 10000.0  # Maximum ₹10,000 per share
+TRANSACTION_COST = 0.001  # 0.1% transaction cost per trade (brokerage + taxes)
 
 # ======================
-# Load Data and Model
+# Load and Clean Data
 # ======================
 print("Loading data and model...")
 df = pd.read_csv(CSV_PATH)
@@ -37,97 +38,89 @@ if 'date' in df.columns:
 
 print(f"Loaded {len(df)} rows of data")
 
-# ======================
-# Data Quality Checks
-# ======================
-print("Performing data quality checks...")
-
-# Remove rows with invalid prices
+# Strict data cleaning
+print("Cleaning data...")
 initial_rows = len(df)
-df = df[df['close'] > MIN_PRICE].copy()
-df = df[df['close'] < 100000].copy()  # Remove extremely high prices
-df = df[df['close'].notna()].copy()
 
-print(f"Removed {initial_rows - len(df)} rows with invalid prices")
-print(f"Price range: ${df['close'].min():.2f} - ${df['close'].max():.2f}")
+# Remove extreme prices and ensure clean data
+df = df[
+    (df['close'] >= MIN_PRICE) & 
+    (df['close'] <= MAX_PRICE) & 
+    (df['close'].notna()) &
+    (np.isfinite(df['close']))
+].copy()
+
+# Remove obvious data errors (huge price jumps)
+df['price_change'] = df['close'].pct_change().abs()
+df = df[df['price_change'] < 0.5].copy()  # Remove >50% single-day moves
+
+print(f"Cleaned dataset: {len(df)} rows (removed {initial_rows - len(df)} rows)")
+print(f"Price range: ₹{df['close'].min():.2f} - ₹{df['close'].max():.2f}")
 
 # ======================
 # Calculate Features
 # ======================
-print("Calculating technical indicators...")
-
-if 'rsi' not in df.columns:
-    df['rsi'] = ta.rsi(df['close'], length=14)
-
-if 'ema10' not in df.columns:
-    df['ema10'] = ta.ema(df['close'], length=10)
-
-if 'ema21' not in df.columns:
-    df['ema21'] = ta.ema(df['close'], length=21)
-
 features = ['rsi', 'atr', 'adx', 'ema10', 'ema21', 'volumechange']
 available_features = [f for f in features if f in df.columns]
 
-print(f"Available features: {available_features}")
-
-# Clean data
-df = df.dropna(subset=available_features + ['close']).reset_index(drop=True)
+print(f"Using features: {available_features}")
+df = df.dropna(subset=available_features).reset_index(drop=True)
 
 # ======================
 # Generate Signals
 # ======================
-print("Generating trading signals...")
-
+print("Generating signals...")
 X = df[available_features]
+
 df['ml_signal'] = model.predict(X)
 df['ml_probability'] = model.predict_proba(X)[:, 1]
 
-# RSI signals with additional filters
+# Conservative RSI signals
 df['rsi_signal'] = 0
-df.loc[(df['rsi'] < 30) & (df['rsi'].shift(1) >= 30) & (df['close'] > df['ema21']), 'rsi_signal'] = 1
-df.loc[(df['rsi'] > 70) & (df['rsi'].shift(1) <= 70), 'rsi_signal'] = -1
+df.loc[(df['rsi'] < 25) & (df['rsi'].shift(1) >= 25), 'rsi_signal'] = 1  # Very oversold
+df.loc[(df['rsi'] > 75) & (df['rsi'].shift(1) <= 75), 'rsi_signal'] = -1  # Very overbought
 
-# Combined strategy with probability threshold
+# High-confidence ML signals only
 df['combined_signal'] = 0
-df.loc[(df['ml_signal'] == 1) & (df['ml_probability'] > 0.6) & (df['rsi'] < 65), 'combined_signal'] = 1
-df.loc[(df['rsi'] > 75), 'combined_signal'] = -1
+df.loc[(df['ml_signal'] == 1) & (df['ml_probability'] > 0.7), 'combined_signal'] = 1
+df.loc[(df['ml_signal'] == 0) & (df['ml_probability'] < 0.3), 'combined_signal'] = -1
 
 # ======================
-# Improved Backtesting Engine
+# Realistic Backtesting Engine
 # ======================
-def run_backtest_safe(df, signal_column, initial_capital=INITIAL_CAPITAL):
+def realistic_backtest(df, signal_column, initial_capital=INITIAL_CAPITAL):
     """
-    Safe backtesting engine with better risk management
+    Realistic backtesting with fixed position sizes and transaction costs (in INR)
     """
     results = []
-    capital = initial_capital
-    position = 0
+    cash = initial_capital
+    position_shares = 0
     entry_price = 0
     entry_date = None
-    max_trades = 1000  # Limit number of trades
+    trade_count = 0
+    max_trades = 200  # Reasonable limit
     
-    for i in range(1, min(len(df), len(df))):
-        if len(results) >= max_trades:
+    for i in range(1, len(df)):
+        if trade_count >= max_trades:
             break
             
         current_date = df.loc[i, 'date'] if 'date' in df.columns else i
         current_price = df.loc[i, 'close']
         signal = df.loc[i, signal_column]
         
-        # Skip if price is invalid
-        if current_price <= 0 or np.isinf(current_price) or np.isnan(current_price):
+        # Skip invalid data
+        if current_price <= 0 or not np.isfinite(current_price):
             continue
         
         # Exit logic
-        if position != 0 and entry_price > 0:
+        if position_shares > 0 and entry_price > 0:
+            current_value = position_shares * current_price
             pct_change = (current_price - entry_price) / entry_price
-            
-            # Clamp extreme returns
-            pct_change = max(min(pct_change, 5.0), -0.99)  # Cap at 500% gain, -99% loss
             
             should_exit = False
             exit_reason = ""
             
+            # Exit conditions
             if pct_change <= -STOP_LOSS_PCT:
                 should_exit = True
                 exit_reason = "Stop Loss"
@@ -139,109 +132,87 @@ def run_backtest_safe(df, signal_column, initial_capital=INITIAL_CAPITAL):
                 exit_reason = "Signal Exit"
             
             if should_exit:
-                # Calculate safe trade result
-                position_value = min(position * entry_price, capital * MAX_POSITION_SIZE)
-                profit_loss = position_value * pct_change
+                # Calculate realistic exit
+                exit_value = current_value * (1 - TRANSACTION_COST)  # Transaction cost
+                profit_loss = exit_value - FIXED_POSITION_SIZE
+                cash += exit_value
                 
-                # Safety check
-                if abs(profit_loss) < capital * 2:  # Don't allow P&L > 200% of capital
-                    capital += profit_loss
-                    
-                    results.append({
-                        'entry_date': entry_date,
-                        'exit_date': current_date,
-                        'entry_price': entry_price,
-                        'exit_price': current_price,
-                        'position_size': position,
-                        'profit_loss': profit_loss,
-                        'return_pct': pct_change * 100,  # Convert to percentage
-                        'exit_reason': exit_reason,
-                        'capital': capital
-                    })
+                results.append({
+                    'entry_date': entry_date,
+                    'exit_date': current_date,
+                    'entry_price': entry_price,
+                    'exit_price': current_price,
+                    'shares': position_shares,
+                    'profit_loss': profit_loss,
+                    'return_pct': pct_change * 100,
+                    'exit_reason': exit_reason,
+                    'portfolio_value': cash
+                })
                 
-                position = 0
+                position_shares = 0
                 entry_price = 0
                 entry_date = None
+                trade_count += 1
         
-        # Entry logic with safety checks
-        if position == 0 and signal == 1 and capital > 0:
-            position_value = capital * POSITION_SIZE
-            if position_value > MIN_PRICE and current_price > MIN_PRICE:
-                position = position_value / current_price
+        # Entry logic
+        elif position_shares == 0 and signal == 1 and cash >= FIXED_POSITION_SIZE:
+            # Use fixed position size
+            position_cost = FIXED_POSITION_SIZE * (1 + TRANSACTION_COST)
+            
+            if cash >= position_cost:
+                position_shares = FIXED_POSITION_SIZE / current_price
                 entry_price = current_price
                 entry_date = current_date
+                cash -= position_cost
     
-    return pd.DataFrame(results)
+    # Close any remaining position
+    if position_shares > 0:
+        final_value = position_shares * df.iloc[-1]['close'] * (1 - TRANSACTION_COST)
+        profit_loss = final_value - FIXED_POSITION_SIZE
+        cash += final_value
+        
+        results.append({
+            'entry_date': entry_date,
+            'exit_date': df.iloc[-1]['date'] if 'date' in df.columns else len(df)-1,
+            'entry_price': entry_price,
+            'exit_price': df.iloc[-1]['close'],
+            'shares': position_shares,
+            'profit_loss': profit_loss,
+            'return_pct': (df.iloc[-1]['close'] - entry_price) / entry_price * 100,
+            'exit_reason': "End of Period",
+            'portfolio_value': cash
+        })
+    
+    return pd.DataFrame(results), cash
 
 # ======================
-# Run Safe Backtests
+# Run Realistic Backtests
 # ======================
-print("Running safe backtests...")
+print("Running realistic backtests...")
 
-ml_results = run_backtest_safe(df, 'ml_signal')
-rsi_results = run_backtest_safe(df, 'rsi_signal')
-combined_results = run_backtest_safe(df, 'combined_signal')
+ml_results, ml_final_cash = realistic_backtest(df, 'ml_signal')
+rsi_results, rsi_final_cash = realistic_backtest(df, 'rsi_signal')  
+combined_results, combined_final_cash = realistic_backtest(df, 'combined_signal')
 
 # ======================
-# Safe Performance Metrics
+# Realistic Performance Metrics
 # ======================
-def calculate_safe_metrics(results_df, strategy_name):
-    """Calculate safe performance metrics"""
+def calculate_realistic_metrics(results_df, final_cash, strategy_name):
+    """Calculate realistic performance metrics in Indian Rupees"""
     if len(results_df) == 0:
-        return f"No trades executed for {strategy_name} strategy"
+        return f"\n{strategy_name} Strategy: No trades executed"
     
     total_trades = len(results_df)
     winning_trades = len(results_df[results_df['profit_loss'] > 0])
-    losing_trades = len(results_df[results_df['profit_loss'] < 0])
-    win_rate = winning_trades / total_trades if total_trades > 0 else 0
+    win_rate = winning_trades / total_trades
     
     total_profit = results_df['profit_loss'].sum()
     avg_return = results_df['return_pct'].mean()
     max_return = results_df['return_pct'].max()
     min_return = results_df['return_pct'].min()
     
-    final_capital = INITIAL_CAPITAL + total_profit
-    total_return = total_profit / INITIAL_CAPITAL * 100
+    total_return = (final_cash - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
     
-    # Additional risk metrics
+    # Risk metrics
     std_return = results_df['return_pct'].std()
-    sharpe_ratio = avg_return / std_return if std_return > 0 else 0
-    
-    return f"""
-{strategy_name} Strategy Results:
-================================
-Total Trades: {total_trades}
-Winning Trades: {winning_trades}
-Losing Trades: {losing_trades}
-Win Rate: {win_rate:.2%}
-Total P&L: ${total_profit:,.2f}
-Total Return: {total_return:.2%}
-Average Return per Trade: {avg_return:.2f}%
-Best Trade: {max_return:.2f}%
-Worst Trade: {min_return:.2f}%
-Return Std Dev: {std_return:.2f}%
-Sharpe Ratio: {sharpe_ratio:.2f}
-Final Capital: ${final_capital:,.2f}
-"""
-
-# Print results
-print(calculate_safe_metrics(ml_results, "ML"))
-print(calculate_safe_metrics(rsi_results, "RSI"))
-print(calculate_safe_metrics(combined_results, "Combined"))
-
-# Save results
-if len(ml_results) > 0:
-    ml_results.to_csv('ml_backtest_safe.csv', index=False)
-    
-if len(rsi_results) > 0:
-    rsi_results.to_csv('rsi_backtest_safe.csv', index=False)
-    
-if len(combined_results) > 0:
-    combined_results.to_csv('combined_backtest_safe.csv', index=False)
-
-print("\nSafe backtesting complete!")
-print("Key improvements:")
-print("- Data quality filters applied")  
-print("- Position sizing limits enforced")
-print("- Return capping to prevent infinite values")
-print("- Additional risk metrics included")
+    sharpe = avg_return / std_return if std_return >

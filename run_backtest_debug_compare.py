@@ -195,7 +195,7 @@ rsi_results, rsi_final_cash = realistic_backtest(df, 'rsi_signal')
 combined_results, combined_final_cash = realistic_backtest(df, 'combined_signal')
 
 # ======================
-# Realistic Performance Metrics
+# Realistic Performance Metrics (FIXED SYNTAX)
 # ======================
 def calculate_realistic_metrics(results_df, final_cash, strategy_name):
     """Calculate realistic performance metrics in Indian Rupees"""
@@ -213,6 +213,67 @@ def calculate_realistic_metrics(results_df, final_cash, strategy_name):
     
     total_return = (final_cash - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
     
-    # Risk metrics
+    # Risk metrics - FIXED SYNTAX ERROR
     std_return = results_df['return_pct'].std()
-    sharpe = avg_return / std_return if std_return >
+    if std_return > 0:
+        sharpe = avg_return / std_return
+    else:
+        sharpe = 0
+    
+    max_drawdown = 0
+    
+    # Calculate max drawdown
+    portfolio_values = results_df['portfolio_value'].values
+    if len(portfolio_values) > 0:
+        peak = portfolio_values[0]
+        max_dd = 0
+        for value in portfolio_values:
+            if value > peak:
+                peak = value
+            drawdown = (peak - value) / peak
+            max_dd = max(max_dd, drawdown)
+        max_drawdown = max_dd * 100
+    
+    return f"""
+{strategy_name} Strategy Results:
+================================
+Total Trades: {total_trades}
+Winning Trades: {winning_trades}
+Win Rate: {win_rate:.2%}
+Total P&L: ₹{total_profit:,.2f}
+Total Return: {total_return:.2%}
+Avg Return/Trade: {avg_return:.2f}%
+Best Trade: {max_return:.2f}%
+Worst Trade: {min_return:.2f}%
+Volatility: {std_return:.2f}%
+Sharpe Ratio: {sharpe:.2f}
+Max Drawdown: {max_drawdown:.2f}%
+Final Portfolio: ₹{final_cash:,.2f}
+"""
+
+# Print realistic results
+print(calculate_realistic_metrics(ml_results, ml_final_cash, "ML"))
+print(calculate_realistic_metrics(rsi_results, rsi_final_cash, "RSI"))
+print(calculate_realistic_metrics(combined_results, combined_final_cash, "Combined"))
+
+# Save results
+if len(ml_results) > 0:
+    ml_results.to_csv('ml_realistic_backtest_inr.csv', index=False)
+
+if len(rsi_results) > 0:
+    rsi_results.to_csv('rsi_realistic_backtest_inr.csv', index=False)
+    
+if len(combined_results) > 0:
+    combined_results.to_csv('combined_realistic_backtest_inr.csv', index=False)
+
+print("\n" + "="*50)
+print("REALISTIC BACKTESTING COMPLETE (INR)")
+print("="*50)
+print("Key Parameters:")
+print("• Starting Capital: ₹10,00,000 (10 Lakhs)")
+print("• Position Size: ₹1,00,000 per trade (1 Lakh)")
+print("• Transaction costs: 0.1% (brokerage + taxes)")
+print("• Stop Loss: 5% | Take Profit: 10%") 
+print("• Price range: ₹50 - ₹10,000 per share")
+print("• Maximum 200 trades executed")
+print("• Results saved with '_inr' suffix")

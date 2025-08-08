@@ -76,7 +76,7 @@ print("Missing values count per feature and target:")
 print(df[features + [target]].isna().sum())
 
 # Drop initial rows affected by indicator lookbacks (e.g., 30 days)
-lookback = 30
+lookback = 40
 df = df.iloc[lookback:].copy()
 
 # Check rows after trimming

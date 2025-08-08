@@ -7,26 +7,33 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # ======================
-# Enhanced 15% Target Configurations
+# Advanced Exit Strategy Testing Configurations
 # ======================
 CSV_PATH = "your_training_data.csv"
 MODEL_PATH = "model.pkl"
 
-# Enhanced Trading parameters (in Indian Rupees)
+# Base trading parameters
 INITIAL_CAPITAL = 1000000  # ₹10 Lakhs starting capital
 FIXED_POSITION_SIZE = 100000  # ₹1 Lakh per trade
 INITIAL_STOP_LOSS_PCT = 0.05  # 5% initial stop loss
-TAKE_PROFIT_PCT = 0.15  # 15% take profit target (INCREASED)
-PROFIT_TRAIL_TRIGGER = 0.08  # Start trailing after 8% profit (LOWERED)
-ATR_MULTIPLIER = 2.0  # Tighter ATR trailing (REDUCED from 2.5)
+TRANSACTION_COST = 0.001
+
+# Different exit strategies to test
+EXIT_STRATEGIES = {
+    'tiered_ml': {'target': 0.15, 'trail_trigger': 0.05, 'atr_mult': 0.75},
+    'williams_optimized': {'target': 0.10, 'trail_trigger': 0.04, 'atr_mult': 0.75},
+    'chandelier_exit': {'target': 0.15, 'trail_trigger': 0.06, 'atr_mult': 1.0},
+    'parabolic_sar': {'target': 0.12, 'trail_trigger': 0.05, 'atr_mult': 0.5},
+    'volatility_adaptive': {'target': 0.15, 'trail_trigger': 0.05, 'atr_mult': 'dynamic'}
+}
+
 MIN_PRICE = 50.0
 MAX_PRICE = 10000.0
-TRANSACTION_COST = 0.001
 
 # ======================
 # Load and Clean Data
 # ======================
-print("Loading data and model for 15% target enhanced strategies...")
+print("Loading data for advanced exit strategy testing...")
 df = pd.read_csv(CSV_PATH)
 df.columns = [c.lower() for c in df.columns]
 
@@ -40,7 +47,7 @@ if 'date' in df.columns:
 
 print(f"Loaded {len(df)} rows of data")
 
-# Data cleaning (same as before)
+# Data cleaning
 initial_rows = len(df)
 df = df[
     (df['close'] >= MIN_PRICE) & 
@@ -55,7 +62,7 @@ df = df[df['price_change'] < 0.5].copy()
 print(f"Cleaned dataset: {len(df)} rows (removed {initial_rows - len(df)} rows)")
 
 # ======================
-# Enhanced Technical Indicators (Top 3 Only)
+# Enhanced Technical Indicators for Exit Strategies
 # ======================
 features = ['rsi', 'atr', 'adx', 'ema10', 'ema21', 'volumechange']
 available_features = [f for f in features if f in df.columns]
@@ -64,98 +71,60 @@ available_features = [f for f in features if f in df.columns]
 if 'atr' not in df.columns:
     df['atr'] = df['close'].rolling(14).apply(lambda x: x.std() * 1.5)
 
-# WILLIAMS %R STRATEGY (Best RSI Alternative)
+# Calculate additional exit indicators
+df['atr_20'] = df['close'].rolling(20).apply(lambda x: x.std() * 1.2)  # Longer-term ATR
+df['volatility'] = df['close'].pct_change().rolling(10).std()  # 10-period volatility
+
+# Parabolic SAR approximation
+df['sar'] = df['close'].copy()
+for i in range(1, len(df)):
+    if df.loc[i, 'close'] > df.loc[i-1, 'close']:
+        df.loc[i, 'sar'] = df.loc[i-1, 'sar'] + 0.02 * (df.loc[i, 'close'] - df.loc[i-1, 'sar'])
+    else:
+        df.loc[i, 'sar'] = df.loc[i-1, 'sar'] - 0.02 * (df.loc[i-1, 'sar'] - df.loc[i, 'close'])
+
+# Chandelier Exit calculation
+df['chandelier_exit'] = df['close'].rolling(22).max() - (df['atr'] * 3)
+
+# Williams %R (our proven RSI alternative)
 df['williams_r'] = ((df['close'].rolling(14).max() - df['close']) / 
                    (df['close'].rolling(14).max() - df['close'].rolling(14).min())) * -100
 
-# SUPERTREND STRATEGY (Trend Following)
-df['hl2'] = (df['close'] + df['close'].shift(1)) / 2
-supertrend_data = ta.supertrend(df['close'], df['close'], df['close'], length=10, multiplier=3)
-if supertrend_data is not None:
-    df['supertrend'] = supertrend_data['SUPERT_10_3.0']
-    df['supertrend_direction'] = supertrend_data['SUPERTd_10_3.0']
-else:
-    # Fallback SuperTrend calculation
-    df['supertrend'] = df['close']
-    df['supertrend_direction'] = np.where(df['close'] > df['close'].shift(10), 1, -1)
-
 print(f"Enhanced features available: {available_features}")
-df = df.dropna(subset=available_features + ['atr', 'williams_r']).reset_index(drop=True)
+df = df.dropna(subset=available_features + ['atr', 'williams_r', 'sar']).reset_index(drop=True)
 
 # ======================
-# Enhanced Strategy Signal Generation (Top 3 Only)
+# Strategy Signal Generation
 # ======================
-print("Generating enhanced signals for TOP 3 strategies only...")
+print("Generating signals for ML and Williams %R strategies...")
 X = df[available_features]
 
 df['ml_signal'] = model.predict(X)
 df['ml_probability'] = model.predict_proba(X)[:, 1]
 
-# ENHANCED ML STRATEGY (with higher confidence)
+# Enhanced ML Strategy (70% confidence)
 df['enhanced_ml_signal'] = 0
-enhanced_ml_buy_condition = (
-    (df['ml_signal'] == 1) & 
-    (df['ml_probability'] > 0.70)  # Higher confidence for 15% targets
-)
-df.loc[enhanced_ml_buy_condition, 'enhanced_ml_signal'] = 1
+df.loc[(df['ml_signal'] == 1) & (df['ml_probability'] > 0.70), 'enhanced_ml_signal'] = 1
+df.loc[(df['ml_signal'] == 0) & (df['ml_probability'] < 0.35), 'enhanced_ml_signal'] = -1
 
-enhanced_ml_sell_condition = (
-    (df['ml_signal'] == 0) & 
-    (df['ml_probability'] < 0.35)
-)
-df.loc[enhanced_ml_sell_condition, 'enhanced_ml_signal'] = -1
-
-# ENHANCED WILLIAMS %R STRATEGY (Best RSI Replacement)
+# Enhanced Williams %R Strategy
 df['enhanced_williams_signal'] = 0
-enhanced_williams_buy_condition = (
-    (df['williams_r'] < -80) &  # Oversold
-    (df['williams_r'] > df['williams_r'].shift(1)) &  # Starting to turn up
-    (df['williams_r'].shift(1) < df['williams_r'].shift(2)) &  # Was declining
-    (df['close'] > df['close'].shift(3))  # Short-term momentum
+williams_buy_condition = (
+    (df['williams_r'] < -80) &
+    (df['williams_r'] > df['williams_r'].shift(1)) &
+    (df['close'] > df['close'].shift(3))
 )
-df.loc[enhanced_williams_buy_condition, 'enhanced_williams_signal'] = 1
+df.loc[williams_buy_condition, 'enhanced_williams_signal'] = 1
 
-enhanced_williams_sell_condition = (
-    (df['williams_r'] > -15) |  # Overbought exit
-    (df['close'] < df['close'].shift(5))  # Momentum fading
-)
-df.loc[enhanced_williams_sell_condition, 'enhanced_williams_signal'] = -1
-
-# ENHANCED SUPERTREND STRATEGY
-df['enhanced_supertrend_signal'] = 0
-if 'supertrend_direction' in df.columns:
-    enhanced_supertrend_buy_condition = (
-        (df['supertrend_direction'] == 1) &  # SuperTrend bullish
-        (df['close'] > df['close'].shift(2))  # Price momentum
-    )
-    df.loc[enhanced_supertrend_buy_condition, 'enhanced_supertrend_signal'] = 1
-    
-    enhanced_supertrend_sell_condition = (df['supertrend_direction'] == -1)
-    df.loc[enhanced_supertrend_sell_condition, 'enhanced_supertrend_signal'] = -1
-
-# COMBINED TOP PERFORMERS STRATEGY
-df['top_performers_combined_signal'] = 0
-top_combined_buy_condition = (
-    (df['enhanced_ml_signal'] == 1) &  # ML confidence
-    (
-        (df['enhanced_williams_signal'] == 1) |  # Williams %R confirmation
-        (df['enhanced_supertrend_signal'] == 1)   # OR SuperTrend confirmation
-    )
-)
-df.loc[top_combined_buy_condition, 'top_performers_combined_signal'] = 1
-
-top_combined_sell_condition = (
-    (df['enhanced_williams_signal'] == -1) |
-    (df['enhanced_supertrend_signal'] == -1)
-)
-df.loc[top_combined_sell_condition, 'top_performers_combined_signal'] = -1
+williams_sell_condition = (df['williams_r'] > -15) | (df['close'] < df['close'].shift(5))
+df.loc[williams_sell_condition, 'enhanced_williams_signal'] = -1
 
 # ======================
-# Advanced ATR-Based Trailing Stop Engine (Enhanced)
+# Advanced Exit Strategy Backtesting Engine
 # ======================
-def enhanced_15pct_atr_backtest(df, signal_column, initial_capital=INITIAL_CAPITAL):
+def advanced_exit_strategy_backtest(df, signal_column, exit_strategy_name, strategy_params, initial_capital=INITIAL_CAPITAL):
     """
-    Enhanced backtesting with 15% targets and improved ATR trailing stops
+    Advanced backtesting with multiple exit strategy models
     """
     results = []
     cash = initial_capital
@@ -164,12 +133,27 @@ def enhanced_15pct_atr_backtest(df, signal_column, initial_capital=INITIAL_CAPIT
     entry_date = None
     highest_price_since_entry = 0
     initial_stop_loss = 0
+    
+    # Exit strategy variables
     atr_trailing_stop = 0
     profit_trail_active = False
+    sar_trailing_stop = 0
+    chandelier_trailing_stop = 0
+    
     trade_count = 0
     max_trades = 200
+    
+    # Extract strategy parameters
+    take_profit_pct = strategy_params['target']
+    trail_trigger = strategy_params['trail_trigger'] 
+    atr_multiplier = strategy_params['atr_mult']
+    
+    # Tracking variables
     trailing_activations = 0
     trailing_exits = 0
+    tiered_exits = 0
+    
+    print(f"\nTesting {exit_strategy_name}: Target={take_profit_pct*100}%, Trigger={trail_trigger*100}%, ATR={atr_multiplier}")
     
     for i in range(1, len(df)):
         if trade_count >= max_trades:
@@ -178,46 +162,104 @@ def enhanced_15pct_atr_backtest(df, signal_column, initial_capital=INITIAL_CAPIT
         current_date = df.loc[i, 'date'] if 'date' in df.columns else i
         current_price = df.loc[i, 'close']
         current_atr = df.loc[i, 'atr']
+        current_volatility = df.loc[i, 'volatility']
         signal = df.loc[i, signal_column]
         
         if current_price <= 0 or not np.isfinite(current_price) or pd.isna(current_atr):
             continue
         
-        # Enhanced exit logic with improved ATR trailing
+        # Enhanced exit logic with multiple strategies
         if position_shares > 0 and entry_price > 0:
             if current_price > highest_price_since_entry:
                 highest_price_since_entry = current_price
             
             pct_change = (current_price - entry_price) / entry_price
             
-            # Enhanced ATR trailing activation (8% instead of 6%)
-            if not profit_trail_active and pct_change >= PROFIT_TRAIL_TRIGGER:
-                profit_trail_active = True
-                atr_trailing_stop = current_price - (current_atr * ATR_MULTIPLIER)
-                trailing_activations += 1
-                print(f"ATR trailing activated: Entry Rs{entry_price:.2f}, Current Rs{current_price:.2f}, Profit: {pct_change*100:.2f}%")
+            # Dynamic ATR multiplier for volatility adaptive strategy
+            if atr_multiplier == 'dynamic':
+                dynamic_atr_mult = max(0.5, min(2.0, current_volatility * 100))
+            else:
+                dynamic_atr_mult = atr_multiplier
             
-            # Update ATR trailing stop (tighter 2.0x multiplier)
+            # Activate trailing stops
+            if not profit_trail_active and pct_change >= trail_trigger:
+                profit_trail_active = True
+                trailing_activations += 1
+                
+                # Different trailing stop calculations
+                if exit_strategy_name == 'chandelier_exit':
+                    chandelier_trailing_stop = df.loc[i, 'chandelier_exit']
+                elif exit_strategy_name == 'parabolic_sar':
+                    sar_trailing_stop = df.loc[i, 'sar']
+                else:
+                    atr_trailing_stop = current_price - (current_atr * dynamic_atr_mult)
+            
+            # Update trailing stops
             if profit_trail_active:
-                new_atr_stop = current_price - (current_atr * ATR_MULTIPLIER)
-                if new_atr_stop > atr_trailing_stop:
-                    atr_trailing_stop = new_atr_stop
+                if exit_strategy_name == 'chandelier_exit':
+                    new_chandelier = df.loc[i, 'chandelier_exit']
+                    if new_chandelier > chandelier_trailing_stop:
+                        chandelier_trailing_stop = new_chandelier
+                elif exit_strategy_name == 'parabolic_sar':
+                    sar_trailing_stop = df.loc[i, 'sar']
+                else:
+                    new_atr_stop = current_price - (current_atr * dynamic_atr_mult)
+                    if new_atr_stop > atr_trailing_stop:
+                        atr_trailing_stop = new_atr_stop
             
             should_exit = False
             exit_reason = ""
             
-            # Enhanced exit conditions
+            # Exit condition logic based on strategy
             if current_price <= initial_stop_loss:
                 should_exit = True
                 exit_reason = "Initial Stop Loss"
+                
+            elif exit_strategy_name == 'tiered_ml' and profit_trail_active:
+                # Tiered profit taking for ML strategy
+                if pct_change >= 0.08 and pct_change < 0.12:
+                    should_exit = True
+                    exit_reason = "Tiered Exit (8%)"
+                    tiered_exits += 1
+                elif pct_change >= 0.12 and pct_change < 0.18:
+                    should_exit = True
+                    exit_reason = "Tiered Exit (12%)"
+                    tiered_exits += 1
+                elif current_price <= atr_trailing_stop:
+                    should_exit = True
+                    exit_reason = "ATR Trailing Stop"
+                    trailing_exits += 1
+                elif pct_change >= take_profit_pct:
+                    should_exit = True
+                    exit_reason = "Final Target (15%)"
+                    
+            elif exit_strategy_name == 'chandelier_exit' and profit_trail_active:
+                if current_price <= chandelier_trailing_stop:
+                    should_exit = True
+                    exit_reason = "Chandelier Exit"
+                    trailing_exits += 1
+                elif pct_change >= take_profit_pct:
+                    should_exit = True
+                    exit_reason = "Profit Target"
+                    
+            elif exit_strategy_name == 'parabolic_sar' and profit_trail_active:
+                if current_price <= sar_trailing_stop:
+                    should_exit = True
+                    exit_reason = "SAR Trailing Stop"
+                    trailing_exits += 1
+                elif pct_change >= take_profit_pct:
+                    should_exit = True
+                    exit_reason = "Profit Target"
+                    
             elif profit_trail_active and current_price <= atr_trailing_stop:
                 should_exit = True
                 exit_reason = "ATR Trailing Stop"
                 trailing_exits += 1
-                print(f"ATR trailing exit: Rs{current_price:.2f} <= Rs{atr_trailing_stop:.2f}, Profit secured: {pct_change*100:.2f}%")
-            elif pct_change >= TAKE_PROFIT_PCT:
+                
+            elif pct_change >= take_profit_pct:
                 should_exit = True
-                exit_reason = "Take Profit Target (15%)"
+                exit_reason = "Profit Target"
+                
             elif signal == -1:
                 should_exit = True
                 exit_reason = "Signal Exit"
@@ -237,8 +279,9 @@ def enhanced_15pct_atr_backtest(df, signal_column, initial_capital=INITIAL_CAPIT
                     'profit_loss': profit_loss,
                     'return_pct': pct_change * 100,
                     'exit_reason': exit_reason,
-                    'atr_trail_active': profit_trail_active,
-                    'atr_trail_price': atr_trailing_stop if profit_trail_active else 0,
+                    'exit_strategy': exit_strategy_name,
+                    'trail_active': profit_trail_active,
+                    'atr_mult_used': dynamic_atr_mult,
                     'max_profit_pct': (highest_price_since_entry - entry_price) / entry_price * 100,
                     'portfolio_value': cash
                 })
@@ -250,10 +293,12 @@ def enhanced_15pct_atr_backtest(df, signal_column, initial_capital=INITIAL_CAPIT
                 highest_price_since_entry = 0
                 initial_stop_loss = 0
                 atr_trailing_stop = 0
+                sar_trailing_stop = 0
+                chandelier_trailing_stop = 0
                 profit_trail_active = False
                 trade_count += 1
         
-        # Entry logic (same as before)
+        # Entry logic
         elif position_shares == 0 and signal == 1 and cash >= FIXED_POSITION_SIZE:
             position_cost = FIXED_POSITION_SIZE * (1 + TRANSACTION_COST)
             
@@ -265,47 +310,67 @@ def enhanced_15pct_atr_backtest(df, signal_column, initial_capital=INITIAL_CAPIT
                 initial_stop_loss = entry_price * (1 - INITIAL_STOP_LOSS_PCT)
                 cash -= position_cost
     
-    print(f"ATR Trailing Summary: {trailing_activations} activations, {trailing_exits} exits")
+    print(f"{exit_strategy_name} Summary: {trailing_activations} trail activations, {trailing_exits} trail exits, {tiered_exits} tiered exits")
     return pd.DataFrame(results), cash
 
 # ======================
-# Run Enhanced 15% Target Backtests
+# Run Advanced Exit Strategy Tests
 # ======================
-print("Running enhanced 15% target backtests (TOP 3 + Combined)...")
+print("Running comprehensive exit strategy comparison...")
 
-# Test top 3 strategies + combined
-enhanced_ml_results, enhanced_ml_final_cash = enhanced_15pct_atr_backtest(df, 'enhanced_ml_signal')
-enhanced_williams_results, enhanced_williams_final_cash = enhanced_15pct_atr_backtest(df, 'enhanced_williams_signal')
-enhanced_supertrend_results, enhanced_supertrend_final_cash = enhanced_15pct_atr_backtest(df, 'enhanced_supertrend_signal')
-top_combined_results, top_combined_final_cash = enhanced_15pct_atr_backtest(df, 'top_performers_combined_signal')
+# Test different exit strategies on ML and Williams %R
+test_results = {}
+
+# ML Strategy with different exit approaches
+ml_tiered_results, ml_tiered_cash = advanced_exit_strategy_backtest(
+    df, 'enhanced_ml_signal', 'tiered_ml', EXIT_STRATEGIES['tiered_ml']
+)
+test_results['ML Tiered (0.75 ATR)'] = {'results': ml_tiered_results, 'cash': ml_tiered_cash}
+
+ml_chandelier_results, ml_chandelier_cash = advanced_exit_strategy_backtest(
+    df, 'enhanced_ml_signal', 'chandelier_exit', EXIT_STRATEGIES['chandelier_exit']
+)
+test_results['ML Chandelier Exit'] = {'results': ml_chandelier_results, 'cash': ml_chandelier_cash}
+
+ml_sar_results, ml_sar_cash = advanced_exit_strategy_backtest(
+    df, 'enhanced_ml_signal', 'parabolic_sar', EXIT_STRATEGIES['parabolic_sar']
+)
+test_results['ML Parabolic SAR'] = {'results': ml_sar_results, 'cash': ml_sar_cash}
+
+ml_adaptive_results, ml_adaptive_cash = advanced_exit_strategy_backtest(
+    df, 'enhanced_ml_signal', 'volatility_adaptive', EXIT_STRATEGIES['volatility_adaptive']
+)
+test_results['ML Volatility Adaptive'] = {'results': ml_adaptive_results, 'cash': ml_adaptive_cash}
+
+# Williams %R with optimized exit
+williams_optimized_results, williams_optimized_cash = advanced_exit_strategy_backtest(
+    df, 'enhanced_williams_signal', 'williams_optimized', EXIT_STRATEGIES['williams_optimized']
+)
+test_results['Williams %R Optimized'] = {'results': williams_optimized_results, 'cash': williams_optimized_cash}
 
 # ======================
-# Enhanced Performance Metrics for 15% Targets
+# Advanced Performance Analysis
 # ======================
-def calculate_15pct_metrics(results_df, final_cash, strategy_name):
-    """Calculate comprehensive metrics for 15% target strategies"""
+def calculate_advanced_exit_metrics(results_df, final_cash, strategy_name):
+    """Calculate comprehensive exit strategy performance metrics"""
     if len(results_df) == 0:
-        return f"\n{strategy_name} Strategy (15% Target): No trades executed"
+        return f"\n{strategy_name}: No trades executed"
     
     total_trades = len(results_df)
     winning_trades = len(results_df[results_df['profit_loss'] > 0])
     win_rate = winning_trades / total_trades
     
-    # Enhanced exit analysis
+    # Advanced exit analysis
     exit_reasons = results_df['exit_reason'].value_counts()
-    atr_trailing_stops = len(results_df[results_df['exit_reason'] == 'ATR Trailing Stop'])
-    profit_targets_15 = len(results_df[results_df['exit_reason'] == 'Take Profit Target (15%)'])
-    signal_exits = exit_reasons.get('Signal Exit', 0)
-    stop_losses = exit_reasons.get('Initial Stop Loss', 0)
+    trailing_stops = len(results_df[results_df['exit_reason'].str.contains('Trailing|SAR|Chandelier', na=False)])
+    tiered_exits = len(results_df[results_df['exit_reason'].str.contains('Tiered', na=False)])
+    profit_targets = len(results_df[results_df['exit_reason'].str.contains('Target|Final', na=False)])
     
     total_profit = results_df['profit_loss'].sum()
     avg_return = results_df['return_pct'].mean()
     max_return = results_df['return_pct'].max()
     min_return = results_df['return_pct'].min()
-    
-    # New metrics for 15% analysis
-    avg_max_profit = results_df['max_profit_pct'].mean()  # Average maximum profit reached
-    trades_above_15 = len(results_df[results_df['max_profit_pct'] >= 15])  # How many could have hit 15%
+    avg_max_profit = results_df['max_profit_pct'].mean()
     
     total_return = (final_cash - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
     
@@ -325,12 +390,12 @@ def calculate_15pct_metrics(results_df, final_cash, strategy_name):
             max_drawdown = max(max_drawdown, drawdown)
         max_drawdown = max_drawdown * 100
     
-    # ATR trailing effectiveness
-    atr_trades = results_df[results_df['atr_trail_active'] == True]
-    atr_success_rate = len(atr_trades[atr_trades['profit_loss'] > 0]) / len(atr_trades) if len(atr_trades) > 0 else 0
+    # Exit effectiveness
+    trail_trades = results_df[results_df['trail_active'] == True]
+    trail_effectiveness = len(trail_trades[trail_trades['profit_loss'] > 0]) / len(trail_trades) if len(trail_trades) > 0 else 0
     
     return f"""
-{strategy_name} Strategy Results (15% Target):
+{strategy_name} Exit Strategy Results:
 ===========================================
 TRADE SUMMARY:
 Total Trades: {total_trades}
@@ -343,84 +408,81 @@ Total Return: {total_return:.2%}
 Avg Return/Trade: {avg_return:.2f}%
 Best Trade: {max_return:.2f}%
 Worst Trade: {min_return:.2f}%
+Avg Max Profit: {avg_max_profit:.2f}%
 Final Portfolio: Rs{final_cash:,.2f}
-
-15% TARGET ANALYSIS:
-Trades Hitting 15% Target: {profit_targets_15} ({profit_targets_15/total_trades*100:.1f}%)
-Trades Above 15% Peak: {trades_above_15} ({trades_above_15/total_trades*100:.1f}%)
-Avg Maximum Profit: {avg_max_profit:.2f}%
 
 RISK METRICS:
 Volatility: {std_return:.2f}%
 Sharpe Ratio: {sharpe:.2f}
 Max Drawdown: {max_drawdown:.2f}%
 
-EXIT ANALYSIS:
-- ATR Trailing Stops: {atr_trailing_stops} ({atr_trailing_stops/total_trades*100:.1f}%)
-- 15% Profit Targets: {profit_targets_15} ({profit_targets_15/total_trades*100:.1f}%)
-- Signal Exits: {signal_exits} ({signal_exits/total_trades*100:.1f}%)
-- Initial Stop Losses: {stop_losses} ({stop_losses/total_trades*100:.1f}%)
+ADVANCED EXIT ANALYSIS:
+- Trailing Stops: {trailing_stops} ({trailing_stops/total_trades*100:.1f}%)
+- Tiered Exits: {tiered_exits} ({tiered_exits/total_trades*100:.1f}%)
+- Profit Targets: {profit_targets} ({profit_targets/total_trades*100:.1f}%)
+- Stop Losses: {exit_reasons.get('Initial Stop Loss', 0)}
 
-ATR TRAILING EFFECTIVENESS:
-- Trades with ATR Trailing: {len(atr_trades)}
-- ATR Success Rate: {atr_success_rate:.1%}
-- Avg ATR Trailing Return: {atr_trades['return_pct'].mean():.2f}%
+TRAILING EFFECTIVENESS:
+- Trades with Trailing: {len(trail_trades)}
+- Trail Success Rate: {trail_effectiveness:.1%}
+- Avg Trail Return: {trail_trades['return_pct'].mean():.2f}%
 """
 
-# Print enhanced 15% results
-print("\n" + "="*70)
-print("ENHANCED STRATEGY BACKTEST RESULTS (15% PROFIT TARGET)")
-print("="*70)
+# Print comprehensive exit strategy comparison
+print("\n" + "="*80)
+print("COMPREHENSIVE EXIT STRATEGY PERFORMANCE COMPARISON")
+print("="*80)
 
-print(calculate_15pct_metrics(enhanced_ml_results, enhanced_ml_final_cash, "Enhanced ML"))
-print(calculate_15pct_metrics(enhanced_williams_results, enhanced_williams_final_cash, "Enhanced Williams %R"))
-print(calculate_15pct_metrics(enhanced_supertrend_results, enhanced_supertrend_final_cash, "Enhanced SuperTrend"))
-print(calculate_15pct_metrics(top_combined_results, top_combined_final_cash, "Top Performers Combined"))
+for strategy_name, data in test_results.items():
+    print(calculate_advanced_exit_metrics(data['results'], data['cash'], strategy_name))
 
 # ======================
-# 10% vs 15% Comparison Summary
+# Exit Strategy Rankings
 # ======================
-print("\n" + "="*70)
-print("10% vs 15% TARGET COMPARISON SUMMARY")
-print("="*70)
+print("\n" + "="*80)
+print("EXIT STRATEGY RANKINGS")
+print("="*80)
 
-strategies_15_data = {
-    'Enhanced ML': {'final': enhanced_ml_final_cash, 'trades': len(enhanced_ml_results), 'win_rate': len(enhanced_ml_results[enhanced_ml_results['profit_loss'] > 0])/len(enhanced_ml_results) if len(enhanced_ml_results) > 0 else 0},
-    'Enhanced Williams %R': {'final': enhanced_williams_final_cash, 'trades': len(enhanced_williams_results), 'win_rate': len(enhanced_williams_results[enhanced_williams_results['profit_loss'] > 0])/len(enhanced_williams_results) if len(enhanced_williams_results) > 0 else 0},
-    'Enhanced SuperTrend': {'final': enhanced_supertrend_final_cash, 'trades': len(enhanced_supertrend_results), 'win_rate': len(enhanced_supertrend_results[enhanced_supertrend_results['profit_loss'] > 0])/len(enhanced_supertrend_results) if len(enhanced_supertrend_results) > 0 else 0},
-    'Top Combined': {'final': top_combined_final_cash, 'trades': len(top_combined_results), 'win_rate': len(top_combined_results[top_combined_results['profit_loss'] > 0])/len(top_combined_results) if len(top_combined_results) > 0 else 0}
-}
+strategy_rankings = []
+for name, data in test_results.items():
+    if len(data['results']) > 0:
+        win_rate = len(data['results'][data['results']['profit_loss'] > 0]) / len(data['results'])
+        total_return = (data['cash'] - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
+        trailing_exits = len(data['results'][data['results']['exit_reason'].str.contains('Trailing|SAR|Chandelier', na=False)])
+        
+        strategy_rankings.append({
+            'name': name,
+            'final_cash': data['cash'],
+            'return_pct': total_return,
+            'win_rate': win_rate,
+            'trades': len(data['results']),
+            'trailing_exits': trailing_exits
+        })
 
-print("STRATEGY RANKING (15% Targets):")
-ranked_15_strategies = sorted(strategies_15_data.items(), key=lambda x: x[1]['final'], reverse=True)
-for i, (strategy, stats) in enumerate(ranked_15_strategies, 1):
-    return_pct = (stats['final'] - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
-    print(f"{i}. {strategy}: Rs{stats['final']:,.0f} ({return_pct:.1f}% return, {stats['win_rate']:.1%} win rate, {stats['trades']} trades)")
+# Sort by final portfolio value
+strategy_rankings.sort(key=lambda x: x['final_cash'], reverse=True)
+
+print("FINAL RANKINGS:")
+for i, strategy in enumerate(strategy_rankings, 1):
+    print(f"{i}. {strategy['name']}: Rs{strategy['final_cash']:,.0f}")
+    print(f"   Return: {strategy['return_pct']:.1f}% | Win Rate: {strategy['win_rate']:.1%} | Trailing Exits: {strategy['trailing_exits']}")
 
 # ======================
-# Save Enhanced Results
+# Save Results
 # ======================
-if len(enhanced_ml_results) > 0:
-    enhanced_ml_results.to_csv('enhanced_ml_15pct_backtest.csv', index=False)
+for strategy_name, data in test_results.items():
+    if len(data['results']) > 0:
+        filename = f"{strategy_name.lower().replace(' ', '_')}_exit_test.csv"
+        data['results'].to_csv(filename, index=False)
 
-if len(enhanced_williams_results) > 0:
-    enhanced_williams_results.to_csv('enhanced_williams_15pct_backtest.csv', index=False)
-    
-if len(enhanced_supertrend_results) > 0:
-    enhanced_supertrend_results.to_csv('enhanced_supertrend_15pct_backtest.csv', index=False)
+print(f"\nADVANCED EXIT STRATEGY TESTING COMPLETE!")
+print("Key Features Tested:")
+print("- 0.75x ATR multiplier (ultra-tight trailing)")
+print("- Tiered profit taking (8%, 12%, 15%)")
+print("- Chandelier Exit (ATR + price extremes)")
+print("- Parabolic SAR trailing")
+print("- Volatility-adaptive trailing")
+print("- Comprehensive exit reason analysis")
+print("- All results saved with '_exit_test' suffix")
 
-if len(top_combined_results) > 0:
-    top_combined_results.to_csv('top_combined_15pct_backtest.csv', index=False)
-
-print(f"\nENHANCED 15% TARGET BACKTESTING COMPLETE!")
-print("Key Enhanced Features:")
-print("- 15% profit targets (increased from 10%)")
-print("- 8% ATR trailing trigger (lowered from 6%)")
-print("- 2.0x ATR multiplier (tightened from 2.5x)")
-print("- Higher ML confidence threshold (70%)")
-print("- Enhanced Williams %R with momentum filters")
-print("- Improved SuperTrend with momentum confirmation")
-print("- Top performers combined strategy")
-print("- Detailed 15% target achievement analysis")
-print("- Enhanced exit reason tracking")
-print("- Maximum profit reached per trade analysis")
+print(f"\n🎯 RECOMMENDATION: Use the TOP RANKED exit strategy for live trading!")

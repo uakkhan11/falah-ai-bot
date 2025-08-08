@@ -22,35 +22,66 @@ for col in required_cols:
     if col not in df.columns:
         raise ValueError(f"Required column '{col}' not found in dataset.")
 
-# Compute additional indicators if possible
-# MACD requires only 'close'
-macd = ta.macd(df['close'])
-df['macd_hist'] = macd['MACDh_12_26_9']
-df['macd_signal'] = macd['MACDs_12_26_9']
+# Compute missing indicators/features
+if "rsi" not in df.columns:
+    df["rsi"] = ta.rsi(df["close"], length=14)
 
-# Calculate other indicators only if you have 'high', 'low', 'volume'
+if all(col in df.columns for col in ['high', 'low', 'close']):
+    if "atr" not in df.columns:
+        df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+    if "adx" not in df.columns:
+        df["adx"] = ta.adx(df["high"], df["low"], df["close"], length=14)["adx_14"]
+
+if "ema10" not in df.columns:
+    df["ema10"] = ta.ema(df["close"], length=10)
+if "ema21" not in df.columns:
+    df["ema21"] = ta.ema(df["close"], length=21)
+
+if "volume" in df.columns:
+    if "volumechange" not in df.columns:
+        df["volumechange"] = df["volume"].pct_change().fillna(0)
+else:
+    df["volumechange"] = pd.NA
+
+# MACD calculation
+macd = ta.macd(df['close'])
+df['macd_hist'] = macd['macdh_12_26_9']
+df['macd_signal'] = macd['macds_12_26_9']
+
 if all(col in df.columns for col in ['high', 'low', 'volume']):
     stoch = ta.stoch(df['high'], df['low'], df['close'])
-    df['stoch_k'] = stoch['STOCHk_14_3_3']
-    df['stoch_d'] = stoch['STOCHd_14_3_3']
+    df['stoch_k'] = stoch['stochk_14_3_3']
+    df['stoch_d'] = stoch['stochd_14_3_3']
     df['obv'] = ta.obv(df['close'], df['volume'])
     df['vwap'] = ta.vwap(df['high'], df['low'], df['close'], df['volume'])
 else:
-    # If missing columns, set these features to NaN or skip
     df['stoch_k'] = pd.NA
     df['stoch_d'] = pd.NA
     df['obv'] = pd.NA
     df['vwap'] = pd.NA
 
-# Define features and target matching your CSV structure
-features = ["rsi", "atr", "adx", "ema10", "ema21", "volumechange",
-            "macd_hist", "macd_signal", "stoch_k", "stoch_d", "obv", "vwap"]
+# Build features list dynamically based on available columns
+features = ["rsi", "ema10", "ema21", "macd_hist", "macd_signal"]
+
+if 'atr' in df.columns and 'adx' in df.columns:
+    features += ["atr", "adx"]
+if 'volumechange' in df.columns and pd.api.types.is_numeric_dtype(df['volumechange']):
+    features.append('volumechange')
+if 'stoch_k' in df.columns and 'stoch_d' in df.columns:
+    features += ['stoch_k', 'stoch_d']
+if 'obv' in df.columns:
+    features.append('obv')
+if 'vwap' in df.columns:
+    features.append('vwap')
+
 target = "outcome"
+if target not in df.columns:
+    raise ValueError(f"Target column '{target}' not found in dataset.")
 
-# Drop rows with any missing feature or target values
+print(f"Rows before dropna: {len(df)}")
 df.dropna(subset=features + [target], inplace=True)
+print(f"Rows after dropna: {len(df)}")
 
-# Prepare X and y for modeling
 X = df[features]
 y = df[target].astype(int)
 

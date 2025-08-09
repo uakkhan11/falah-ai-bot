@@ -167,7 +167,7 @@ def run_full_retest():
         # Calculate volumechange
         df['volumechange'] = df['volume'].pct_change().fillna(0)
         # Merge ML predictions
-        df_ml_raw = pd.read_csv(CSV_PATH, parse_dates=['date'])
+        df_ml_raw = pd.read_csv(your_training_data.csv, parse_dates=['date'])
         df_ml_raw['date'] = pd.to_datetime(df_ml_raw['date']).dt.tz_localize(None)
         df['date'] = pd.to_datetime(df['date']).dt.tz_localize(None)
         df_full = df.merge(df_ml_raw[['date']], on='date', how='inner')

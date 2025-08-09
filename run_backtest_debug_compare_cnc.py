@@ -36,6 +36,10 @@ df_raw = pd.read_csv("swing_data/RELIANCE.csv", parse_dates=["date"])
 df_raw.columns = df_raw.columns.str.lower()
 df_raw["date"] = df_raw["date"].dt.tz_localize(None)
 
+# Right after loading:
+df_ml["date"]  = pd.to_datetime(df_ml["date"], errors="coerce").dt.tz_localize(None)
+df_raw["date"] = pd.to_datetime(df_raw["date"], errors="coerce").dt.tz_localize(None)
+
 df = df_raw.merge(df_ml[["date"]], on="date", how="inner")
 df.reset_index(drop=True, inplace=True)
 

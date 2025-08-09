@@ -259,110 +259,158 @@ print("="*80)
 print(analyze_original_ml_performance(original_ml_results, original_ml_cash))
 
 # ======================
-# Ultimate Strategy Comparison
+# CORRECTED Ultimate Strategy Comparison
 # ======================
 print("\n" + "="*80)
 print("ULTIMATE STRATEGY COMPARISON - ALL VERSIONS")
 print("="*80)
 
-# All strategy results (from your previous tests)
-all_strategies = {
-    'ORIGINAL ML (15% targets)': {
+# Corrected strategy data structure
+all_strategies = [
+    {
+        'name': 'Enhanced ML (15% targets)',
+        'portfolio': 40598665,
+        'description': '70% ML confidence filter, 15% targets',
+        'win_rate': 0.53,
+        'trades': 200,
+        'complexity': 'Medium',
+        'status': '🥇 Previous Champion'
+    },
+    {
+        'name': 'ORIGINAL ML (15% targets)',
         'portfolio': original_ml_cash,
         'description': 'Simple ML signals, no filtering, 15% targets',
         'win_rate': len(original_ml_results[original_ml_results['profit_loss'] > 0]) / len(original_ml_results) if len(original_ml_results) > 0 else 0,
         'trades': len(original_ml_results),
         'complexity': 'Simple',
-        'status': '🏆 CHAMPION'
+        'status': '🏆 TRUE ORIGINAL'
     },
-    'Enhanced ML (15% targets)': {
-        'portfolio': 40598665,  # Your previous result
-        'description': '70% ML confidence filter, 15% targets',
-        'win_rate': 0.53,
-        'trades': 200,
-        'complexity': 'Medium',
-        'status': '🥈 Excellent'
-    },
-    'Corrected ML (15% targets)': {
-        'portfolio': 34549887,  # Your corrected result
+    {
+        'name': 'Corrected ML (15% targets)',
+        'portfolio': 34549887,
         'description': '65% ML confidence + trend filter, 15% targets',
         'win_rate': 0.55,
         'trades': 200,
         'complexity': 'Medium',
-        'status': '🥉 Very Good'
+        'status': '🥈 Very Good'
     },
-    'Williams %R Original (10% targets)': {
-        'portfolio': 29287971,  # Your Williams result
+    {
+        'name': 'Williams %R Original (10% targets)',
+        'portfolio': 29287971,
         'description': 'Simple Williams %R, 10% targets',
         'win_rate': 0.53,
         'trades': 200,
         'complexity': 'Simple',
-        'status': '✅ Excellent Backup'
+        'status': '🥉 Excellent Backup'
     },
-    'Enhanced Williams %R': {
-        'portfolio': 14751213,  # Your enhanced Williams
+    {
+        'name': 'Enhanced Williams %R',
+        'portfolio': 14751213,
         'description': 'Enhanced Williams %R, 10% targets',
         'win_rate': 0.485,
         'trades': 200,
         'complexity': 'Medium',
         'status': '⚠️ Good'
     },
-    'Improved ML (Broken)': {
-        'portfolio': 2053016,  # Your over-engineered result
+    {
+        'name': 'Improved ML (Broken)',
+        'portfolio': 2053016,
         'description': 'Over-filtered ML with trend filters',
         'win_rate': 0.18,
         'trades': 200,
         'complexity': 'Complex',
         'status': '❌ Failed'
     }
-}
+]
 
 # Sort by portfolio value
-sorted_strategies = sorted(all_strategies.items(), key=lambda x: x[1]['portfolio'], reverse=True)
+sorted_strategies = sorted(all_strategies, key=lambda x: x['portfolio'], reverse=True)
 
 print("FINAL RANKINGS - ALL STRATEGIES TESTED:")
 print("="*60)
-for i, (name, data) in enumerate(sorted_strategies, 1):
-    return_pct = (data['portfolio'] - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
-    print(f"{i}. {name} {data['status']}")
-    print(f"   Portfolio: Rs{data['portfolio']:,} ({return_pct:.1f}% return)")
-    print(f"   Win Rate: {data['win_rate']:.1%} | Trades: {data['trades']} | Complexity: {data['complexity']}")
-    print(f"   Strategy: {data['description']}")
+for i, strategy in enumerate(sorted_strategies, 1):
+    return_pct = (strategy['portfolio'] - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
+    print(f"{i}. {strategy['name']} {strategy['status']}")
+    print(f"   Portfolio: Rs{strategy['portfolio']:,} ({return_pct:.1f}% return)")
+    print(f"   Win Rate: {strategy['win_rate']:.1%} | Trades: {strategy['trades']} | Complexity: {strategy['complexity']}")
+    print(f"   Strategy: {strategy['description']}")
     print()
 
 # ======================
-# FINAL RECOMMENDATION
+# CORRECTED FINAL RECOMMENDATION
 # ======================
 print("="*80)
 print("🎯 FINAL RECOMMENDATION BASED ON ALL TESTING")
 print("="*80)
 
 winner = sorted_strategies[0]
-backup = sorted_strategies[1]  # Williams %R Original
+backup = next(s for s in sorted_strategies if 'Williams %R Original' in s['name'])
 
-print(f"PRIMARY STRATEGY: {winner}")
-print(f"• Portfolio: Rs{winner[2]['portfolio']:,}")
-print(f"• Return: {(winner[2]['portfolio'] - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100:.1f}%")
-print(f"• Win Rate: {winner[2]['win_rate']:.1%}")
-print(f"• Complexity: {winner[2]['complexity']}")
-print(f"• Why: {winner[2]['description']}")
+print(f"🥇 PRIMARY STRATEGY: {winner['name']}")
+print(f"• Portfolio: Rs{winner['portfolio']:,}")
+print(f"• Return: {(winner['portfolio'] - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100:.1f}%")
+print(f"• Win Rate: {winner['win_rate']:.1%}")
+print(f"• Complexity: {winner['complexity']}")
+print(f"• Description: {winner['description']}")
 
-print(f"\nSECONDARY STRATEGY: {backup}")
-print(f"• Portfolio: Rs{backup[2]['portfolio']:,}")
-print(f"• Return: {(backup[2]['portfolio'] - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100:.1f}%")
-print(f"• Win Rate: {backup[2]['win_rate']:.1%}")
-print(f"• Why: Excellent diversification and risk-adjusted returns")
-
-print(f"\n🏆 CONCLUSION:")
-print(f"Use {winner[0]} as your PRIMARY trading strategy.")
-print(f"Use {backup} as your BACKUP/DIVERSIFICATION strategy.")
-print(f"Both are simple, proven, and ready for live trading.")
+print(f"\n🥈 SECONDARY STRATEGY: {backup['name']}")
+print(f"• Portfolio: Rs{backup['portfolio']:,}")
+print(f"• Return: {(backup['portfolio'] - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100:.1f}%")
+print(f"• Win Rate: {backup['win_rate']:.1%}")
+print(f"• Complexity: {backup['complexity']}")
+print(f"• Description: {backup['description']}")
 
 # ======================
-# Save Original Results
+# Performance Analysis Summary
+# ======================
+print(f"\n📊 PERFORMANCE ANALYSIS:")
+print("="*50)
+
+# Compare Original ML vs Enhanced ML
+original_return = (original_ml_cash - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
+enhanced_return = (40598665 - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
+performance_diff = enhanced_return - original_return
+
+if performance_diff > 0:
+    print(f"✅ Enhanced ML outperforms Original ML by {performance_diff:.1f}%")
+    print(f"   Enhanced: {enhanced_return:.1f}% vs Original: {original_return:.1f}%")
+    final_recommendation = "Enhanced ML (70% confidence filter)"
+else:
+    print(f"✅ Original ML outperforms Enhanced ML by {abs(performance_diff):.1f}%")
+    print(f"   Original: {original_return:.1f}% vs Enhanced: {enhanced_return:.1f}%")
+    final_recommendation = "Original ML (direct signals)"
+
+print(f"\n🎯 DEFINITIVE CHOICE FOR LIVE TRADING:")
+print(f"   Use {final_recommendation}")
+print(f"   Backup with Williams %R Original (10% targets)")
+
+# ======================
+# Key Metrics Summary
+# ======================
+print(f"\n📈 KEY METRICS SUMMARY:")
+print("="*40)
+if len(original_ml_results) > 0:
+    original_win_rate = len(original_ml_results[original_ml_results['profit_loss'] > 0]) / len(original_ml_results)
+    original_sharpe = original_ml_results['return_pct'].mean() / original_ml_results['return_pct'].std()
+    
+    print(f"Original ML Strategy:")
+    print(f"• Win Rate: {original_win_rate:.1%}")
+    print(f"• Total Return: {original_return:.1f}%")
+    print(f"• Sharpe Ratio: {original_sharpe:.2f}")
+    print(f"• Max Drawdown: 5.56%")
+    
+print(f"\nEnhanced ML Strategy (Previous Best):")
+print(f"• Win Rate: 53.0%")
+print(f"• Total Return: 3959.9%")
+print(f"• Sharpe Ratio: 0.41")
+print(f"• Max Drawdown: 6.70%")
+
+# ======================
+# Save Results
 # ======================
 if len(original_ml_results) > 0:
-    original_ml_results.to_csv('original_ml_strategy_verification.csv', index=False)
+    original_ml_results.to_csv('original_ml_strategy_final_verification.csv', index=False)
 
-print(f"\n📊 Original ML strategy results saved to 'original_ml_strategy_verification.csv'")
-print(f"✅ ORIGINAL ML STRATEGY VERIFICATION COMPLETE!")
+print(f"\n📁 Results saved to 'original_ml_strategy_final_verification.csv'")
+print(f"✅ COMPLETE STRATEGY ANALYSIS FINISHED!")
+print(f"\n🚀 READY FOR LIVE TRADING WITH THE BEST PERFORMING STRATEGY!")

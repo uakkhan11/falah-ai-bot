@@ -1,4 +1,4 @@
-# halal_cnc_backtest_complete.py
+# comprehensive_intraday_analysis.py
 
 import pandas as pd
 import numpy as np
@@ -8,374 +8,420 @@ import json
 import warnings
 from datetime import datetime, timedelta
 import gc
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 warnings.filterwarnings("ignore")
 
 # ========================
-# HALAL CNC TRADING CONFIGURATION
+# COMPREHENSIVE INTRADAY ANALYSIS CONFIGURATION
 # ========================
 BASE_DIR = "/root/falah-ai-bot/"
 DATA_DIRS = {
-    'daily': os.path.join(BASE_DIR, "swing_data"),
     '15minute': os.path.join(BASE_DIR, "scalping_data"),
     '1hour': os.path.join(BASE_DIR, "intraday_swing_data"),
     'models': os.path.join(BASE_DIR, "models"),
-    'results': os.path.join(BASE_DIR, "halal_cnc_results"),
-    'live': os.path.join(BASE_DIR, "live_data")
+    'results': os.path.join(BASE_DIR, "comprehensive_intraday_results"),
 }
 
-# Create results directory
 os.makedirs(DATA_DIRS['results'], exist_ok=True)
 
-# HALAL CNC TRADING PARAMETERS
-INITIAL_CAPITAL = 1000000        # ₹10 Lakhs starting capital
-POSITION_SIZE_PER_TRADE = 100000  # ₹1 Lakh per trade
-
-# COMPREHENSIVE ZERODHA CNC CHARGES (2025 rates)
-ZERODHA_CHARGES = {
-    # Brokerage (same for buy and sell in CNC)
-    'brokerage_rate': 0.0000,  # ₹0 for CNC equity delivery (Zerodha's USP)
-    
-    # STT (Securities Transaction Tax) - DIFFERENT for buy vs sell
-    'stt_buy_rate': 0.001,      # 0.1% on buy side
-    'stt_sell_rate': 0.001,     # 0.1% on sell side
-    
-    # Exchange transaction charges
-    'exchange_txn_rate': 0.0000345,  # 0.00345% (NSE)
-    
-    # GST on (brokerage + exchange charges)
-    'gst_rate': 0.18,  # 18% GST
-    
-    # SEBI charges
-    'sebi_rate': 0.000001,  # ₹1 per crore (0.0001%)
-    
-    # Stamp duty on buy side only
-    'stamp_duty_rate': 0.00015,  # 0.015% on buy side only
-    
-    # DP (Demat) charges - per sell transaction
-    'dp_charges_per_sell': 13.5  # ₹13.5 per sell transaction
-}
-
-# HALAL CNC STRATEGIES (Cash & Carry Only - No Intraday)
-HALAL_CNC_STRATEGIES = {
-    'swing_trading_strategies': {
-        'data_dir': DATA_DIRS['daily'],
-        'timeframe': 'daily',
-        'min_hold_days': 1,  # Minimum 1 day holding (CNC requirement)
+# COMPREHENSIVE INDICATOR STRATEGIES
+COMPREHENSIVE_STRATEGIES = {
+    '15minute': {
+        'data_dir': DATA_DIRS['15minute'],
+        'timeframe': '15minute',
+        'min_hold_minutes': 15,  # Minimum 15 minutes (1 candle)
         'strategies': {
-            'ml_swing_cnc': {
-                'name': 'ML Swing Trading (CNC)',
-                'profit_target': 0.15,          # 15% profit target
-                'stop_loss': 0.05,              # 5% stop loss
-                'confidence_threshold': 0.70,    # 70% ML confidence
-                'max_hold_days': 30,            # Maximum 30 days holding
-                'trailing_trigger': 0.08,       # Start trailing at 8%
-                'trailing_distance': 0.03,      # 3% trailing distance
-                'max_positions': 10             # Max 10 concurrent positions
+            'williams_r_scalping': {
+                'name': 'Williams %R (15min)',
+                'profit_target': 0.015,      # 1.5%
+                'stop_loss': 0.008,          # 0.8%
+                'oversold_threshold': -85,
+                'overbought_threshold': -15,
+                'max_hold_minutes': 120,
+                'trailing_trigger': 0.008,
+                'trailing_distance': 0.004
             },
-            'williams_swing_cnc': {
-                'name': 'Williams %R Swing (CNC)',
-                'profit_target': 0.12,          # 12% profit target
-                'stop_loss': 0.05,              # 5% stop loss
-                'oversold_threshold': -80,       # Williams %R oversold
-                'overbought_threshold': -20,     # Williams %R overbought
-                'max_hold_days': 20,            # Maximum 20 days
-                'trailing_trigger': 0.06,
-                'trailing_distance': 0.025,
-                'max_positions': 12
+            'rsi_scalping': {
+                'name': 'RSI (15min)',
+                'profit_target': 0.012,      # 1.2%
+                'stop_loss': 0.006,          # 0.6%
+                'rsi_oversold': 25,
+                'rsi_overbought': 75,
+                'max_hold_minutes': 90,
+                'trailing_trigger': 0.006,
+                'trailing_distance': 0.003
             },
-            'ema_momentum_cnc': {
-                'name': 'EMA Momentum (CNC)',
-                'profit_target': 0.10,          # 10% profit target
-                'stop_loss': 0.04,              # 4% stop loss
-                'max_hold_days': 15,            # Maximum 15 days
-                'trailing_trigger': 0.05,
-                'trailing_distance': 0.02,
-                'max_positions': 15
+            'macd_scalping': {
+                'name': 'MACD (15min)',
+                'profit_target': 0.018,      # 1.8%
+                'stop_loss': 0.009,          # 0.9%
+                'max_hold_minutes': 150,
+                'trailing_trigger': 0.010,
+                'trailing_distance': 0.005
+            },
+            'bollinger_scalping': {
+                'name': 'Bollinger Bands (15min)',
+                'profit_target': 0.014,      # 1.4%
+                'stop_loss': 0.007,          # 0.7%
+                'max_hold_minutes': 100,
+                'trailing_trigger': 0.007,
+                'trailing_distance': 0.0035
+            },
+            'stochastic_scalping': {
+                'name': 'Stochastic (15min)',
+                'profit_target': 0.013,      # 1.3%
+                'stop_loss': 0.0065,         # 0.65%
+                'stoch_oversold': 20,
+                'stoch_overbought': 80,
+                'max_hold_minutes': 110,
+                'trailing_trigger': 0.0065,
+                'trailing_distance': 0.00325
+            },
+            'ema_cross_scalping': {
+                'name': 'EMA Crossover (15min)',
+                'profit_target': 0.016,      # 1.6%
+                'stop_loss': 0.008,          # 0.8%
+                'ema_fast': 5,
+                'ema_slow': 13,
+                'max_hold_minutes': 130,
+                'trailing_trigger': 0.008,
+                'trailing_distance': 0.004
+            },
+            'vwap_scalping': {
+                'name': 'VWAP Deviation (15min)',
+                'profit_target': 0.011,      # 1.1%
+                'stop_loss': 0.0055,         # 0.55%
+                'deviation_threshold': 0.005, # 0.5% from VWAP
+                'max_hold_minutes': 85,
+                'trailing_trigger': 0.0055,
+                'trailing_distance': 0.00275
             }
         }
     },
-    'short_term_cnc_strategies': {
-        'data_dir': DATA_DIRS['15minute'],  # Use 15min for entry timing
-        'timeframe': '15minute',
-        'min_hold_days': 1,  # Still minimum 1 day (CNC)
+    '1hour': {
+        'data_dir': DATA_DIRS['1hour'],
+        'timeframe': '1hour',
+        'min_hold_minutes': 60,  # Minimum 1 hour
         'strategies': {
-            'precision_entry_cnc': {
-                'name': 'Precision Entry CNC (15min timing)',
-                'profit_target': 0.08,          # 8% profit target
-                'stop_loss': 0.04,              # 4% stop loss
-                'confidence_threshold': 0.75,    # Higher confidence for precision
-                'max_hold_days': 5,             # Short-term but still CNC
-                'trailing_trigger': 0.04,
-                'trailing_distance': 0.02,
-                'max_positions': 8
+            'williams_r_swing': {
+                'name': 'Williams %R (1hr)',
+                'profit_target': 0.035,      # 3.5%
+                'stop_loss': 0.015,          # 1.5%
+                'oversold_threshold': -80,
+                'overbought_threshold': -20,
+                'max_hold_minutes': 360,
+                'trailing_trigger': 0.020,
+                'trailing_distance': 0.010
+            },
+            'rsi_swing': {
+                'name': 'RSI (1hr)',
+                'profit_target': 0.030,      # 3.0%
+                'stop_loss': 0.012,          # 1.2%
+                'rsi_oversold': 30,
+                'rsi_overbought': 70,
+                'max_hold_minutes': 300,
+                'trailing_trigger': 0.015,
+                'trailing_distance': 0.008
+            },
+            'macd_swing': {
+                'name': 'MACD (1hr)',
+                'profit_target': 0.040,      # 4.0%
+                'stop_loss': 0.016,          # 1.6%
+                'max_hold_minutes': 420,
+                'trailing_trigger': 0.025,
+                'trailing_distance': 0.012
+            },
+            'bollinger_swing': {
+                'name': 'Bollinger Bands (1hr)',
+                'profit_target': 0.032,      # 3.2%
+                'stop_loss': 0.013,          # 1.3%
+                'max_hold_minutes': 330,
+                'trailing_trigger': 0.018,
+                'trailing_distance': 0.009
+            },
+            'adx_trend_swing': {
+                'name': 'ADX Trend (1hr)',
+                'profit_target': 0.045,      # 4.5%
+                'stop_loss': 0.018,          # 1.8%
+                'adx_threshold': 25,
+                'max_hold_minutes': 480,
+                'trailing_trigger': 0.030,
+                'trailing_distance': 0.015
+            },
+            'ema_cross_swing': {
+                'name': 'EMA Crossover (1hr)',
+                'profit_target': 0.028,      # 2.8%
+                'stop_loss': 0.011,          # 1.1%
+                'ema_fast': 9,
+                'ema_slow': 21,
+                'max_hold_minutes': 270,
+                'trailing_trigger': 0.014,
+                'trailing_distance': 0.007
+            },
+            'support_resistance_swing': {
+                'name': 'Support/Resistance (1hr)',
+                'profit_target': 0.038,      # 3.8%
+                'stop_loss': 0.015,          # 1.5%
+                'lookback_period': 20,
+                'max_hold_minutes': 400,
+                'trailing_trigger': 0.022,
+                'trailing_distance': 0.011
             }
         }
     }
 }
 
-class HalalCNCBacktestEngine:
+# TRADING PARAMETERS
+INITIAL_CAPITAL = 1000000
+POSITION_SIZE_PER_TRADE = 100000  # ₹1 lakh per trade
+TRANSACTION_COST = 0.0015  # 0.15% for intraday
+
+class ComprehensiveIntradayAnalyzer:
     def __init__(self):
-        self.ml_model = None
         self.results_summary = {}
+        self.trade_analysis = {}
+        self.performance_comparison = {}
         self.execution_stats = {
-            'total_files_processed': 0,
-            'successful_backtests': 0,
-            'failed_backtests': 0,
-            'total_trades_generated': 0,
-            'total_cnc_charges': 0,
-            'backtest_period': {},
+            'total_strategies_tested': 0,
+            'successful_strategies': 0,
+            'failed_strategies': 0,
+            'total_trades_analyzed': 0,
             'start_time': datetime.now()
         }
         
-        print("🕌 Halal CNC Backtesting Engine Initialized")
-        print("✅ No intraday trading - Only CNC (Cash & Carry)")
-        print("✅ All trades held minimum 1 day")
-        print("✅ Complete Zerodha charges included")
-        self._load_ml_model()
+        print("🔍 Comprehensive Intraday Analyzer Initialized")
+        print("📊 Testing 14 different indicators across 2 timeframes")
     
-    def _load_ml_model(self):
-        """Load ML model for strategies"""
+    def _calculate_comprehensive_indicators(self, df, timeframe):
+        """Calculate all indicators for comparison"""
         try:
-            model_path = os.path.join(DATA_DIRS['models'], 'model.pkl')
-            if os.path.exists(model_path):
-                self.ml_model = joblib.load(model_path)
-                print("✅ ML model loaded successfully")
-            else:
-                print("⚠️ ML model not found - ML strategies will be skipped")
-        except Exception as e:
-            print(f"⚠️ ML model loading failed: {e}")
-    
-    def _calculate_cnc_charges(self, buy_value, sell_value):
-        """Calculate comprehensive CNC charges as per Zerodha 2025 rates"""
-        charges = ZERODHA_CHARGES
-        
-        # 1. Brokerage (₹0 for CNC - Zerodha's free delivery)
-        brokerage_buy = buy_value * charges['brokerage_rate']  # ₹0
-        brokerage_sell = sell_value * charges['brokerage_rate']  # ₹0
-        total_brokerage = brokerage_buy + brokerage_sell
-        
-        # 2. STT (Securities Transaction Tax)
-        stt_buy = buy_value * charges['stt_buy_rate']    # 0.1% on buy
-        stt_sell = sell_value * charges['stt_sell_rate']  # 0.1% on sell
-        total_stt = stt_buy + stt_sell
-        
-        # 3. Exchange transaction charges
-        exchange_buy = buy_value * charges['exchange_txn_rate']
-        exchange_sell = sell_value * charges['exchange_txn_rate'] 
-        total_exchange = exchange_buy + exchange_sell
-        
-        # 4. GST on (brokerage + exchange charges)
-        gst_applicable_amount = total_brokerage + total_exchange
-        total_gst = gst_applicable_amount * charges['gst_rate']
-        
-        # 5. SEBI charges
-        sebi_buy = buy_value * charges['sebi_rate']
-        sebi_sell = sell_value * charges['sebi_rate']
-        total_sebi = sebi_buy + sebi_sell
-        
-        # 6. Stamp duty (only on buy side)
-        stamp_duty = buy_value * charges['stamp_duty_rate']
-        
-        # 7. DP charges (only on sell side)
-        dp_charges = charges['dp_charges_per_sell']
-        
-        # Total charges
-        total_charges = (total_brokerage + total_stt + total_exchange + 
-                        total_gst + total_sebi + stamp_duty + dp_charges)
-        
-        return {
-            'brokerage': total_brokerage,
-            'stt': total_stt,
-            'exchange_charges': total_exchange,
-            'gst': total_gst,
-            'sebi_charges': total_sebi,
-            'stamp_duty': stamp_duty,
-            'dp_charges': dp_charges,
-            'total_charges': total_charges,
-            'effective_cost_percentage': total_charges / buy_value * 100
-        }
-    
-    def _analyze_data_period(self, df):
-        """Analyze the data period for backtesting"""
-        try:
-            if 'date' in df.columns:
-                df['datetime'] = pd.to_datetime(df['date'])
-            elif 'datetime' in df.columns:
-                df['datetime'] = pd.to_datetime(df['datetime'])
-            else:
-                return None
+            print(f"       📊 Calculating comprehensive indicators...")
             
-            start_date = df['datetime'].min()
-            end_date = df['datetime'].max()
-            total_days = (end_date - start_date).days
-            total_candles = len(df)
-            
-            return {
-                'start_date': start_date.strftime('%Y-%m-%d'),
-                'end_date': end_date.strftime('%Y-%m-%d'),
-                'total_days': total_days,
-                'total_candles': total_candles,
-                'avg_candles_per_day': total_candles / max(total_days, 1)
-            }
-        except Exception as e:
-            print(f"   ⚠️ Data period analysis failed: {e}")
-            return None
-    
-    def _generate_ml_signals(self, df):
-        """Generate ML trading signals"""
-        if self.ml_model is None:
-            return df
-        
-        try:
-            # Prepare features for ML model
-            feature_columns = ['rsi', 'ema_fast', 'ema_slow']
-            if 'atr' in df.columns:
-                feature_columns.append('atr')
-            if 'volume_ratio' in df.columns:
-                feature_columns.append('volume_ratio')
-            
-            available_features = [f for f in feature_columns if f in df.columns]
-            if len(available_features) < 3:
+            # Ensure we have OHLCV data
+            if not all(col in df.columns for col in ['open', 'high', 'low', 'close']):
+                print(f"       ⚠️ Missing OHLCV data")
                 return df
             
-            df_clean = df.dropna(subset=available_features)
-            if len(df_clean) < 50:
-                return df
-            
-            X = df_clean[available_features]
-            df.loc[df_clean.index, 'ml_signal'] = self.ml_model.predict(X)
-            df.loc[df_clean.index, 'ml_probability'] = self.ml_model.predict_proba(X)[:, 1]
-            
-            df['ml_signal'] = df['ml_signal'].fillna(0)
-            df['ml_probability'] = df['ml_probability'].fillna(0.5)
-            
-            return df
-            
-        except Exception as e:
-            print(f"   ⚠️ ML signal generation failed: {e}")
-            return df
-    
-    def _generate_williams_signals(self, df, strategy_config):
-        """Generate Williams %R signals"""
-        try:
+            # Williams %R
             if 'williams_r' not in df.columns:
-                if all(col in df.columns for col in ['high', 'low', 'close']):
-                    highest_high = df['high'].rolling(14).max()
-                    lowest_low = df['low'].rolling(14).min()
-                    df['williams_r'] = ((highest_high - df['close']) / (highest_high - lowest_low)) * -100
-                else:
-                    return df
+                highest_high = df['high'].rolling(14).max()
+                lowest_low = df['low'].rolling(14).min()
+                df['williams_r'] = ((highest_high - df['close']) / (highest_high - lowest_low)) * -100
             
-            oversold = strategy_config['oversold_threshold']
-            overbought = strategy_config['overbought_threshold']
+            # RSI (if not already present)
+            if 'rsi' not in df.columns:
+                delta = df['close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                rs = gain / loss
+                df['rsi'] = 100 - (100 / (1 + rs))
             
-            df['williams_signal'] = 0
+            # MACD
+            exp12 = df['close'].ewm(span=12).mean()
+            exp26 = df['close'].ewm(span=26).mean()
+            df['macd'] = exp12 - exp26
+            df['macd_signal'] = df['macd'].ewm(span=9).mean()
+            df['macd_histogram'] = df['macd'] - df['macd_signal']
             
-            # Buy signal: Williams %R oversold and turning up
-            buy_condition = (df['williams_r'] < oversold) & (df['williams_r'] > df['williams_r'].shift(1))
-            df.loc[buy_condition, 'williams_signal'] = 1
+            # Bollinger Bands
+            bb_period = 20
+            df['bb_middle'] = df['close'].rolling(bb_period).mean()
+            bb_std = df['close'].rolling(bb_period).std()
+            df['bb_upper'] = df['bb_middle'] + (bb_std * 2)
+            df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
+            df['bb_position'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
             
-            # Sell signal: Williams %R overbought
-            sell_condition = df['williams_r'] > overbought
-            df.loc[sell_condition, 'williams_signal'] = -1
+            # Stochastic
+            lowest_low_14 = df['low'].rolling(14).min()
+            highest_high_14 = df['high'].rolling(14).max()
+            df['stoch_k'] = ((df['close'] - lowest_low_14) / (highest_high_14 - lowest_low_14)) * 100
+            df['stoch_d'] = df['stoch_k'].rolling(3).mean()
             
+            # EMA
+            if timeframe == '15minute':
+                df['ema_fast'] = df['close'].ewm(span=5).mean()
+                df['ema_slow'] = df['close'].ewm(span=13).mean()
+            else:  # 1hour
+                df['ema_fast'] = df['close'].ewm(span=9).mean()
+                df['ema_slow'] = df['close'].ewm(span=21).mean()
+            
+            # VWAP (if volume available)
+            if 'volume' in df.columns and df['volume'].sum() > 0:
+                if 'vwap' not in df.columns:
+                    typical_price = (df['high'] + df['low'] + df['close']) / 3
+                    vwap_numerator = (typical_price * df['volume']).cumsum()
+                    vwap_denominator = df['volume'].cumsum()
+                    df['vwap'] = vwap_numerator / vwap_denominator
+                
+                df['vwap_deviation'] = (df['close'] - df['vwap']) / df['vwap']
+            
+            # ADX (for 1-hour)
+            if timeframe == '1hour':
+                # Simplified ADX calculation
+                df['tr'] = np.maximum(df['high'] - df['low'],
+                                     np.maximum(abs(df['high'] - df['close'].shift(1)),
+                                               abs(df['low'] - df['close'].shift(1))))
+                df['atr'] = df['tr'].rolling(14).mean()
+                
+                # Directional movement
+                df['plus_dm'] = np.where((df['high'] - df['high'].shift(1)) > (df['low'].shift(1) - df['low']),
+                                        np.maximum(df['high'] - df['high'].shift(1), 0), 0)
+                df['minus_dm'] = np.where((df['low'].shift(1) - df['low']) > (df['high'] - df['high'].shift(1)),
+                                         np.maximum(df['low'].shift(1) - df['low'], 0), 0)
+                
+                df['plus_di'] = (df['plus_dm'].rolling(14).mean() / df['atr']) * 100
+                df['minus_di'] = (df['minus_dm'].rolling(14).mean() / df['atr']) * 100
+                df['adx'] = abs(df['plus_di'] - df['minus_di']) / (df['plus_di'] + df['minus_di']) * 100
+                df['adx'] = df['adx'].rolling(14).mean()
+            
+            # Support and Resistance levels
+            lookback = 20
+            df['resistance'] = df['high'].rolling(lookback).max()
+            df['support'] = df['low'].rolling(lookback).min()
+            df['sr_position'] = (df['close'] - df['support']) / (df['resistance'] - df['support'])
+            
+            print(f"       ✅ All indicators calculated successfully")
             return df
             
         except Exception as e:
-            print(f"   ⚠️ Williams %R signal generation failed: {e}")
+            print(f"       ❌ Indicator calculation failed: {e}")
             return df
     
-    def _generate_ema_momentum_signals(self, df):
-        """Generate EMA momentum signals"""
+    def _generate_strategy_signals(self, df, strategy_key, strategy_config):
+        """Generate signals for different strategies"""
         try:
-            if 'ema_fast' not in df.columns or 'ema_slow' not in df.columns:
+            df['signal'] = 0  # Initialize signal column
+            
+            if 'williams' in strategy_key:
+                oversold = strategy_config['oversold_threshold']
+                overbought = strategy_config['overbought_threshold']
+                # Buy: Williams %R oversold and turning up
+                buy_condition = (df['williams_r'] < oversold) & (df['williams_r'] > df['williams_r'].shift(1))
+                sell_condition = df['williams_r'] > overbought
+                
+            elif 'rsi' in strategy_key:
+                oversold = strategy_config['rsi_oversold']
+                overbought = strategy_config['rsi_overbought']
+                buy_condition = (df['rsi'] < oversold) & (df['rsi'] > df['rsi'].shift(1))
+                sell_condition = df['rsi'] > overbought
+                
+            elif 'macd' in strategy_key:
+                # MACD crossover strategy
+                buy_condition = (df['macd'] > df['macd_signal']) & (df['macd'].shift(1) <= df['macd_signal'].shift(1))
+                sell_condition = (df['macd'] < df['macd_signal']) & (df['macd'].shift(1) >= df['macd_signal'].shift(1))
+                
+            elif 'bollinger' in strategy_key:
+                # Bollinger Band mean reversion
+                buy_condition = (df['bb_position'] < 0.2) & (df['close'] > df['close'].shift(1))  # Near lower band and turning up
+                sell_condition = (df['bb_position'] > 0.8) | (df['close'] < df['bb_middle'])  # Near upper band or below middle
+                
+            elif 'stochastic' in strategy_key:
+                oversold = strategy_config['stoch_oversold']
+                overbought = strategy_config['stoch_overbought']
+                buy_condition = (df['stoch_k'] < oversold) & (df['stoch_k'] > df['stoch_d'])
+                sell_condition = df['stoch_k'] > overbought
+                
+            elif 'ema_cross' in strategy_key:
+                # EMA crossover
+                buy_condition = (df['ema_fast'] > df['ema_slow']) & (df['ema_fast'].shift(1) <= df['ema_slow'].shift(1))
+                sell_condition = (df['ema_fast'] < df['ema_slow']) & (df['ema_fast'].shift(1) >= df['ema_slow'].shift(1))
+                
+            elif 'vwap' in strategy_key:
+                if 'vwap_deviation' in df.columns:
+                    threshold = strategy_config['deviation_threshold']
+                    # Buy when price significantly below VWAP and turning up
+                    buy_condition = (df['vwap_deviation'] < -threshold) & (df['close'] > df['close'].shift(1))
+                    sell_condition = (df['vwap_deviation'] > threshold) | (df['close'] < df['vwap'])
+                else:
+                    buy_condition = pd.Series([False] * len(df), index=df.index)
+                    sell_condition = pd.Series([False] * len(df), index=df.index)
+                
+            elif 'adx' in strategy_key:
+                if 'adx' in df.columns:
+                    adx_threshold = strategy_config['adx_threshold']
+                    # Strong trend with ADX
+                    buy_condition = (df['adx'] > adx_threshold) & (df['plus_di'] > df['minus_di']) & (df['close'] > df['ema_fast'])
+                    sell_condition = (df['adx'] < adx_threshold) | (df['plus_di'] < df['minus_di'])
+                else:
+                    buy_condition = pd.Series([False] * len(df), index=df.index)
+                    sell_condition = pd.Series([False] * len(df), index=df.index)
+                
+            elif 'support_resistance' in strategy_key:
+                # Support/Resistance breakout
+                buy_condition = (df['sr_position'] < 0.3) & (df['close'] > df['close'].shift(1))  # Near support and bouncing
+                sell_condition = (df['sr_position'] > 0.8) | (df['close'] < df['support'] * 1.01)  # Near resistance or below support
+            
+            else:
                 return df
             
-            df['ema_signal'] = 0
-            
-            # Buy: Fast EMA crosses above Slow EMA with momentum
-            buy_condition = (
-                (df['ema_fast'] > df['ema_slow']) & 
-                (df['ema_fast'].shift(1) <= df['ema_slow'].shift(1)) &
-                (df['close'] > df['ema_fast'])  # Price above fast EMA for confirmation
-            )
-            df.loc[buy_condition, 'ema_signal'] = 1
-            
-            # Sell: Fast EMA crosses below Slow EMA
-            sell_condition = (
-                (df['ema_fast'] < df['ema_slow']) & 
-                (df['ema_fast'].shift(1) >= df['ema_slow'].shift(1))
-            )
-            df.loc[sell_condition, 'ema_signal'] = -1
+            # Apply signals
+            df.loc[buy_condition, 'signal'] = 1
+            df.loc[sell_condition, 'signal'] = -1
             
             return df
             
         except Exception as e:
-            print(f"   ⚠️ EMA momentum signal generation failed: {e}")
+            print(f"       ❌ Signal generation failed for {strategy_key}: {e}")
             return df
     
-    def _backtest_cnc_strategy(self, df, strategy_name, strategy_config, signal_column):
-        """Core CNC backtesting engine - HALAL COMPLIANT"""
+    def _backtest_comprehensive_strategy(self, df, strategy_name, strategy_config):
+        """Comprehensive backtesting with detailed trade analysis"""
         try:
-            # Initialize tracking variables
             trades = []
             portfolio_value = INITIAL_CAPITAL
-            active_positions = {}  # Track multiple positions
-            position_id = 0
+            position_size = 0
+            entry_price = 0
+            entry_time = None
+            highest_price_since_entry = 0
             
             # Strategy parameters
             profit_target = strategy_config['profit_target']
             stop_loss = strategy_config['stop_loss']
-            max_hold_days = strategy_config['max_hold_days']
-            min_hold_days = strategy_config.get('min_hold_days', 1)  # HALAL: Min 1 day
+            max_hold_minutes = strategy_config['max_hold_minutes']
+            min_hold_minutes = strategy_config.get('min_hold_minutes', 15)
             trailing_trigger = strategy_config.get('trailing_trigger', profit_target * 0.5)
             trailing_distance = strategy_config.get('trailing_distance', stop_loss * 0.5)
-            max_positions = strategy_config.get('max_positions', 10)
             
-            print(f"   🕌 CNC Backtesting {strategy_name}")
-            print(f"       Target: {profit_target*100:.1f}% | Stop: {stop_loss*100:.1f}% | Min Hold: {min_hold_days} days")
+            # Tracking variables
+            trailing_stop_price = 0
+            trailing_active = False
             
             for i in range(1, len(df)):
-                current_date = pd.to_datetime(df.loc[i, 'date' if 'date' in df.columns else 'datetime'])
+                current_time = pd.to_datetime(df.loc[i, 'datetime' if 'datetime' in df.columns else 'date'])
                 current_price = df.loc[i, 'close']
-                signal = df.loc[i, signal_column] if signal_column in df.columns else 0
+                signal = df.loc[i, 'signal']
                 
-                # Check existing positions for exit conditions
-                positions_to_close = []
-                
-                for pos_id, position in active_positions.items():
-                    entry_date = position['entry_date']
-                    entry_price = position['entry_price']
-                    
-                    days_held = (current_date - entry_date).days
+                # Exit Logic
+                if position_size > 0 and entry_price > 0:
                     pct_change = (current_price - entry_price) / entry_price
+                    minutes_held = (current_time - entry_time).total_seconds() / 60
                     
-                    # Update highest price for trailing
-                    if current_price > position['highest_price']:
-                        position['highest_price'] = current_price
+                    # Update highest price
+                    if current_price > highest_price_since_entry:
+                        highest_price_since_entry = current_price
                     
-                    # Update trailing stop
-                    if not position['trailing_active'] and pct_change >= trailing_trigger:
-                        position['trailing_active'] = True
-                        position['trailing_stop'] = current_price * (1 - trailing_distance)
+                    # Trailing stop logic
+                    if not trailing_active and pct_change >= trailing_trigger:
+                        trailing_active = True
+                        trailing_stop_price = current_price - (current_price * trailing_distance)
                     
-                    if position['trailing_active']:
-                        new_trailing_stop = current_price * (1 - trailing_distance)
-                        if new_trailing_stop > position['trailing_stop']:
-                            position['trailing_stop'] = new_trailing_stop
+                    if trailing_active:
+                        new_trailing_stop = current_price - (current_price * trailing_distance)
+                        if new_trailing_stop > trailing_stop_price:
+                            trailing_stop_price = new_trailing_stop
                     
                     should_exit = False
                     exit_reason = ""
                     
-                    # HALAL CNC EXIT CONDITIONS
-                    if days_held < min_hold_days:
-                        # Cannot exit before minimum hold period (CNC requirement)
-                        continue
-                    elif days_held >= max_hold_days:
+                    # Exit conditions
+                    if minutes_held < min_hold_minutes:
+                        continue  # Don't exit before minimum hold
+                    elif minutes_held >= max_hold_minutes:
                         should_exit = True
-                        exit_reason = "Max Hold Period"
-                    elif position['trailing_active'] and current_price <= position['trailing_stop']:
+                        exit_reason = "Time Limit"
+                    elif trailing_active and current_price <= trailing_stop_price:
                         should_exit = True
                         exit_reason = "Trailing Stop"
                     elif pct_change <= -stop_loss:
@@ -389,227 +435,222 @@ class HalalCNCBacktestEngine:
                         exit_reason = "Signal Exit"
                     
                     if should_exit:
-                        # Calculate CNC charges
-                        buy_value = POSITION_SIZE_PER_TRADE
-                        sell_value = position['shares'] * current_price
+                        # Calculate trade result
+                        exit_value = position_size * current_price * (1 - TRANSACTION_COST)
+                        entry_cost = POSITION_SIZE_PER_TRADE * (1 + TRANSACTION_COST)
+                        trade_pnl = exit_value - entry_cost
+                        portfolio_value += trade_pnl
                         
-                        charge_details = self._calculate_cnc_charges(buy_value, sell_value)
-                        total_charges = charge_details['total_charges']
+                        # Detailed trade record
+                        max_profit_reached = (highest_price_since_entry - entry_price) / entry_price
+                        max_drawdown_in_trade = (entry_price - min(df.loc[entry_time:current_time, 'close'])) / entry_price if len(df.loc[entry_time:current_time, 'close']) > 0 else 0
                         
-                        # Net profit/loss after all charges
-                        gross_pnl = sell_value - buy_value
-                        net_pnl = gross_pnl - total_charges
-                        
-                        portfolio_value += net_pnl
-                        
-                        # Record detailed trade
                         trades.append({
-                            'position_id': pos_id,
-                            'entry_date': entry_date,
-                            'exit_date': current_date,
+                            'entry_time': entry_time,
+                            'exit_time': current_time,
                             'entry_price': entry_price,
                             'exit_price': current_price,
-                            'shares': position['shares'],
-                            'days_held': days_held,
-                            'buy_value': buy_value,
-                            'sell_value': sell_value,
-                            'gross_pnl': gross_pnl,
-                            'total_charges': total_charges,
-                            'net_pnl': net_pnl,
+                            'position_size': position_size,
+                            'pnl': trade_pnl,
                             'return_pct': pct_change * 100,
+                            'minutes_held': minutes_held,
                             'exit_reason': exit_reason,
-                            'trailing_activated': position['trailing_active'],
-                            'charge_breakdown': charge_details,
+                            'max_profit_reached_pct': max_profit_reached * 100,
+                            'max_drawdown_in_trade_pct': max_drawdown_in_trade * 100,
+                            'trailing_activated': trailing_active,
+                            'hit_stop_loss': exit_reason == "Stop Loss",
+                            'hit_profit_target': exit_reason == "Profit Target",
                             'portfolio_value': portfolio_value
                         })
                         
-                        positions_to_close.append(pos_id)
-                        self.execution_stats['total_cnc_charges'] += total_charges
+                        # Reset position
+                        position_size = 0
+                        entry_price = 0
+                        entry_time = None
+                        trailing_active = False
+                        trailing_stop_price = 0
+                        highest_price_since_entry = 0
                 
-                # Close marked positions
-                for pos_id in positions_to_close:
-                    del active_positions[pos_id]
-                
-                # Entry Logic - CNC ONLY
-                if (signal == 1 and 
-                    len(active_positions) < max_positions and
-                    portfolio_value >= POSITION_SIZE_PER_TRADE * 1.5):  # Keep some cash buffer
+                # Entry Logic
+                elif (position_size == 0 and 
+                      signal == 1 and 
+                      portfolio_value >= POSITION_SIZE_PER_TRADE):
                     
-                    # Enter new CNC position
-                    position_id += 1
-                    shares = POSITION_SIZE_PER_TRADE / current_price
-                    
-                    active_positions[position_id] = {
-                        'entry_date': current_date,
-                        'entry_price': current_price,
-                        'shares': shares,
-                        'highest_price': current_price,
-                        'trailing_active': False,
-                        'trailing_stop': 0
-                    }
-                    
-                    portfolio_value -= POSITION_SIZE_PER_TRADE  # Reserve capital
-            
-            # Close any remaining positions at the end
-            final_date = pd.to_datetime(df.loc[len(df)-1, 'date' if 'date' in df.columns else 'datetime'])
-            final_price = df.loc[len(df)-1, 'close']
-            
-            for pos_id, position in active_positions.items():
-                days_held = (final_date - position['entry_date']).days
-                if days_held >= min_hold_days:  # Only close if minimum holding period met
-                    pct_change = (final_price - position['entry_price']) / position['entry_price']
-                    
-                    buy_value = POSITION_SIZE_PER_TRADE
-                    sell_value = position['shares'] * final_price
-                    charge_details = self._calculate_cnc_charges(buy_value, sell_value)
-                    total_charges = charge_details['total_charges']
-                    
-                    gross_pnl = sell_value - buy_value
-                    net_pnl = gross_pnl - total_charges
-                    portfolio_value += net_pnl
-                    
-                    trades.append({
-                        'position_id': pos_id,
-                        'entry_date': position['entry_date'],
-                        'exit_date': final_date,
-                        'entry_price': position['entry_price'],
-                        'exit_price': final_price,
-                        'shares': position['shares'],
-                        'days_held': days_held,
-                        'buy_value': buy_value,
-                        'sell_value': sell_value,
-                        'gross_pnl': gross_pnl,
-                        'total_charges': total_charges,
-                        'net_pnl': net_pnl,
-                        'return_pct': pct_change * 100,
-                        'exit_reason': "End of Period",
-                        'trailing_activated': position['trailing_active'],
-                        'charge_breakdown': charge_details,
-                        'portfolio_value': portfolio_value
-                    })
+                    entry_cost = POSITION_SIZE_PER_TRADE * (1 + TRANSACTION_COST)
+                    position_size = POSITION_SIZE_PER_TRADE / current_price
+                    entry_price = current_price
+                    entry_time = current_time
+                    highest_price_since_entry = current_price
+                    portfolio_value -= entry_cost
             
             return trades, portfolio_value
             
         except Exception as e:
-            print(f"   ❌ CNC Backtest failed for {strategy_name}: {e}")
+            print(f"       ❌ Backtest failed: {e}")
             return [], INITIAL_CAPITAL
     
-    def _analyze_cnc_performance(self, trades, final_portfolio, strategy_name):
-        """Comprehensive CNC performance analysis"""
+    def _analyze_detailed_performance(self, trades, final_portfolio, strategy_name, timeframe):
+        """Detailed performance analysis with stop loss analysis"""
         if not trades:
-            return {
-                'strategy_name': strategy_name,
-                'total_trades': 0,
-                'win_rate': 0,
-                'total_return': 0,
-                'final_portfolio': INITIAL_CAPITAL,
-                'status': 'NO_TRADES'
-            }
+            return None
         
         df_trades = pd.DataFrame(trades)
         
         # Basic metrics
         total_trades = len(trades)
-        winning_trades = len(df_trades[df_trades['net_pnl'] > 0])  # Use NET PnL
+        winning_trades = len(df_trades[df_trades['pnl'] > 0])
+        losing_trades = len(df_trades[df_trades['pnl'] < 0])
         win_rate = winning_trades / total_trades
         
+        # Performance metrics
         total_return = (final_portfolio - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
-        avg_return = df_trades['return_pct'].mean()
-        avg_hold_days = df_trades['days_held'].mean()
-        
-        # Charge analysis
-        total_charges = df_trades['total_charges'].sum()
-        avg_charges_per_trade = df_trades['total_charges'].mean()
-        charges_as_pct_of_capital = total_charges / INITIAL_CAPITAL * 100
-        
-        # Net vs Gross analysis
-        total_gross_pnl = df_trades['gross_pnl'].sum()
-        total_net_pnl = df_trades['net_pnl'].sum()
-        charges_impact_pct = (total_gross_pnl - total_net_pnl) / total_gross_pnl * 100 if total_gross_pnl != 0 else 0
+        avg_return_per_trade = df_trades['return_pct'].mean()
+        avg_winning_trade = df_trades[df_trades['pnl'] > 0]['return_pct'].mean() if winning_trades > 0 else 0
+        avg_losing_trade = df_trades[df_trades['pnl'] < 0]['return_pct'].mean() if losing_trades > 0 else 0
         
         # Risk metrics
-        returns_std = df_trades['return_pct'].std()
-        sharpe_ratio = avg_return / returns_std if returns_std > 0 else 0
+        max_return = df_trades['return_pct'].max()
+        min_return = df_trades['return_pct'].min()
+        std_return = df_trades['return_pct'].std()
+        sharpe_ratio = avg_return_per_trade / std_return if std_return > 0 else 0
         
-        # Max drawdown from portfolio values
-        portfolio_values = df_trades['portfolio_value'].values
-        max_drawdown = 0
-        if len(portfolio_values) > 0:
-            peak = INITIAL_CAPITAL
-            for value in portfolio_values:
-                if value > peak:
-                    peak = value
-                drawdown = (peak - value) / peak * 100
-                max_drawdown = max(max_drawdown, drawdown)
+        # Exit reason analysis
+        exit_reasons = df_trades['exit_reason'].value_counts()
+        stop_loss_count = exit_reasons.get('Stop Loss', 0)
+        profit_target_count = exit_reasons.get('Profit Target', 0)
+        trailing_stop_count = exit_reasons.get('Trailing Stop', 0)
+        signal_exit_count = exit_reasons.get('Signal Exit', 0)
+        time_limit_count = exit_reasons.get('Time Limit', 0)
+        
+        # Stop loss analysis
+        stop_loss_rate = stop_loss_count / total_trades
+        profit_target_rate = profit_target_count / total_trades
+        
+        # Hold time analysis
+        avg_hold_time = df_trades['minutes_held'].mean()
+        avg_winning_hold_time = df_trades[df_trades['pnl'] > 0]['minutes_held'].mean() if winning_trades > 0 else 0
+        avg_losing_hold_time = df_trades[df_trades['pnl'] < 0]['minutes_held'].mean() if losing_trades > 0 else 0
+        
+        # Max profit reached analysis
+        avg_max_profit_reached = df_trades['max_profit_reached_pct'].mean()
+        trades_hit_target = len(df_trades[df_trades['max_profit_reached_pct'] >= (df_trades['return_pct'] * 0.9)])  # Close to target
+        
+        # Trailing stop effectiveness
+        trailing_trades = df_trades[df_trades['trailing_activated'] == True]
+        trailing_success_rate = len(trailing_trades[trailing_trades['pnl'] > 0]) / len(trailing_trades) if len(trailing_trades) > 0 else 0
+        
+        # Consecutive analysis
+        consecutive_losses = self._calculate_max_consecutive_losses(df_trades)
+        consecutive_wins = self._calculate_max_consecutive_wins(df_trades)
         
         return {
             'strategy_name': strategy_name,
+            'timeframe': timeframe,
             'total_trades': total_trades,
             'winning_trades': winning_trades,
+            'losing_trades': losing_trades,
             'win_rate': win_rate,
             'total_return': total_return,
             'final_portfolio': final_portfolio,
-            'avg_return_per_trade': avg_return,
-            'avg_hold_days': avg_hold_days,
-            'max_drawdown': max_drawdown,
+            
+            # Return analysis
+            'avg_return_per_trade': avg_return_per_trade,
+            'avg_winning_trade': avg_winning_trade,
+            'avg_losing_trade': avg_losing_trade,
+            'max_return': max_return,
+            'min_return': min_return,
             'sharpe_ratio': sharpe_ratio,
             
-            # CNC-specific metrics
-            'total_charges': total_charges,
-            'avg_charges_per_trade': avg_charges_per_trade,
-            'charges_as_pct_of_capital': charges_as_pct_of_capital,
-            'total_gross_pnl': total_gross_pnl,
-            'total_net_pnl': total_net_pnl,
-            'charges_impact_pct': charges_impact_pct,
+            # Exit analysis
+            'stop_loss_count': stop_loss_count,
+            'stop_loss_rate': stop_loss_rate,
+            'profit_target_count': profit_target_count,
+            'profit_target_rate': profit_target_rate,
+            'trailing_stop_count': trailing_stop_count,
+            'signal_exit_count': signal_exit_count,
+            'time_limit_count': time_limit_count,
+            
+            # Hold time analysis
+            'avg_hold_time_minutes': avg_hold_time,
+            'avg_winning_hold_time': avg_winning_hold_time,
+            'avg_losing_hold_time': avg_losing_hold_time,
+            
+            # Performance analysis
+            'avg_max_profit_reached': avg_max_profit_reached,
+            'trailing_trades': len(trailing_trades),
+            'trailing_success_rate': trailing_success_rate,
+            
+            # Risk analysis
+            'max_consecutive_losses': consecutive_losses,
+            'max_consecutive_wins': consecutive_wins,
             
             'status': 'COMPLETED'
         }
     
-    def run_halal_cnc_backtest(self):
-        """Run comprehensive halal CNC backtesting"""
-        print(f"\n🕌 HALAL CNC BACKTESTING SYSTEM")
-        print(f"{'='*60}")
-        print(f"✅ CNC (Cash & Carry) Trading Only")
-        print(f"✅ Minimum 1-day holding period")
-        print(f"✅ Complete Zerodha charges included")
+    def _calculate_max_consecutive_losses(self, df_trades):
+        """Calculate maximum consecutive losses"""
+        max_consecutive = 0
+        current_consecutive = 0
+        
+        for _, trade in df_trades.iterrows():
+            if trade['pnl'] < 0:
+                current_consecutive += 1
+                max_consecutive = max(max_consecutive, current_consecutive)
+            else:
+                current_consecutive = 0
+        
+        return max_consecutive
+    
+    def _calculate_max_consecutive_wins(self, df_trades):
+        """Calculate maximum consecutive wins"""
+        max_consecutive = 0
+        current_consecutive = 0
+        
+        for _, trade in df_trades.iterrows():
+            if trade['pnl'] > 0:
+                current_consecutive += 1
+                max_consecutive = max(max_consecutive, current_consecutive)
+            else:
+                current_consecutive = 0
+        
+        return max_consecutive
+    
+    def run_comprehensive_analysis(self):
+        """Run comprehensive analysis across all indicators and timeframes"""
+        print(f"\n🔍 COMPREHENSIVE INTRADAY INDICATOR ANALYSIS")
+        print(f"{'='*70}")
+        print(f"📊 Testing 14 strategies across 2 timeframes")
         print(f"💰 Initial Capital: ₹{INITIAL_CAPITAL:,}")
         print(f"💳 Position Size: ₹{POSITION_SIZE_PER_TRADE:,}")
-        print(f"{'='*60}")
+        print(f"{'='*70}")
         
         all_results = {}
-        overall_data_period = {}
         
-        # Process each strategy group
-        for group_key, group_config in HALAL_CNC_STRATEGIES.items():
-            print(f"\n📈 PROCESSING {group_key.upper()}")
+        # Process each timeframe
+        for timeframe_key, timeframe_config in COMPREHENSIVE_STRATEGIES.items():
+            print(f"\n📈 PROCESSING {timeframe_key.upper()} TIMEFRAME")
             print(f"{'='*50}")
             
-            data_dir = group_config['data_dir']
-            timeframe = group_config['timeframe']
+            data_dir = timeframe_config['data_dir']
             
-            # Get all data files
+            # Get data files
             try:
                 data_files = [f for f in os.listdir(data_dir) if f.endswith('.csv')]
-                print(f"📁 Found {len(data_files)} data files for {timeframe}")
+                print(f"📁 Found {len(data_files)} data files")
             except:
                 print(f"❌ Data directory not found: {data_dir}")
                 continue
             
-            group_results = {}
+            timeframe_results = {}
             
-            # Process each strategy in this group
-            for strategy_key, strategy_config in group_config['strategies'].items():
-                print(f"\n🔍 STRATEGY: {strategy_config['name']}")
+            # Test with first 10 symbols for speed
+            test_files = data_files[:10]
+            
+            # Process each strategy
+            for strategy_key, strategy_config in timeframe_config['strategies'].items():
+                print(f"\n🎯 STRATEGY: {strategy_config['name']}")
                 
                 all_trades = []
-                
-                # Test with first 20 symbols for comprehensive results
-                test_files = data_files[:20]
-                
-                # Data period tracking
-                total_candles_processed = 0
-                min_start_date = None
-                max_end_date = None
                 
                 for i, filename in enumerate(test_files, 1):
                     try:
@@ -620,222 +661,193 @@ class HalalCNCBacktestEngine:
                         file_path = os.path.join(data_dir, filename)
                         df = pd.read_csv(file_path)
                         
-                        if len(df) < 100:  # Need substantial data for CNC
+                        if len(df) < 100:
                             print(f"       ⚠️ Insufficient data ({len(df)} bars)")
                             continue
                         
-                        # Analyze data period
-                        data_period = self._analyze_data_period(df)
-                        if data_period:
-                            total_candles_processed += data_period['total_candles']
-                            
-                            start_date = pd.to_datetime(data_period['start_date'])
-                            end_date = pd.to_datetime(data_period['end_date'])
-                            
-                            if min_start_date is None or start_date < min_start_date:
-                                min_start_date = start_date
-                            if max_end_date is None or end_date > max_end_date:
-                                max_end_date = end_date
-                        
-                        # Ensure datetime column
+                        # Prepare datetime
                         if 'datetime' not in df.columns and 'date' in df.columns:
                             df['datetime'] = pd.to_datetime(df['date'])
                         
-                        # Generate signals based on strategy type
-                        if 'ml' in strategy_key:
-                            df = self._generate_ml_signals(df)
-                            signal_column = 'ml_signal'
-                            
-                            if 'confidence_threshold' in strategy_config:
-                                conf_threshold = strategy_config['confidence_threshold']
-                                df.loc[df['ml_probability'] < conf_threshold, 'ml_signal'] = 0
+                        # Calculate comprehensive indicators
+                        df = self._calculate_comprehensive_indicators(df, timeframe_key)
                         
-                        elif 'williams' in strategy_key:
-                            df = self._generate_williams_signals(df, strategy_config)
-                            signal_column = 'williams_signal'
+                        # Generate strategy signals
+                        df = self._generate_strategy_signals(df, strategy_key, strategy_config)
                         
-                        elif 'ema' in strategy_key:
-                            df = self._generate_ema_momentum_signals(df)
-                            signal_column = 'ema_signal'
-                        
-                        else:
-                            continue
-                        
-                        # Run CNC backtest
-                        symbol_trades, symbol_portfolio = self._backtest_cnc_strategy(
-                            df, strategy_config['name'], strategy_config, signal_column
+                        # Run backtest
+                        symbol_trades, symbol_portfolio = self._backtest_comprehensive_strategy(
+                            df, strategy_config['name'], strategy_config
                         )
                         
                         if symbol_trades:
-                            # Add symbol info to trades
+                            # Add symbol info
                             for trade in symbol_trades:
                                 trade['symbol'] = symbol
                             all_trades.extend(symbol_trades)
-                            print(f"       ✅ {len(symbol_trades)} CNC trades")
+                            print(f"       ✅ {len(symbol_trades)} trades")
+                        else:
+                            print(f"       ⚠️ No trades generated")
                         
                         del df
                         gc.collect()
                         
-                        self.execution_stats['total_files_processed'] += 1
-                        
                     except Exception as e:
-                        print(f"       ❌ Error processing {filename}: {e}")
+                        print(f"       ❌ Error: {e}")
                         continue
-                
-                # Store data period information
-                if min_start_date and max_end_date:
-                    period_info = {
-                        'timeframe': timeframe,
-                        'start_date': min_start_date.strftime('%Y-%m-%d'),
-                        'end_date': max_end_date.strftime('%Y-%m-%d'),
-                        'total_days': (max_end_date - min_start_date).days,
-                        'total_candles': total_candles_processed,
-                        'symbols_processed': len(test_files)
-                    }
-                    overall_data_period[strategy_key] = period_info
                 
                 # Analyze strategy performance
                 if all_trades:
-                    final_portfolio = INITIAL_CAPITAL + sum([trade['net_pnl'] for trade in all_trades])
+                    final_portfolio = INITIAL_CAPITAL + sum([trade['pnl'] for trade in all_trades])
                     
-                    performance = self._analyze_cnc_performance(
-                        all_trades, final_portfolio, strategy_config['name']
+                    performance = self._analyze_detailed_performance(
+                        all_trades, final_portfolio, strategy_config['name'], timeframe_key
                     )
                     
-                    # Add data period info
-                    performance['data_period'] = period_info
-                    
-                    group_results[strategy_key] = performance
-                    self.execution_stats['successful_backtests'] += 1
-                    self.execution_stats['total_trades_generated'] += len(all_trades)
-                    
-                    print(f"   ✅ CNC Strategy Analysis Complete:")
-                    print(f"       Trades: {performance['total_trades']}")
-                    print(f"       Win Rate: {performance['win_rate']:.2%}")
-                    print(f"       Net Return: {performance['total_return']:.2f}%")
-                    print(f"       Final Portfolio: ₹{performance['final_portfolio']:,.0f}")
-                    print(f"       Avg Hold: {performance['avg_hold_days']:.1f} days")
-                    print(f"       Total Charges: ₹{performance['total_charges']:,.0f}")
-                    print(f"       Charges Impact: {performance['charges_impact_pct']:.2f}%")
+                    if performance:
+                        timeframe_results[strategy_key] = performance
+                        self.execution_stats['successful_strategies'] += 1
+                        self.execution_stats['total_trades_analyzed'] += len(all_trades)
+                        
+                        print(f"   ✅ Analysis Complete:")
+                        print(f"       📊 Trades: {performance['total_trades']}")
+                        print(f"       🎯 Win Rate: {performance['win_rate']:.2%}")
+                        print(f"       📈 Return: {performance['total_return']:.2f}%")
+                        print(f"       🛑 Stop Loss Rate: {performance['stop_loss_rate']:.2%}")
+                        print(f"       ⏱️ Avg Hold: {performance['avg_hold_time_minutes']:.1f} min")
+                    else:
+                        print(f"   ❌ Analysis failed")
+                        self.execution_stats['failed_strategies'] += 1
                 else:
-                    print(f"   ❌ No CNC trades generated")
+                    print(f"   ❌ No trades for analysis")
+                    self.execution_stats['failed_strategies'] += 1
+                
+                self.execution_stats['total_strategies_tested'] += 1
             
-            all_results[group_key] = group_results
+            all_results[timeframe_key] = timeframe_results
         
         self.results_summary = all_results
-        self.execution_stats['backtest_period'] = overall_data_period
-        self._save_cnc_results()
-        self._print_cnc_summary()
+        self._save_comprehensive_results()
+        self._print_comprehensive_comparison()
         
         return all_results
     
-    def _save_cnc_results(self):
-        """Save comprehensive CNC results"""
+    def _save_comprehensive_results(self):
+        """Save comprehensive results"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             
-            # Save summary
-            summary_file = os.path.join(DATA_DIRS['results'], f'halal_cnc_backtest_{timestamp}.json')
+            results_file = os.path.join(DATA_DIRS['results'], f'comprehensive_indicator_analysis_{timestamp}.json')
             
-            # Prepare comprehensive data
-            complete_results = {
-                'backtest_timestamp': timestamp,
-                'backtest_type': 'HALAL_CNC_ONLY',
-                'initial_capital': INITIAL_CAPITAL,
-                'position_size': POSITION_SIZE_PER_TRADE,
-                'zerodha_charges': ZERODHA_CHARGES,
-                'data_periods': self.execution_stats['backtest_period'],
-                'execution_stats': self.execution_stats,
-                'strategy_results': self.results_summary
-            }
+            with open(results_file, 'w') as f:
+                json.dump(self.results_summary, f, indent=2, default=str)
             
-            with open(summary_file, 'w') as f:
-                json.dump(complete_results, f, indent=2, default=str)
-            
-            print(f"📁 Comprehensive results saved: {summary_file}")
+            print(f"📁 Comprehensive results saved: {results_file}")
             
         except Exception as e:
             print(f"⚠️ Results saving failed: {e}")
     
-    def _print_cnc_summary(self):
-        """Print comprehensive CNC summary"""
+    def _print_comprehensive_comparison(self):
+        """Print comprehensive comparison results"""
         end_time = datetime.now()
         duration = end_time - self.execution_stats['start_time']
         
-        print(f"\n{'='*70}")
-        print(f"🕌 HALAL CNC BACKTESTING RESULTS SUMMARY")
-        print(f"{'='*70}")
+        print(f"\n{'='*80}")
+        print(f"🏆 COMPREHENSIVE INTRADAY INDICATOR COMPARISON")
+        print(f"{'='*80}")
         
         # Execution stats
-        print(f"⏱️  Execution Time: {duration.total_seconds():.1f} seconds")
-        print(f"📁 Files Processed: {self.execution_stats['total_files_processed']}")
-        print(f"✅ Successful Backtests: {self.execution_stats['successful_backtests']}")
-        print(f"📊 Total CNC Trades: {self.execution_stats['total_trades_generated']}")
-        print(f"💰 Total Charges Paid: ₹{self.execution_stats['total_cnc_charges']:,.0f}")
+        print(f"⏱️ Execution Time: {duration.total_seconds():.1f} seconds")
+        print(f"📊 Strategies Tested: {self.execution_stats['total_strategies_tested']}")
+        print(f"✅ Successful: {self.execution_stats['successful_strategies']}")
+        print(f"❌ Failed: {self.execution_stats['failed_strategies']}")
+        print(f"📈 Total Trades: {self.execution_stats['total_trades_analyzed']}")
         
-        # Data period summary
-        print(f"\n📊 BACKTEST DATA PERIODS:")
-        print(f"{'='*40}")
-        for strategy_key, period_info in self.execution_stats['backtest_period'].items():
-            print(f"{strategy_key}:")
-            print(f"  📅 Period: {period_info['start_date']} to {period_info['end_date']}")
-            print(f"  📊 Duration: {period_info['total_days']} days")
-            print(f"  🕯️  Candles: {period_info['total_candles']:,}")
-            print(f"  📈 Symbols: {period_info['symbols_processed']}")
-            print(f"  ⏱️  Timeframe: {period_info['timeframe']}")
-            print()
-        
-        # Strategy rankings
+        # Collect all strategies for comparison
         all_strategies = []
-        for group_key, strategies in self.results_summary.items():
+        for timeframe_key, strategies in self.results_summary.items():
             for strategy_key, performance in strategies.items():
-                if performance['status'] == 'COMPLETED':
+                if performance and performance.get('status') == 'COMPLETED':
                     all_strategies.append(performance)
         
         if all_strategies:
+            # Sort by total return
             all_strategies.sort(key=lambda x: x['total_return'], reverse=True)
             
-            print(f"🏆 TOP HALAL CNC STRATEGIES:")
-            print(f"{'='*50}")
+            # 15-minute strategies
+            minute_15_strategies = [s for s in all_strategies if s['timeframe'] == '15minute']
+            hour_1_strategies = [s for s in all_strategies if s['timeframe'] == '1hour']
             
-            for i, strategy in enumerate(all_strategies, 1):
-                print(f"{i}. {strategy['strategy_name']}")
-                print(f"   📈 Net Return: {strategy['total_return']:.2f}%")
+            print(f"\n🚀 TOP 15-MINUTE STRATEGIES:")
+            print(f"{'='*60}")
+            if minute_15_strategies:
+                for i, strategy in enumerate(minute_15_strategies[:5], 1):
+                    print(f"{i}. {strategy['strategy_name']}")
+                    print(f"   📈 Return: {strategy['total_return']:.2f}%")
+                    print(f"   🎯 Win Rate: {strategy['win_rate']:.2%}")
+                    print(f"   📊 Trades: {strategy['total_trades']}")
+                    print(f"   🛑 Stop Loss Rate: {strategy['stop_loss_rate']:.2%}")
+                    print(f"   ⏱️ Avg Hold: {strategy['avg_hold_time_minutes']:.1f} min")
+                    print(f"   📊 Avg Trade: {strategy['avg_return_per_trade']:.2f}%")
+                    print()
+            
+            print(f"🚀 TOP 1-HOUR STRATEGIES:")
+            print(f"{'='*60}")
+            if hour_1_strategies:
+                for i, strategy in enumerate(hour_1_strategies[:5], 1):
+                    print(f"{i}. {strategy['strategy_name']}")
+                    print(f"   📈 Return: {strategy['total_return']:.2f}%")
+                    print(f"   🎯 Win Rate: {strategy['win_rate']:.2%}")
+                    print(f"   📊 Trades: {strategy['total_trades']}")
+                    print(f"   🛑 Stop Loss Rate: {strategy['stop_loss_rate']:.2%}")
+                    print(f"   ⏱️ Avg Hold: {strategy['avg_hold_time_minutes']:.1f} min")
+                    print(f"   📊 Avg Trade: {strategy['avg_return_per_trade']:.2f}%")
+                    print()
+            
+            # Overall best
+            print(f"🏆 OVERALL BEST STRATEGIES:")
+            print(f"{'='*50}")
+            for i, strategy in enumerate(all_strategies[:3], 1):
+                print(f"{i}. {strategy['strategy_name']} ({strategy['timeframe']})")
+                print(f"   📈 Total Return: {strategy['total_return']:.2f}%")
                 print(f"   💰 Final Portfolio: ₹{strategy['final_portfolio']:,.0f}")
                 print(f"   🎯 Win Rate: {strategy['win_rate']:.2%}")
                 print(f"   📊 Total Trades: {strategy['total_trades']}")
-                print(f"   📅 Avg Hold: {strategy['avg_hold_days']:.1f} days")
-                print(f"   💸 Avg Charges: ₹{strategy['avg_charges_per_trade']:.0f}/trade")
-                print(f"   📉 Charges Impact: {strategy['charges_impact_pct']:.2f}%")
+                print(f"   📊 Avg Return/Trade: {strategy['avg_return_per_trade']:.2f}%")
+                print(f"   🛑 Stop Loss Hits: {strategy['stop_loss_count']} ({strategy['stop_loss_rate']:.1%})")
+                print(f"   🎯 Profit Target Hits: {strategy['profit_target_count']} ({strategy['profit_target_rate']:.1%})")
+                print(f"   ⏱️ Avg Hold Time: {strategy['avg_hold_time_minutes']:.1f} minutes")
                 print(f"   📊 Sharpe Ratio: {strategy['sharpe_ratio']:.2f}")
                 print()
-        
-        print(f"✅ HALAL COMPLIANCE CONFIRMED:")
-        print(f"   - All trades held minimum 1 day (CNC)")
-        print(f"   - No intraday trading")
-        print(f"   - Complete tax and charge calculations")
-        print(f"   - Real-world applicable results")
+            
+            # Stop loss analysis summary
+            print(f"🛑 STOP LOSS ANALYSIS SUMMARY:")
+            print(f"{'='*40}")
+            for strategy in all_strategies[:5]:
+                print(f"{strategy['strategy_name']} ({strategy['timeframe']})")
+                print(f"   Stop Loss Hits: {strategy['stop_loss_count']}/{strategy['total_trades']} ({strategy['stop_loss_rate']:.1%})")
+                print(f"   Avg Losing Trade: {strategy['avg_losing_trade']:.2f}%")
+                print(f"   Max Consecutive Losses: {strategy['max_consecutive_losses']}")
+                print()
 
 if __name__ == "__main__":
-    print("🕌 HALAL CNC BACKTESTING SYSTEM")
-    print("="*50)
-    print("✅ 100% Halal Compliant")
-    print("✅ CNC (Cash & Carry) Only") 
-    print("✅ Minimum 1-day holding")
-    print("✅ Complete Zerodha charges")
-    print("✅ STT, stamp duty, DP charges")
-    print("✅ Multiple timeframes for entry timing")
-    print("="*50)
+    print("🔍 COMPREHENSIVE INTRADAY INDICATOR COMPARISON")
+    print("="*60)
+    print("📊 Testing 14 different technical indicators")
+    print("⏱️ Both 15-minute and 1-hour timeframes")
+    print("🛑 Detailed stop loss and performance analysis")
+    print("📈 Average trade performance tracking")
+    print("="*60)
     
     try:
-        engine = HalalCNCBacktestEngine()
-        results = engine.run_halal_cnc_backtest()
+        analyzer = ComprehensiveIntradayAnalyzer()
+        results = analyzer.run_comprehensive_analysis()
         
-        print(f"\n🎉 HALAL CNC BACKTESTING COMPLETED!")
-        print(f"🕌 100% Shariah Compliant Results")
-        print(f"💰 Real-world charges included")
-        print(f"📊 Ready for halal live trading")
+        print(f"\n🎉 COMPREHENSIVE ANALYSIS COMPLETED!")
+        print(f"🏆 Best indicators identified for each timeframe")
+        print(f"🛑 Stop loss analysis complete")
+        print(f"📊 Ready for optimal strategy selection")
         
     except Exception as e:
-        print(f"❌ Backtesting failed: {e}")
+        print(f"❌ Analysis failed: {e}")
         raise

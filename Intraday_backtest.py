@@ -1,4 +1,4 @@
-# comprehensive_intraday_analysis.py
+# comprehensive_intraday_analysis_fixed.py
 
 import pandas as pd
 import numpy as np
@@ -8,8 +8,6 @@ import json
 import warnings
 from datetime import datetime, timedelta
 import gc
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 warnings.filterwarnings("ignore")
 
@@ -204,13 +202,13 @@ class ComprehensiveIntradayAnalyzer:
                 print(f"       ⚠️ Missing OHLCV data")
                 return df
             
-            # Williams %R
+            # Williams %R (14-period default)
             if 'williams_r' not in df.columns:
                 highest_high = df['high'].rolling(14).max()
                 lowest_low = df['low'].rolling(14).min()
                 df['williams_r'] = ((highest_high - df['close']) / (highest_high - lowest_low)) * -100
             
-            # RSI (if not already present)
+            # RSI (14-period default)
             if 'rsi' not in df.columns:
                 delta = df['close'].diff()
                 gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -218,14 +216,14 @@ class ComprehensiveIntradayAnalyzer:
                 rs = gain / loss
                 df['rsi'] = 100 - (100 / (1 + rs))
             
-            # MACD
+            # MACD (12, 26, 9)
             exp12 = df['close'].ewm(span=12).mean()
             exp26 = df['close'].ewm(span=26).mean()
             df['macd'] = exp12 - exp26
             df['macd_signal'] = df['macd'].ewm(span=9).mean()
             df['macd_histogram'] = df['macd'] - df['macd_signal']
             
-            # Bollinger Bands
+            # Bollinger Bands (20, 2)
             bb_period = 20
             df['bb_middle'] = df['close'].rolling(bb_period).mean()
             bb_std = df['close'].rolling(bb_period).std()
@@ -233,13 +231,13 @@ class ComprehensiveIntradayAnalyzer:
             df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
             df['bb_position'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
             
-            # Stochastic
+            # Stochastic (14, 3)
             lowest_low_14 = df['low'].rolling(14).min()
             highest_high_14 = df['high'].rolling(14).max()
             df['stoch_k'] = ((df['close'] - lowest_low_14) / (highest_high_14 - lowest_low_14)) * 100
             df['stoch_d'] = df['stoch_k'].rolling(3).mean()
             
-            # EMA
+            # EMA based on timeframe
             if timeframe == '15minute':
                 df['ema_fast'] = df['close'].ewm(span=5).mean()
                 df['ema_slow'] = df['close'].ewm(span=13).mean()
@@ -253,28 +251,36 @@ class ComprehensiveIntradayAnalyzer:
                     typical_price = (df['high'] + df['low'] + df['close']) / 3
                     vwap_numerator = (typical_price * df['volume']).cumsum()
                     vwap_denominator = df['volume'].cumsum()
-                    df['vwap'] = vwap_numerator / vwap_denominator
+                    df['vwap'] = vwap_numerator / vwap_denominator.replace(0, np.nan)
                 
                 df['vwap_deviation'] = (df['close'] - df['vwap']) / df['vwap']
             
-            # ADX (for 1-hour)
+            # ADX (for 1-hour only - simplified calculation)
             if timeframe == '1hour':
-                # Simplified ADX calculation
-                df['tr'] = np.maximum(df['high'] - df['low'],
-                                     np.maximum(abs(df['high'] - df['close'].shift(1)),
-                                               abs(df['low'] - df['close'].shift(1))))
+                # True Range
+                df['tr1'] = df['high'] - df['low']
+                df['tr2'] = abs(df['high'] - df['close'].shift(1))
+                df['tr3'] = abs(df['low'] - df['close'].shift(1))
+                df['tr'] = df[['tr1', 'tr2', 'tr3']].max(axis=1)
                 df['atr'] = df['tr'].rolling(14).mean()
                 
-                # Directional movement
-                df['plus_dm'] = np.where((df['high'] - df['high'].shift(1)) > (df['low'].shift(1) - df['low']),
-                                        np.maximum(df['high'] - df['high'].shift(1), 0), 0)
-                df['minus_dm'] = np.where((df['low'].shift(1) - df['low']) > (df['high'] - df['high'].shift(1)),
-                                         np.maximum(df['low'].shift(1) - df['low'], 0), 0)
+                # Directional Movement
+                df['plus_dm'] = np.where(
+                    (df['high'] - df['high'].shift(1)) > (df['low'].shift(1) - df['low']),
+                    np.maximum(df['high'] - df['high'].shift(1), 0), 0
+                )
+                df['minus_dm'] = np.where(
+                    (df['low'].shift(1) - df['low']) > (df['high'] - df['high'].shift(1)),
+                    np.maximum(df['low'].shift(1) - df['low'], 0), 0
+                )
                 
+                # Directional Indicators
                 df['plus_di'] = (df['plus_dm'].rolling(14).mean() / df['atr']) * 100
                 df['minus_di'] = (df['minus_dm'].rolling(14).mean() / df['atr']) * 100
-                df['adx'] = abs(df['plus_di'] - df['minus_di']) / (df['plus_di'] + df['minus_di']) * 100
-                df['adx'] = df['adx'].rolling(14).mean()
+                
+                # ADX
+                dx = abs(df['plus_di'] - df['minus_di']) / (df['plus_di'] + df['minus_di']) * 100
+                df['adx'] = dx.rolling(14).mean()
             
             # Support and Resistance levels
             lookback = 20
@@ -314,8 +320,8 @@ class ComprehensiveIntradayAnalyzer:
                 
             elif 'bollinger' in strategy_key:
                 # Bollinger Band mean reversion
-                buy_condition = (df['bb_position'] < 0.2) & (df['close'] > df['close'].shift(1))  # Near lower band and turning up
-                sell_condition = (df['bb_position'] > 0.8) | (df['close'] < df['bb_middle'])  # Near upper band or below middle
+                buy_condition = (df['bb_position'] < 0.2) & (df['close'] > df['close'].shift(1))
+                sell_condition = (df['bb_position'] > 0.8) | (df['close'] < df['bb_middle'])
                 
             elif 'stochastic' in strategy_key:
                 oversold = strategy_config['stoch_oversold']
@@ -331,7 +337,6 @@ class ComprehensiveIntradayAnalyzer:
             elif 'vwap' in strategy_key:
                 if 'vwap_deviation' in df.columns:
                     threshold = strategy_config['deviation_threshold']
-                    # Buy when price significantly below VWAP and turning up
                     buy_condition = (df['vwap_deviation'] < -threshold) & (df['close'] > df['close'].shift(1))
                     sell_condition = (df['vwap_deviation'] > threshold) | (df['close'] < df['vwap'])
                 else:
@@ -341,7 +346,6 @@ class ComprehensiveIntradayAnalyzer:
             elif 'adx' in strategy_key:
                 if 'adx' in df.columns:
                     adx_threshold = strategy_config['adx_threshold']
-                    # Strong trend with ADX
                     buy_condition = (df['adx'] > adx_threshold) & (df['plus_di'] > df['minus_di']) & (df['close'] > df['ema_fast'])
                     sell_condition = (df['adx'] < adx_threshold) | (df['plus_di'] < df['minus_di'])
                 else:
@@ -349,21 +353,25 @@ class ComprehensiveIntradayAnalyzer:
                     sell_condition = pd.Series([False] * len(df), index=df.index)
                 
             elif 'support_resistance' in strategy_key:
-                # Support/Resistance breakout
-                buy_condition = (df['sr_position'] < 0.3) & (df['close'] > df['close'].shift(1))  # Near support and bouncing
-                sell_condition = (df['sr_position'] > 0.8) | (df['close'] < df['support'] * 1.01)  # Near resistance or below support
+                buy_condition = (df['sr_position'] < 0.3) & (df['close'] > df['close'].shift(1))
+                sell_condition = (df['sr_position'] > 0.8) | (df['close'] < df['support'] * 1.01)
             
             else:
-                return df
+                buy_condition = pd.Series([False] * len(df), index=df.index)
+                sell_condition = pd.Series([False] * len(df), index=df.index)
             
-            # Apply signals
-            df.loc[buy_condition, 'signal'] = 1
-            df.loc[sell_condition, 'signal'] = -1
+            # Apply signals safely
+            df.loc[buy_condition.fillna(False), 'signal'] = 1
+            df.loc[sell_condition.fillna(False), 'signal'] = -1
+            
+            signal_count = df['signal'].sum()
+            print(f"       📊 Generated {(df['signal'] == 1).sum()} buy signals, {(df['signal'] == -1).sum()} sell signals")
             
             return df
             
         except Exception as e:
             print(f"       ❌ Signal generation failed for {strategy_key}: {e}")
+            df['signal'] = 0  # Fallback
             return df
     
     def _backtest_comprehensive_strategy(self, df, strategy_name, strategy_config):
@@ -389,9 +397,12 @@ class ComprehensiveIntradayAnalyzer:
             trailing_active = False
             
             for i in range(1, len(df)):
-                current_time = pd.to_datetime(df.loc[i, 'datetime' if 'datetime' in df.columns else 'date'])
-                current_price = df.loc[i, 'close']
-                signal = df.loc[i, 'signal']
+                current_time = pd.to_datetime(df.iloc[i]['datetime'] if 'datetime' in df.columns else df.iloc[i]['date'])
+                current_price = df.iloc[i]['close']
+                signal = df.iloc[i]['signal']
+                
+                if not np.isfinite(current_price) or current_price <= 0:
+                    continue
                 
                 # Exit Logic
                 if position_size > 0 and entry_price > 0:
@@ -443,7 +454,6 @@ class ComprehensiveIntradayAnalyzer:
                         
                         # Detailed trade record
                         max_profit_reached = (highest_price_since_entry - entry_price) / entry_price
-                        max_drawdown_in_trade = (entry_price - min(df.loc[entry_time:current_time, 'close'])) / entry_price if len(df.loc[entry_time:current_time, 'close']) > 0 else 0
                         
                         trades.append({
                             'entry_time': entry_time,
@@ -456,7 +466,6 @@ class ComprehensiveIntradayAnalyzer:
                             'minutes_held': minutes_held,
                             'exit_reason': exit_reason,
                             'max_profit_reached_pct': max_profit_reached * 100,
-                            'max_drawdown_in_trade_pct': max_drawdown_in_trade * 100,
                             'trailing_activated': trailing_active,
                             'hit_stop_loss': exit_reason == "Stop Loss",
                             'hit_profit_target': exit_reason == "Profit Target",
@@ -490,7 +499,7 @@ class ComprehensiveIntradayAnalyzer:
             return [], INITIAL_CAPITAL
     
     def _analyze_detailed_performance(self, trades, final_portfolio, strategy_name, timeframe):
-        """Detailed performance analysis with stop loss analysis"""
+        """Detailed performance analysis"""
         if not trades:
             return None
         
@@ -500,7 +509,7 @@ class ComprehensiveIntradayAnalyzer:
         total_trades = len(trades)
         winning_trades = len(df_trades[df_trades['pnl'] > 0])
         losing_trades = len(df_trades[df_trades['pnl'] < 0])
-        win_rate = winning_trades / total_trades
+        win_rate = winning_trades / total_trades if total_trades > 0 else 0
         
         # Performance metrics
         total_return = (final_portfolio - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
@@ -522,20 +531,19 @@ class ComprehensiveIntradayAnalyzer:
         signal_exit_count = exit_reasons.get('Signal Exit', 0)
         time_limit_count = exit_reasons.get('Time Limit', 0)
         
-        # Stop loss analysis
-        stop_loss_rate = stop_loss_count / total_trades
-        profit_target_rate = profit_target_count / total_trades
+        # Rates
+        stop_loss_rate = stop_loss_count / total_trades if total_trades > 0 else 0
+        profit_target_rate = profit_target_count / total_trades if total_trades > 0 else 0
         
         # Hold time analysis
         avg_hold_time = df_trades['minutes_held'].mean()
         avg_winning_hold_time = df_trades[df_trades['pnl'] > 0]['minutes_held'].mean() if winning_trades > 0 else 0
         avg_losing_hold_time = df_trades[df_trades['pnl'] < 0]['minutes_held'].mean() if losing_trades > 0 else 0
         
-        # Max profit reached analysis
+        # Max profit analysis
         avg_max_profit_reached = df_trades['max_profit_reached_pct'].mean()
-        trades_hit_target = len(df_trades[df_trades['max_profit_reached_pct'] >= (df_trades['return_pct'] * 0.9)])  # Close to target
         
-        # Trailing stop effectiveness
+        # Trailing stop analysis
         trailing_trades = df_trades[df_trades['trailing_activated'] == True]
         trailing_success_rate = len(trailing_trades[trailing_trades['pnl'] > 0]) / len(trailing_trades) if len(trailing_trades) > 0 else 0
         
@@ -637,8 +645,12 @@ class ComprehensiveIntradayAnalyzer:
             try:
                 data_files = [f for f in os.listdir(data_dir) if f.endswith('.csv')]
                 print(f"📁 Found {len(data_files)} data files")
-            except:
-                print(f"❌ Data directory not found: {data_dir}")
+            except Exception as e:
+                print(f"❌ Data directory error: {e}")
+                continue
+            
+            if not data_files:
+                print(f"❌ No data files found in {data_dir}")
                 continue
             
             timeframe_results = {}
@@ -651,6 +663,7 @@ class ComprehensiveIntradayAnalyzer:
                 print(f"\n🎯 STRATEGY: {strategy_config['name']}")
                 
                 all_trades = []
+                files_processed = 0
                 
                 for i, filename in enumerate(test_files, 1):
                     try:
@@ -668,6 +681,8 @@ class ComprehensiveIntradayAnalyzer:
                         # Prepare datetime
                         if 'datetime' not in df.columns and 'date' in df.columns:
                             df['datetime'] = pd.to_datetime(df['date'])
+                        elif 'date' not in df.columns and 'datetime' in df.columns:
+                            df['date'] = df['datetime']
                         
                         # Calculate comprehensive indicators
                         df = self._calculate_comprehensive_indicators(df, timeframe_key)
@@ -686,6 +701,7 @@ class ComprehensiveIntradayAnalyzer:
                                 trade['symbol'] = symbol
                             all_trades.extend(symbol_trades)
                             print(f"       ✅ {len(symbol_trades)} trades")
+                            files_processed += 1
                         else:
                             print(f"       ⚠️ No trades generated")
                         
@@ -693,11 +709,11 @@ class ComprehensiveIntradayAnalyzer:
                         gc.collect()
                         
                     except Exception as e:
-                        print(f"       ❌ Error: {e}")
+                        print(f"       ❌ Error processing {filename}: {e}")
                         continue
                 
                 # Analyze strategy performance
-                if all_trades:
+                if all_trades and files_processed > 0:
                     final_portfolio = INITIAL_CAPITAL + sum([trade['pnl'] for trade in all_trades])
                     
                     performance = self._analyze_detailed_performance(
@@ -705,6 +721,10 @@ class ComprehensiveIntradayAnalyzer:
                     )
                     
                     if performance:
+                        # Add processing info
+                        performance['files_processed'] = files_processed
+                        performance['symbols_tested'] = files_processed
+                        
                         timeframe_results[strategy_key] = performance
                         self.execution_stats['successful_strategies'] += 1
                         self.execution_stats['total_trades_analyzed'] += len(all_trades)
@@ -714,9 +734,10 @@ class ComprehensiveIntradayAnalyzer:
                         print(f"       🎯 Win Rate: {performance['win_rate']:.2%}")
                         print(f"       📈 Return: {performance['total_return']:.2f}%")
                         print(f"       🛑 Stop Loss Rate: {performance['stop_loss_rate']:.2%}")
+                        print(f"       📈 Avg Trade: {performance['avg_return_per_trade']:.2f}%")
                         print(f"       ⏱️ Avg Hold: {performance['avg_hold_time_minutes']:.1f} min")
                     else:
-                        print(f"   ❌ Analysis failed")
+                        print(f"   ❌ Performance analysis failed")
                         self.execution_stats['failed_strategies'] += 1
                 else:
                     print(f"   ❌ No trades for analysis")
@@ -737,15 +758,15 @@ class ComprehensiveIntradayAnalyzer:
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             
-            results_file = os.path.join(DATA_DIRS['results'], f'comprehensive_indicator_analysis_{timestamp}.json')
+            results_file = os.path.join(DATA_DIRS['results'], f'comprehensive_analysis_{timestamp}.json')
             
             with open(results_file, 'w') as f:
                 json.dump(self.results_summary, f, indent=2, default=str)
             
-            print(f"📁 Comprehensive results saved: {results_file}")
+            print(f"📁 Results saved: {results_file}")
             
         except Exception as e:
-            print(f"⚠️ Results saving failed: {e}")
+            print(f"⚠️ Save failed: {e}")
     
     def _print_comprehensive_comparison(self):
         """Print comprehensive comparison results"""
@@ -787,9 +808,11 @@ class ComprehensiveIntradayAnalyzer:
                     print(f"   🎯 Win Rate: {strategy['win_rate']:.2%}")
                     print(f"   📊 Trades: {strategy['total_trades']}")
                     print(f"   🛑 Stop Loss Rate: {strategy['stop_loss_rate']:.2%}")
+                    print(f"   📊 Avg Trade: {strategy['avg_return_per_trade']:.3f}%")
                     print(f"   ⏱️ Avg Hold: {strategy['avg_hold_time_minutes']:.1f} min")
-                    print(f"   📊 Avg Trade: {strategy['avg_return_per_trade']:.2f}%")
                     print()
+            else:
+                print("   No successful 15-minute strategies")
             
             print(f"🚀 TOP 1-HOUR STRATEGIES:")
             print(f"{'='*60}")
@@ -800,35 +823,52 @@ class ComprehensiveIntradayAnalyzer:
                     print(f"   🎯 Win Rate: {strategy['win_rate']:.2%}")
                     print(f"   📊 Trades: {strategy['total_trades']}")
                     print(f"   🛑 Stop Loss Rate: {strategy['stop_loss_rate']:.2%}")
+                    print(f"   📊 Avg Trade: {strategy['avg_return_per_trade']:.3f}%")
                     print(f"   ⏱️ Avg Hold: {strategy['avg_hold_time_minutes']:.1f} min")
-                    print(f"   📊 Avg Trade: {strategy['avg_return_per_trade']:.2f}%")
                     print()
+            else:
+                print("   No successful 1-hour strategies")
             
             # Overall best
-            print(f"🏆 OVERALL BEST STRATEGIES:")
-            print(f"{'='*50}")
+            print(f"🏆 OVERALL BEST STRATEGIES (ALL TIMEFRAMES):")
+            print(f"{'='*60}")
             for i, strategy in enumerate(all_strategies[:3], 1):
                 print(f"{i}. {strategy['strategy_name']} ({strategy['timeframe']})")
                 print(f"   📈 Total Return: {strategy['total_return']:.2f}%")
                 print(f"   💰 Final Portfolio: ₹{strategy['final_portfolio']:,.0f}")
                 print(f"   🎯 Win Rate: {strategy['win_rate']:.2%}")
-                print(f"   📊 Total Trades: {strategy['total_trades']}")
-                print(f"   📊 Avg Return/Trade: {strategy['avg_return_per_trade']:.2f}%")
+                print(f"   📊 Trades: {strategy['total_trades']} (across {strategy.get('symbols_tested', 'N/A')} symbols)")
+                print(f"   📊 Avg Return/Trade: {strategy['avg_return_per_trade']:.3f}%")
+                print(f"   📊 Avg Winning Trade: {strategy['avg_winning_trade']:.2f}%")
+                print(f"   📊 Avg Losing Trade: {strategy['avg_losing_trade']:.2f}%")
                 print(f"   🛑 Stop Loss Hits: {strategy['stop_loss_count']} ({strategy['stop_loss_rate']:.1%})")
                 print(f"   🎯 Profit Target Hits: {strategy['profit_target_count']} ({strategy['profit_target_rate']:.1%})")
-                print(f"   ⏱️ Avg Hold Time: {strategy['avg_hold_time_minutes']:.1f} minutes")
+                print(f"   ⏱️ Avg Hold: {strategy['avg_hold_time_minutes']:.1f} minutes")
                 print(f"   📊 Sharpe Ratio: {strategy['sharpe_ratio']:.2f}")
+                print(f"   🔄 Max Consecutive Losses: {strategy['max_consecutive_losses']}")
                 print()
             
-            # Stop loss analysis summary
-            print(f"🛑 STOP LOSS ANALYSIS SUMMARY:")
-            print(f"{'='*40}")
+            # Detailed stop loss analysis
+            print(f"🛑 DETAILED STOP LOSS ANALYSIS:")
+            print(f"{'='*50}")
             for strategy in all_strategies[:5]:
-                print(f"{strategy['strategy_name']} ({strategy['timeframe']})")
-                print(f"   Stop Loss Hits: {strategy['stop_loss_count']}/{strategy['total_trades']} ({strategy['stop_loss_rate']:.1%})")
-                print(f"   Avg Losing Trade: {strategy['avg_losing_trade']:.2f}%")
-                print(f"   Max Consecutive Losses: {strategy['max_consecutive_losses']}")
+                sl_count = strategy['stop_loss_count']
+                total = strategy['total_trades']
+                sl_rate = strategy['stop_loss_rate']
+                avg_loss = strategy['avg_losing_trade']
+                
+                print(f"{strategy['strategy_name']} ({strategy['timeframe']}):")
+                print(f"   🛑 Stop Loss: {sl_count}/{total} trades ({sl_rate:.1%})")
+                print(f"   📉 Avg Loss: {avg_loss:.2f}%")
+                print(f"   🔴 Max Consecutive Losses: {strategy['max_consecutive_losses']}")
+                print(f"   💸 Total Loss from SL: ₹{sl_count * POSITION_SIZE_PER_TRADE * abs(avg_loss/100):,.0f}")
                 print()
+        
+        else:
+            print("❌ No successful strategies found")
+        
+        print(f"🎯 ANALYSIS COMPLETE!")
+        print(f"📊 Check results file for detailed data")
 
 if __name__ == "__main__":
     print("🔍 COMPREHENSIVE INTRADAY INDICATOR COMPARISON")
@@ -837,6 +877,7 @@ if __name__ == "__main__":
     print("⏱️ Both 15-minute and 1-hour timeframes")
     print("🛑 Detailed stop loss and performance analysis")
     print("📈 Average trade performance tracking")
+    print("✅ No external dependencies required")
     print("="*60)
     
     try:
@@ -850,4 +891,5 @@ if __name__ == "__main__":
         
     except Exception as e:
         print(f"❌ Analysis failed: {e}")
-        raise
+        import traceback
+        traceback.print_exc()

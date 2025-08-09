@@ -14,10 +14,6 @@ DATA_PATHS = {
     'daily': os.path.join(BASE_DIR, "swing_data"),
     'hourly': os.path.join(BASE_DIR, "intraday_data"),
     'fifteen_min': os.path.join(BASE_DIR, "scalping_data")
-
-    'daily': os.path.join(BASE_DIR, "swing_data"),
-    '15minute': os.path.join(BASE_DIR, "scalping_data"),
-    '1hour': os.path.join(BASE_DIR, "intraday_swing_data"),
 }
 
 # Trading cost params (Zerodha CNC approx)

@@ -8,6 +8,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 BASE_DIR = "/path/to/your/data"
+MODEL_PATH = "model.pkl"
 
 DATA_PATHS = {
     'daily': os.path.join(BASE_DIR, "swing_data"),

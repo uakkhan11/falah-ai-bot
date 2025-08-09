@@ -3,7 +3,7 @@ import json
 
 api_key = "ijzeuwuylr3g0kug"
 api_secret = "yy1wd2wn8r0wx4mus00vxllgss03nuqx"
-request_token = "zUmeYPJVWMoMTe2Okrk0qjKXhfb2tv4J"   # from URL
+request_token = "ljM3esGSngie1jEJoPDoxiLqySG0co6h"   # from URL
 
 kite = KiteConnect(api_key=api_key)
 data = kite.generate_session(request_token, api_secret=api_secret)

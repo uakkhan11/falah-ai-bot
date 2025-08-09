@@ -44,17 +44,15 @@ df = df_raw.merge(df_ml[["date"]], on="date", how="inner")
 df.reset_index(drop=True, inplace=True)
 
 # 3. Calculate indicators for ML features
-df["rsi"]         = ta.rsi(df["close"], length=14)
-df["atr"]         = ta.atr(df["high"], df["low"], df["close"], length=14)
-df["adx"]         = ta.adx(df["high"], df["low"], df["close"], length=14)["ADX_14"]
-df["ema10"]       = ta.ema(df["close"], length=10)
-df["ema21"]       = ta.ema(df["close"], length=21)
-macd             = ta.macd(df["close"], fast=12, slow=26, signal=9)
-df["macd_hist"]   = macd["MACDh_12_26_9"]
-df["macd_signal"] = macd["MACDs_12_26_9"]
+df["rsi"]           = ta.rsi(df["close"], length=14)
+df["atr"]           = ta.atr(df["high"], df["low"], df["close"], length=14)
+df["adx"]           = ta.adx(df["high"], df["low"], df["close"], length=14)["ADX_14"]
+df["ema10"]         = ta.ema(df["close"], length=10)
+df["ema21"]         = ta.ema(df["close"], length=21)
+df["volumechange"]  = df["volume"].pct_change().fillna(0)
 
 # 4. Generate ML signals
-features = ["rsi","atr","adx","ema10","ema21","macd_hist","macd_signal"]
+features = ["rsi","atr","adx","ema10","ema21","volumechange"]
 df.dropna(subset=features, inplace=True)
 X = df[features]
 df["signal"] = model.predict(X)

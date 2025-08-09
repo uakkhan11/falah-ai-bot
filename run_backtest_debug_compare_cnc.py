@@ -33,9 +33,14 @@ df.sort_values("date", inplace=True)
 df.reset_index(drop=True, inplace=True)
 
 # Generate ML signals
-features = [c for c in ["rsi","atr","adx","ema10","ema21","volumechange"] if c in df]
+features = ['rsi','ema10','ema21','macd_hist','macd_signal','atr','adx']
 df.dropna(subset=features, inplace=True)
 df["signal"] = model.predict(df[features])
+if not features:
+    raise ValueError("No valid features found.")
+X = df[features]
+df['signal']         = model.predict(X)
+df['ml_probability'] = model.predict_proba(X)[:,1]
 
 # CNC backtest
 results, cash, positions = [], INITIAL_CAPITAL, {}

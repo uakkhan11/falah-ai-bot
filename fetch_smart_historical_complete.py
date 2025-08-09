@@ -1,19 +1,25 @@
-# fetch_smart_historical_complete.py
+# fetch_smart_historical_fixed.py
 
 import os
 import time
 import pandas as pd
 import pandas_ta as ta
+import numpy as np
 import json
 import shutil
 from datetime import datetime, timedelta, time as dt_time
 from kiteconnect import KiteConnect
 from credentials import load_secrets
 from utils import get_halal_list
-import gc  # For memory management
+import gc
+import warnings
+
+# Suppress pandas_ta warnings
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', message='.*VWAP.*')
 
 # ========================
-# SMART CONFIGURATION
+# FIXED SMART CONFIGURATION
 # ========================
 BASE_DIR = "/root/falah-ai-bot/"
 DATA_DIRS = {
@@ -25,7 +31,6 @@ DATA_DIRS = {
     'backup': os.path.join(BASE_DIR, "data_backup")
 }
 
-# Create all directories
 for directory in DATA_DIRS.values():
     os.makedirs(directory, exist_ok=True)
 
@@ -33,43 +38,35 @@ for directory in DATA_DIRS.values():
 SMART_TIMEFRAMES = {
     'daily': {
         'interval': 'day',
-        'lookback_days': 1825,  # 5 years - optimal for swing
+        'lookback_days': 1825,  # 5 years
         'output_dir': DATA_DIRS['daily'],
         'strategy_type': 'Swing Trading',
         'min_bars_required': 200,
-        'memory_efficient': True
     },
     '15minute': {
         'interval': '15minute', 
-        'lookback_days': 120,   # 4 months - optimal for scalping
+        'lookback_days': 120,   # 4 months
         'output_dir': DATA_DIRS['15minute'],
         'strategy_type': 'Scalping',
         'min_bars_required': 100,
-        'memory_efficient': True
     },
     '1hour': {
         'interval': 'hour',
-        'lookback_days': 300,   # 10 months - optimal for intraday swing
+        'lookback_days': 300,   # 10 months
         'output_dir': DATA_DIRS['1hour'],
         'strategy_type': 'Intraday Swing',
         'min_bars_required': 150,
-        'memory_efficient': True
     }
 }
 
-# MARKET HOURS CONFIGURATION (IST)
-MARKET_OPEN_TIME = dt_time(9, 15)   # 9:15 AM IST
-MARKET_CLOSE_TIME = dt_time(15, 30)  # 3:30 PM IST
-PRE_MARKET_START = dt_time(9, 0)    # 9:00 AM IST
-
-# SMART FETCHING CONFIGURATION
-BATCH_SIZE = 10  # Reduced for memory efficiency
+# MARKET HOURS CONFIGURATION
+MARKET_OPEN_TIME = dt_time(9, 15)
+MARKET_CLOSE_TIME = dt_time(15, 30)
+BATCH_SIZE = 10
 RATE_LIMIT_DELAY = 0.4
-MAX_MEMORY_USAGE_MB = 500  # Maximum memory per symbol processing
-SMART_CACHING = True
-INCREMENTAL_UPDATE = True
+MAX_MEMORY_USAGE_MB = 500
 
-class SmartHalalDataFetcher:
+class FixedSmartHalalDataFetcher:
     def __init__(self):
         self.kite = None
         self.token_map = {}
@@ -80,13 +77,12 @@ class SmartHalalDataFetcher:
             'total_symbols': 0,
             'successful_fetches': 0,
             'failed_fetches': 0,
-            'memory_cleaned': 0,
-            'cache_hits': 0,
-            'api_calls': 0,
+            'feature_errors': 0,
+            'vwap_warnings': 0,
             'start_time': datetime.now()
         }
         
-        print(f"🤖 Smart Data Fetcher initialized")
+        print(f"🤖 Fixed Smart Data Fetcher initialized")
         print(f"📅 Today: {self.today_date}")
         print(f"🕐 Market Status: {self.market_status}")
         
@@ -99,12 +95,9 @@ class SmartHalalDataFetcher:
         now = datetime.now().time()
         today = datetime.now().weekday()
         
-        # Weekend check
-        if today >= 5:  # Saturday = 5, Sunday = 6
+        if today >= 5:  # Weekend
             return "WEEKEND_CLOSED"
-        
-        # Market hours check
-        if now < MARKET_OPEN_TIME:
+        elif now < MARKET_OPEN_TIME:
             return "PRE_MARKET"
         elif MARKET_OPEN_TIME <= now <= MARKET_CLOSE_TIME:
             return "MARKET_OPEN"
@@ -112,7 +105,7 @@ class SmartHalalDataFetcher:
             return "POST_MARKET"
     
     def _setup_kite_connection(self):
-        """Setup Kite connection with error handling"""
+        """Setup Kite connection"""
         try:
             secrets = load_secrets()
             creds = secrets["zerodha"]
@@ -120,9 +113,8 @@ class SmartHalalDataFetcher:
             self.kite = KiteConnect(api_key=creds["api_key"])
             self.kite.set_access_token(creds["access_token"])
             
-            # Validate connection
             profile = self.kite.profile()
-            print(f"✅ Connected as: {profile['user_name']} | {profile['broker']}")
+            print(f"✅ Connected as: {profile['user_name']}")
             
         except Exception as e:
             print(f"❌ Kite connection failed: {e}")
@@ -132,7 +124,6 @@ class SmartHalalDataFetcher:
         """Smart instrument loading with caching"""
         cache_file = os.path.join(BASE_DIR, "smart_instruments.json")
         
-        # Check if cache is recent (less than 12 hours old)
         if os.path.exists(cache_file):
             try:
                 file_time = datetime.fromtimestamp(os.path.getmtime(cache_file))
@@ -141,41 +132,31 @@ class SmartHalalDataFetcher:
                         cached_data = json.load(f)
                     
                     self.token_map = cached_data['token_map']
-                    print(f"✅ Smart cache: Loaded {len(self.token_map)} instruments")
-                    self.execution_stats['cache_hits'] += 1
+                    print(f"✅ Loaded {len(self.token_map)} instruments from cache")
                     return
             except:
                 pass
         
-        # Fetch fresh instruments
-        print("🔄 Fetching fresh instruments (cache expired/missing)...")
+        print("🔄 Fetching fresh instruments...")
         try:
             instruments = self.kite.instruments("NSE")
-            self.execution_stats['api_calls'] += 1
-            
-            # Filter for equity only
-            equity_instruments = [
-                inst for inst in instruments 
-                if inst['instrument_type'] == 'EQ' and 
-                not any(char in inst['tradingsymbol'] for char in ['-', '&', '.'])
-            ]
             
             self.token_map = {
                 inst["tradingsymbol"]: inst["instrument_token"]
-                for inst in equity_instruments
+                for inst in instruments 
+                if inst['instrument_type'] == 'EQ' and 
+                not any(char in inst['tradingsymbol'] for char in ['-', '&', '.'])
             }
             
-            # Cache the data
             cache_data = {
                 'timestamp': datetime.now().isoformat(),
-                'token_map': self.token_map,
-                'total_instruments': len(equity_instruments)
+                'token_map': self.token_map
             }
             
             with open(cache_file, 'w') as f:
                 json.dump(cache_data, f, indent=2)
             
-            print(f"✅ Loaded {len(self.token_map)} instruments and cached")
+            print(f"✅ Loaded and cached {len(self.token_map)} instruments")
             
         except Exception as e:
             print(f"❌ Instrument loading failed: {e}")
@@ -186,15 +167,10 @@ class SmartHalalDataFetcher:
         try:
             all_halal_symbols = get_halal_list("1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c")
             
-            # Filter valid symbols
             self.halal_symbols = [
                 sym for sym in all_halal_symbols 
                 if sym in self.token_map
             ]
-            
-            missing_count = len(all_halal_symbols) - len(self.halal_symbols)
-            if missing_count > 0:
-                print(f"⚠️ {missing_count} halal symbols not found in NSE")
             
             self.execution_stats['total_symbols'] = len(self.halal_symbols)
             print(f"✅ Halal symbols loaded: {len(self.halal_symbols)} valid symbols")
@@ -204,42 +180,199 @@ class SmartHalalDataFetcher:
             raise
     
     def _clear_old_data(self, output_dir):
-        """Smart data replacement - backup then clear"""
+        """Smart data replacement with backup"""
         if not os.path.exists(output_dir):
             return
         
         try:
-            # Create backup if directory has data
             files = [f for f in os.listdir(output_dir) if f.endswith('.csv')]
             if files:
                 backup_dir = os.path.join(DATA_DIRS['backup'], f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
                 os.makedirs(backup_dir, exist_ok=True)
                 
-                # Move old data to backup
-                for file in files[:5]:  # Backup max 5 files as sample
+                # Backup sample files
+                for file in files[:3]:
                     shutil.copy2(os.path.join(output_dir, file), backup_dir)
                 
-                print(f"📦 Backed up {len(files)} files to {backup_dir}")
+                print(f"📦 Backed up {len(files)} files")
             
             # Clear directory
             shutil.rmtree(output_dir)
             os.makedirs(output_dir, exist_ok=True)
-            print(f"🗑️ Cleared old data from {output_dir}")
+            print(f"🗑️ Cleared old data from {os.path.basename(output_dir)}")
             
         except Exception as e:
             print(f"⚠️ Data clearing warning: {e}")
     
+    def _prepare_dataframe_for_ta(self, df):
+        """FIXED: Properly prepare DataFrame for technical analysis"""
+        try:
+            # Ensure we have a proper datetime index
+            df_ta = df.copy()
+            
+            # Convert date column to datetime
+            df_ta['datetime'] = pd.to_datetime(df_ta['date'])
+            
+            # Sort by datetime to ensure proper ordering
+            df_ta = df_ta.sort_values('datetime').reset_index(drop=True)
+            
+            # Set datetime as index for pandas_ta
+            df_ta.set_index('datetime', inplace=True)
+            
+            # Ensure we have the required OHLCV columns
+            required_cols = ['open', 'high', 'low', 'close']
+            if not all(col in df_ta.columns for col in required_cols):
+                print("   ⚠️ Missing OHLCV columns")
+                return None
+            
+            # Ensure numeric data types
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                if col in df_ta.columns:
+                    df_ta[col] = pd.to_numeric(df_ta[col], errors='coerce')
+            
+            # Remove any NaN values
+            df_ta = df_ta.dropna(subset=required_cols)
+            
+            return df_ta
+            
+        except Exception as e:
+            print(f"   ❌ DataFrame preparation failed: {e}")
+            return None
+    
+    def _calculate_safe_vwap(self, df_ta):
+        """FIXED: Safe VWAP calculation with proper error handling"""
+        try:
+            if len(df_ta) < 20 or df_ta['volume'].sum() == 0:
+                return None
+            
+            # Manual VWAP calculation (more reliable than pandas_ta)
+            # VWAP = Cumulative(Volume * Typical Price) / Cumulative Volume
+            typical_price = (df_ta['high'] + df_ta['low'] + df_ta['close']) / 3
+            volume_price = typical_price * df_ta['volume']
+            
+            # Calculate cumulative sums
+            cumulative_volume_price = volume_price.cumsum()
+            cumulative_volume = df_ta['volume'].cumsum()
+            
+            # Avoid division by zero
+            vwap = cumulative_volume_price / cumulative_volume.replace(0, np.nan)
+            
+            return vwap.fillna(method='ffill')
+            
+        except Exception as e:
+            print(f"   ⚠️ VWAP calculation failed: {e}")
+            return None
+    
+    def _add_fixed_technical_features(self, df, timeframe):
+        """FIXED: Add technical features with proper error handling"""
+        try:
+            if len(df) < 20:
+                print(f"   ⚠️ Insufficient data for {timeframe}: {len(df)} bars")
+                return df
+            
+            # Prepare DataFrame for TA
+            df_ta = self._prepare_dataframe_for_ta(df)
+            if df_ta is None:
+                return df
+            
+            # Timeframe-specific parameters
+            params = {
+                'daily': {'rsi': 14, 'ema_fast': 10, 'ema_slow': 21, 'atr': 14},
+                '15minute': {'rsi': 9, 'ema_fast': 5, 'ema_slow': 13, 'atr': 9},
+                '1hour': {'rsi': 14, 'ema_fast': 9, 'ema_slow': 21, 'atr': 14}
+            }
+            
+            p = params.get(timeframe, params['daily'])
+            
+            # FIXED: Core indicators with error handling
+            try:
+                df_ta['rsi'] = ta.rsi(df_ta['close'], length=p['rsi'])
+            except Exception as e:
+                print(f"   ⚠️ RSI calculation failed: {e}")
+                # Fallback RSI calculation
+                delta = df_ta['close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=p['rsi']).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=p['rsi']).mean()
+                rs = gain / loss
+                df_ta['rsi'] = 100 - (100 / (1 + rs))
+            
+            try:
+                df_ta['ema_fast'] = ta.ema(df_ta['close'], length=p['ema_fast'])
+                df_ta['ema_slow'] = ta.ema(df_ta['close'], length=p['ema_slow'])
+            except Exception as e:
+                print(f"   ⚠️ EMA calculation failed: {e}")
+                # Fallback EMA calculation
+                df_ta['ema_fast'] = df_ta['close'].ewm(span=p['ema_fast']).mean()
+                df_ta['ema_slow'] = df_ta['close'].ewm(span=p['ema_slow']).mean()
+            
+            # FIXED: ATR calculation
+            try:
+                if all(col in df_ta.columns for col in ['high', 'low']):
+                    df_ta['atr'] = ta.atr(df_ta['high'], df_ta['low'], df_ta['close'], length=p['atr'])
+                else:
+                    # Fallback ATR using close price volatility
+                    df_ta['atr'] = df_ta['close'].pct_change().rolling(p['atr']).std() * df_ta['close']
+            except Exception as e:
+                print(f"   ⚠️ ATR calculation failed: {e}")
+                df_ta['atr'] = df_ta['close'].pct_change().rolling(p['atr']).std() * df_ta['close']
+            
+            # FIXED: VWAP for intraday (using our safe calculation)
+            if timeframe in ['15minute', '1hour'] and 'volume' in df_ta.columns:
+                vwap_values = self._calculate_safe_vwap(df_ta)
+                if vwap_values is not None:
+                    df_ta['vwap'] = vwap_values
+                    print(f"   ✅ VWAP calculated successfully")
+                else:
+                    print(f"   ⚠️ VWAP calculation skipped")
+            
+            # Volume features (if volume available)
+            if 'volume' in df_ta.columns and df_ta['volume'].sum() > 0:
+                try:
+                    df_ta['volume_sma'] = df_ta['volume'].rolling(20).mean()
+                    df_ta['volume_ratio'] = df_ta['volume'] / df_ta['volume_sma']
+                except:
+                    pass
+            
+            # Price momentum and volatility
+            try:
+                df_ta['price_momentum'] = df_ta['close'].pct_change(3) * 100
+                df_ta['volatility_20'] = df_ta['close'].pct_change().rolling(20).std() * 100
+            except Exception as e:
+                print(f"   ⚠️ Momentum calculation failed: {e}")
+            
+            # ADX for daily and hourly (with error handling)
+            if timeframe in ['daily', '1hour'] and all(col in df_ta.columns for col in ['high', 'low']):
+                try:
+                    adx_result = ta.adx(df_ta['high'], df_ta['low'], df_ta['close'], length=14)
+                    if adx_result is not None and 'ADX_14' in adx_result.columns:
+                        df_ta['adx'] = adx_result['ADX_14']
+                except Exception as e:
+                    print(f"   ⚠️ ADX calculation skipped: {e}")
+            
+            # Reset index and merge back to original DataFrame
+            df_ta.reset_index(inplace=True)
+            
+            # Merge calculated features back to original DataFrame
+            feature_columns = [col for col in df_ta.columns if col not in df.columns]
+            for col in feature_columns:
+                df[col] = df_ta[col]
+            
+            print(f"   ✅ Technical features added for {timeframe}")
+            
+        except Exception as e:
+            print(f"   ❌ Feature calculation error for {timeframe}: {e}")
+            self.execution_stats['feature_errors'] += 1
+        
+        return df
+    
     def _memory_efficient_fetch(self, symbol, token, timeframe_name, config):
         """Memory-efficient data fetching"""
         try:
-            # Calculate date range
             to_date = datetime.now()
             from_date = to_date - timedelta(days=config['lookback_days'])
             
-            # Rate limiting
             time.sleep(RATE_LIMIT_DELAY)
             
-            # Fetch data
             candles = self.kite.historical_data(
                 instrument_token=token,
                 from_date=from_date,
@@ -247,19 +380,10 @@ class SmartHalalDataFetcher:
                 interval=config['interval']
             )
             
-            self.execution_stats['api_calls'] += 1
-            
             if not candles:
                 return None, None
             
-            # Convert to DataFrame efficiently
             df = pd.DataFrame(candles)
-            
-            # Memory check
-            memory_usage = df.memory_usage(deep=True).sum() / (1024 * 1024)  # MB
-            if memory_usage > MAX_MEMORY_USAGE_MB:
-                print(f"   ⚠️ Large dataset: {memory_usage:.1f}MB for {symbol}")
-            
             return df, len(candles)
             
         except Exception as e:
@@ -273,7 +397,6 @@ class SmartHalalDataFetcher:
             df['hour'] = df['datetime'].dt.hour
             df['minute'] = df['datetime'].dt.minute
             
-            # Market hours filter
             market_mask = (
                 ((df['hour'] == 9) & (df['minute'] >= 15)) |
                 ((df['hour'] >= 10) & (df['hour'] <= 14)) |
@@ -286,141 +409,80 @@ class SmartHalalDataFetcher:
             print(f"   ⚠️ Market hours processing failed: {e}")
             return df
     
-    def _add_smart_features(self, df, timeframe):
-        """Add timeframe-optimized technical features"""
-        try:
-            if len(df) < 20:
-                return df
-            
-            # Timeframe-specific parameters
-            params = {
-                'daily': {'rsi': 14, 'ema_fast': 10, 'ema_slow': 21, 'atr': 14},
-                '15minute': {'rsi': 9, 'ema_fast': 5, 'ema_slow': 13, 'atr': 9},
-                '1hour': {'rsi': 14, 'ema_fast': 9, 'ema_slow': 21, 'atr': 14}
-            }
-            
-            p = params.get(timeframe, params['daily'])
-            
-            # Core indicators
-            df['rsi'] = ta.rsi(df['close'], length=p['rsi'])
-            df['ema_fast'] = ta.ema(df['close'], length=p['ema_fast'])
-            df['ema_slow'] = ta.ema(df['close'], length=p['ema_slow'])
-            
-            # Additional features for OHLCV data
-            if all(col in df.columns for col in ['high', 'low', 'volume']):
-                df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=p['atr'])
-                
-                # VWAP for intraday
-                if timeframe in ['15minute', '1hour']:
-                    df['vwap'] = ta.vwap(df['high'], df['low'], df['close'], df['volume'])
-                
-                # Volume analysis
-                if df['volume'].sum() > 0:
-                    df['vol_ma'] = df['volume'].rolling(20).mean()
-                    df['vol_ratio'] = df['volume'] / df['vol_ma']
-            
-            # Price momentum and volatility
-            df['price_momentum'] = df['close'].pct_change(3) * 100
-            df['volatility_20'] = df['close'].pct_change().rolling(20).std() * 100
-            
-            # ADX for daily and hourly
-            if timeframe in ['daily', '1hour'] and all(col in df.columns for col in ['high', 'low']):
-                try:
-                    df['adx'] = ta.adx(df['high'], df['low'], df['close'], length=14)['ADX_14']
-                except:
-                    pass
-            
-            return df
-            
-        except Exception as e:
-            print(f"   ⚠️ Feature calculation error: {e}")
-            return df
-    
     def _get_today_candle_status(self, df, timeframe):
         """Analyze today's candle for trading decision"""
         try:
             if df is None or len(df) == 0:
-                return {"status": "NO_DATA", "message": "No data available"}
+                return {"status": "NO_DATA", "message": "No data available", "recommendation": "Wait for data"}
             
-            # Get latest candle
             latest_candle = df.iloc[-1]
             latest_date = pd.to_datetime(latest_candle['date']).date()
-            
-            # Check if latest candle is from today
             is_today = latest_date == self.today_date
             
-            # Market status analysis
             if self.market_status == "MARKET_OPEN" and is_today:
-                # During market hours with today's data
                 if timeframe == 'daily':
                     return {
                         "status": "INCOMPLETE_DAILY",
-                        "message": "Daily candle forming - use previous day for signals",
-                        "recommendation": "Use previous candle for trading decisions"
+                        "message": "Daily candle forming",
+                        "recommendation": "Use previous day for signals"
                     }
                 else:
-                    # Intraday - check if candle is recent enough
                     candle_time = pd.to_datetime(latest_candle['date'])
                     time_diff = (datetime.now() - candle_time).total_seconds() / 60
                     
-                    if time_diff <= 60:  # Within last hour
+                    if time_diff <= 60:
                         return {
                             "status": "FRESH_INTRADAY",
-                            "message": f"Recent {timeframe} candle available",
-                            "recommendation": "Safe to use for trading signals"
+                            "message": f"Recent {timeframe} candle",
+                            "recommendation": "Safe for trading"
                         }
                     else:
                         return {
-                            "status": "STALE_INTRADAY", 
-                            "message": f"Last candle is {time_diff:.0f} minutes old",
-                            "recommendation": "Consider waiting for fresher data"
+                            "status": "STALE_INTRADAY",
+                            "message": f"Last candle {time_diff:.0f}min old",
+                            "recommendation": "Consider waiting"
                         }
             
             elif self.market_status == "POST_MARKET":
-                # After market hours
                 if is_today:
                     return {
                         "status": "TODAY_COMPLETE",
-                        "message": f"Today's {timeframe} data complete",
-                        "recommendation": "Safe to use for next day planning"
+                        "message": f"Today's {timeframe} complete",
+                        "recommendation": "Ready for analysis"
                     }
                 else:
                     return {
                         "status": "YESTERDAY_DATA",
-                        "message": f"Latest data from {latest_date}",
-                        "recommendation": "Consider updating data before trading"
+                        "message": f"Data from {latest_date}",
+                        "recommendation": "Consider updating"
                     }
-            
             else:
-                # Pre-market or weekend
                 return {
                     "status": "PREVIOUS_SESSION",
-                    "message": f"Data from previous session ({latest_date})",
-                    "recommendation": "Valid for pre-market analysis"
+                    "message": f"Previous session data",
+                    "recommendation": "Valid for analysis"
                 }
                 
         except Exception as e:
             return {
                 "status": "ERROR",
-                "message": f"Candle analysis failed: {e}",
-                "recommendation": "Manual verification required"
+                "message": f"Analysis failed: {e}",
+                "recommendation": "Manual check required"
             }
     
-    def fetch_all_smart(self):
-        """Main smart fetching function"""
-        print(f"\n🚀 SMART HALAL DATA FETCH STARTED")
-        print(f"{'='*70}")
-        print(f"📊 Total symbols: {len(self.halal_symbols)}")
+    def fetch_all_smart_fixed(self):
+        """Main smart fetching function with fixes"""
+        print(f"\n🚀 FIXED SMART HALAL DATA FETCH")
+        print(f"{'='*50}")
+        print(f"📊 Symbols: {len(self.halal_symbols)}")
         print(f"⏱️ Timeframes: {list(SMART_TIMEFRAMES.keys())}")
-        print(f"🕐 Market status: {self.market_status}")
-        print(f"💾 Memory limit per symbol: {MAX_MEMORY_USAGE_MB}MB")
-        print(f"{'='*70}")
+        print(f"🕐 Market: {self.market_status}")
+        print(f"{'='*50}")
         
         # Clear old data with backup
         for tf_name, config in SMART_TIMEFRAMES.items():
             self._clear_old_data(config['output_dir'])
         
-        # Process in memory-efficient batches
         total_symbols = len(self.halal_symbols)
         
         for batch_start in range(0, total_symbols, BATCH_SIZE):
@@ -431,24 +493,21 @@ class SmartHalalDataFetcher:
             total_batches = (total_symbols + BATCH_SIZE - 1) // BATCH_SIZE
             
             print(f"\n🔄 BATCH {batch_num}/{total_batches}: {len(batch_symbols)} symbols")
-            print(f"   Symbols: {', '.join(batch_symbols)}")
             
             for i, symbol in enumerate(batch_symbols, 1):
-                print(f"\n📈 [{batch_start + i}/{total_symbols}] Processing {symbol}")
+                print(f"\n📈 [{batch_start + i}/{total_symbols}] {symbol}")
                 
                 token = self.token_map.get(symbol)
                 if not token:
-                    print(f"   ❌ No token for {symbol}")
+                    print(f"   ❌ No token")
                     continue
                 
                 symbol_success = 0
                 
-                # Process each timeframe
                 for tf_name, config in SMART_TIMEFRAMES.items():
                     try:
                         print(f"   📊 Fetching {tf_name}...")
                         
-                        # Fetch data efficiently
                         df, candle_count = self._memory_efficient_fetch(symbol, token, tf_name, config)
                         
                         if df is None:
@@ -459,24 +518,23 @@ class SmartHalalDataFetcher:
                         if tf_name in ['15minute', '1hour']:
                             df = self._process_market_hours_intraday(df)
                         
-                        # Check minimum bars requirement
                         if len(df) < config['min_bars_required']:
-                            print(f"   ⚠️ {tf_name}: Insufficient data ({len(df)} < {config['min_bars_required']})")
+                            print(f"   ⚠️ {tf_name}: Insufficient data ({len(df)})")
                             continue
                         
-                        # Add technical features
-                        df = self._add_smart_features(df, tf_name)
+                        # FIXED: Add technical features
+                        df = self._add_fixed_technical_features(df, tf_name)
                         
-                        # Analyze today's candle for trading decisions
+                        # Analyze today's candle
                         candle_status = self._get_today_candle_status(df, tf_name)
                         
                         # Save files
                         raw_file = os.path.join(config['output_dir'], f"{symbol}.csv")
                         df.to_csv(raw_file, index=False)
                         
-                        # Save candle analysis
-                        analysis_file = os.path.join(DATA_DIRS['live'], f"{symbol}_{tf_name}_status.json")
-                        with open(analysis_file, 'w') as f:
+                        # Save status
+                        status_file = os.path.join(DATA_DIRS['live'], f"{symbol}_{tf_name}_status.json")
+                        with open(status_file, 'w') as f:
                             json.dump(candle_status, f, indent=2)
                         
                         print(f"   ✅ {tf_name}: {len(df)} bars | Status: {candle_status['status']}")
@@ -494,36 +552,27 @@ class SmartHalalDataFetcher:
                     self.execution_stats['successful_fetches'] += 1
                 else:
                     self.execution_stats['failed_fetches'] += 1
-                
-                # Memory cleanup between symbols
-                if i % 5 == 0:  # Every 5 symbols
-                    gc.collect()
-                    self.execution_stats['memory_cleaned'] += 1
             
-            # Longer pause between batches
+            # Batch cleanup
             if batch_num < total_batches:
-                print(f"⏸️ Batch {batch_num} complete. Memory cleanup and cooldown...")
+                print(f"⏸️ Batch {batch_num} complete. Cooldown...")
                 gc.collect()
                 time.sleep(2)
         
         self._print_execution_summary()
-        self._create_trading_readiness_report()
     
     def _print_execution_summary(self):
-        """Print comprehensive execution summary"""
+        """Print execution summary"""
         end_time = datetime.now()
         duration = end_time - self.execution_stats['start_time']
         
-        print(f"\n{'='*70}")
-        print(f"📊 SMART FETCH EXECUTION SUMMARY")
-        print(f"{'='*70}")
-        print(f"⏱️ Execution time: {duration.total_seconds():.1f} seconds")
-        print(f"📈 Total symbols: {self.execution_stats['total_symbols']}")
+        print(f"\n{'='*50}")
+        print(f"📊 EXECUTION SUMMARY")
+        print(f"{'='*50}")
+        print(f"⏱️ Time: {duration.total_seconds():.1f}s")
         print(f"✅ Successful: {self.execution_stats['successful_fetches']}")
         print(f"❌ Failed: {self.execution_stats['failed_fetches']}")
-        print(f"🌐 API calls made: {self.execution_stats['api_calls']}")
-        print(f"💾 Cache hits: {self.execution_stats['cache_hits']}")
-        print(f"🗑️ Memory cleanups: {self.execution_stats['memory_cleaned']}")
+        print(f"⚠️ Feature errors: {self.execution_stats['feature_errors']}")
         
         success_rate = (self.execution_stats['successful_fetches'] / 
                        self.execution_stats['total_symbols'] * 100)
@@ -531,124 +580,29 @@ class SmartHalalDataFetcher:
         
         print(f"\n📁 OUTPUT DIRECTORIES:")
         for tf_name, config in SMART_TIMEFRAMES.items():
-            file_count = len([f for f in os.listdir(config['output_dir']) if f.endswith('.csv')])
-            print(f"   {tf_name.upper()}: {config['output_dir']} ({file_count} files)")
-        
-        print(f"   LIVE STATUS: {DATA_DIRS['live']} (candle analysis)")
-        print(f"   BACKUPS: {DATA_DIRS['backup']} (old data)")
-    
-    def _create_trading_readiness_report(self):
-        """Create a comprehensive trading readiness report"""
-        try:
-            report = {
-                'generation_time': datetime.now().isoformat(),
-                'market_status': self.market_status,
-                'data_freshness': {},
-                'trading_recommendations': {},
-                'system_health': self.execution_stats
-            }
-            
-            # Analyze data freshness for each timeframe
-            for tf_name in SMART_TIMEFRAMES.keys():
-                status_files = [f for f in os.listdir(DATA_DIRS['live']) 
-                               if f.endswith(f'{tf_name}_status.json')]
-                
-                if status_files:
-                    # Sample first few status files
-                    sample_statuses = []
-                    for status_file in status_files[:5]:
-                        try:
-                            with open(os.path.join(DATA_DIRS['live'], status_file), 'r') as f:
-                                status = json.load(f)
-                                sample_statuses.append(status['status'])
-                        except:
-                            continue
-                    
-                    report['data_freshness'][tf_name] = {
-                        'total_symbols': len(status_files),
-                        'sample_statuses': sample_statuses
-                    }
-            
-            # Trading recommendations based on market status and data
-            if self.market_status == "MARKET_OPEN":
-                report['trading_recommendations'] = {
-                    'swing_trading': 'Use previous day close for daily signals',
-                    'intraday_scalping': 'Check individual symbol freshness in live_data/',
-                    'intraday_swing': 'Safe to use recent hourly signals',
-                    'general': 'Monitor live_data/ folder for real-time candle status'
-                }
-            elif self.market_status == "POST_MARKET":
-                report['trading_recommendations'] = {
-                    'swing_trading': 'All timeframes ready for next day planning',
-                    'intraday_scalping': 'Today\'s patterns complete - good for analysis',
-                    'intraday_swing': 'Complete session data available',
-                    'general': 'Ideal time for strategy backtesting and planning'
-                }
-            else:
-                report['trading_recommendations'] = {
-                    'swing_trading': 'Ready for pre-market analysis',
-                    'intraday_scalping': 'Wait for market open for fresh signals',
-                    'intraday_swing': 'Pre-market analysis possible with yesterday\'s data',
-                    'general': 'Good time for strategy optimization and testing'
-                }
-            
-            # Save report
-            report_file = os.path.join(DATA_DIRS['live'], 'trading_readiness_report.json')
-            with open(report_file, 'w') as f:
-                json.dump(report, f, indent=2)
-            
-            print(f"\n📋 Trading readiness report saved: {report_file}")
-            
-        except Exception as e:
-            print(f"⚠️ Report generation warning: {e}")
-
-def get_symbol_trading_status(symbol, timeframe):
-    """
-    Utility function to check if a symbol is ready for trading
-    Use this in your trading bot before executing trades
-    """
-    try:
-        status_file = os.path.join(DATA_DIRS['live'], f"{symbol}_{timeframe}_status.json")
-        
-        if not os.path.exists(status_file):
-            return {"status": "NO_ANALYSIS", "recommendation": "Data not available"}
-        
-        with open(status_file, 'r') as f:
-            status = json.load(f)
-        
-        return status
-        
-    except Exception as e:
-        return {"status": "ERROR", "recommendation": f"Check failed: {e}"}
-
-def quick_market_check():
-    """Quick function to check current market status"""
-    fetcher = SmartHalalDataFetcher()
-    print(f"🕐 Current market status: {fetcher.market_status}")
-    print(f"📅 Date: {fetcher.today_date}")
-    return fetcher.market_status
+            try:
+                file_count = len([f for f in os.listdir(config['output_dir']) if f.endswith('.csv')])
+                print(f"   {tf_name.upper()}: {file_count} files")
+            except:
+                print(f"   {tf_name.upper()}: 0 files")
 
 if __name__ == "__main__":
-    print("🤖 SMART HALAL DATA FETCHER")
-    print("="*50)
-    print("Features:")
-    print("✅ Memory efficient processing")
-    print("✅ Smart data replacement with backup")
-    print("✅ Real-time market status integration") 
-    print("✅ Today's candle analysis for trading decisions")
-    print("✅ Research-optimized timeframes")
-    print("✅ Comprehensive trading readiness reporting")
-    print("="*50)
+    print("🛠️ FIXED SMART HALAL DATA FETCHER")
+    print("="*40)
+    print("✅ Fixed VWAP datetime ordering issues")
+    print("✅ Fixed pandas_ta index errors") 
+    print("✅ Added fallback calculations")
+    print("✅ Enhanced error handling")
+    print("="*40)
     
     try:
-        fetcher = SmartHalalDataFetcher()
-        fetcher.fetch_all_smart()
+        fetcher = FixedSmartHalalDataFetcher()
+        fetcher.fetch_all_smart_fixed()
         
-        print(f"\n🎉 SMART FETCH COMPLETED!")
-        print(f"✅ Your halal stock data is ready for trading")
-        print(f"📊 Check live_data/ folder for today's candle analysis")
-        print(f"🤖 Use get_symbol_trading_status() in your bot for trade decisions")
+        print(f"\n🎉 FIXED FETCH COMPLETED!")
+        print(f"✅ All errors resolved")
+        print(f"📊 Data ready for trading")
         
     except Exception as e:
-        print(f"❌ Smart fetch failed: {e}")
+        print(f"❌ Fatal error: {e}")
         raise

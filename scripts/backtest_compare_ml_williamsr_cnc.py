@@ -66,6 +66,8 @@ def ml_signals(df, model, features):
     df['signal'] = model.predict(X)
     return df
 
+ml_features = ['rsi','atr','adx','ema10','ema21','volumechange']
+
 def willr_signals(df):
     df = df.copy()
     high14 = df['high'].rolling(14).max()

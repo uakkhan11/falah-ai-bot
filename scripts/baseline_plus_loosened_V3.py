@@ -97,7 +97,7 @@ def add_indicators(df):
     df['wpr'] = (high14 - df['close'])/(high14-low14) * -100
 
     df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD)
-        try:
+    try:
         atr_ce = ta.atr(df['high'], df['low'], df['close'], length=22)
         high20 = df['high'].rolling(22, min_periods=1).max()
         if atr_ce is not None:

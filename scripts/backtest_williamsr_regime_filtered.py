@@ -160,8 +160,8 @@ if __name__ == "__main__":
     # Optional Nifty filter
     nifty_df = None
     if NIFTY_FILE is not None and os.path.exists(NIFTY_FILE):
-    nifty_df = pd.read_csv(NIFTY_FILE, parse_dates=['date'])
-    nifty_df = add_indicators(nifty_df)
+        nifty_df = pd.read_csv(NIFTY_FILE, parse_dates=['date'])
+        nifty_df = add_indicators(nifty_df)
     else:
         nifty_df = None
     results = {'return': [], 'win_rate': [], 'avg_hold': [],

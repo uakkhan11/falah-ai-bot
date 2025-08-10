@@ -84,10 +84,12 @@ def add_indicators(df):
     df['donchian_high'] = df['high'].rolling(20).max()
     # Bollinger Bands
     bb = ta.bbands(df['close'], length=BB_PERIOD, std=BB_STD_DEV)
-    df['bb_upper'] = bb[f'BBU_{BB_PERIOD}_{BB_STD_DEV}']
-    df['bb_lower'] = bb[f'BBL_{BB_PERIOD}_{BB_STD_DEV}']
-    return df.dropna().reset_index(drop=True)
-
+    if bb is not None:
+        # Handle float formatting of std in column names
+        upper_col = [c for c in bb.columns if c.startswith(f'BBU_{BB_PERIOD}_')][0]
+        lower_col = [c for c in bb.columns if c.startswith(f'BBL_{BB_PERIOD}_')][0]
+        df['bb_upper'] = bb[upper_col]
+        df['bb_lower'] = bb[lower_col]
 # ===== SIGNALS =====
 def breakout_signal(df):
     # Daily breakout confirmed by weekly breakout if available

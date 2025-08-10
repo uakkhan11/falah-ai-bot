@@ -143,8 +143,8 @@ def add_indicators(df, atr_period=14):
         numeric_cols = [
         'close', 'donchian_high', 'ema200', 'adx', 'vol_sma20',
         'bb_upper', 'bb_lower', 'wpr', 'atr', 'chandelier_exit'
-    ]
-    df[numeric_cols] = df[numeric_cols].replace({None: np.nan}).infer_objects(copy=False)
+        ]
+        df[numeric_cols] = df[numeric_cols].replace({None: np.nan}).infer_objects(copy=False)
     return df.reset_index(drop=True)
 
 def generate_signals(df, volume_mult=1.2):

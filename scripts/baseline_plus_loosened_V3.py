@@ -13,7 +13,7 @@ DATA_DIR     = os.path.join(BASE_DIR, "swing_data")
 MODEL_PATH   = os.path.join(BASE_DIR, "model.pkl")
 USE_ML       = True
 WFO_MODE     = True   # Set False to just run fixed params
-FIXED_PARAMS = { # used if WFO_MODE=False
+FIXED_PARAMS = { 
     'ATR_SL_BREAK': 2.5,
     'ATR_SL_PULL': 3.0,
     'ADX_BREAK': 10,
@@ -33,7 +33,7 @@ MAX_TRADES      = 2000
 ADX_THRESHOLD_PULL = 15
 VOLUME_PULL     = 1.2
 
-# costs (India example)
+# costs 
 STT_RATE=0.001; STAMP_DUTY_RATE=0.00015; EXCHANGE_RATE=0.0000345; GST_RATE=0.18; SEBI_RATE=0.000001; DP_CHARGE=13.5
 
 # ==== PARAMETER GRID for WFO ====
@@ -55,41 +55,88 @@ def calc_charges(buy_val,sell_val):
     return stt+stamp+exch+gst+sebi+DP_CHARGE
 
 def robust_bbcols(bb):
-    ucol = [c for c in bb.columns if 'BBU' in c][0]
-    lcol = [c for c in bb.columns if 'BBL' in c][0]
+    """Safe upper/lower band column name extraction."""
+    if bb is None or not hasattr(bb, 'columns'):
+        return None, None
+    upper_cols = [c for c in bb.columns if 'BBU' in c]
+    lower_cols = [c for c in bb.columns if 'BBL' in c]
+    ucol = upper_cols[0] if upper_cols else None
+    lcol = lower_cols[0] if lower_cols else None
     return ucol, lcol
 
 def add_indicators(df):
-    if 'date' in df.columns: df = df.sort_values('date')
-    df_weekly = df.resample('W-MON', on='date').agg({'open':'first','high':'max','low':'min','close':'last','volume':'sum'}).dropna().reset_index()
-    df_weekly['weekly_donchian_high'] = df_weekly['high'].rolling(20,1).max()
-    df['weekly_donchian_high'] = df_weekly.set_index('date')['weekly_donchian_high'].reindex(df['date'], method='ffill').values
+    if 'date' in df.columns: 
+        df = df.sort_values('date')
 
-    df['donchian_high'] = df['high'].rolling(20,1).max()
+    # Weekly Donchian
+    df_weekly = df.resample('W-MON', on='date').agg({
+        'open':'first','high':'max','low':'min','close':'last','volume':'sum'
+    }).dropna().reset_index()
+    df_weekly['weekly_donchian_high'] = df_weekly['high'].rolling(20, min_periods=1).max()
+    df['weekly_donchian_high'] = df_weekly.set_index('date')['weekly_donchian_high']\
+        .reindex(df['date'], method='ffill').values
+
+    df['donchian_high'] = df['high'].rolling(20, min_periods=1).max()
     df['ema200'] = ta.ema(df['close'], length=200)
+
+    # ADX
     try:
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
         df['adx'] = adx_df['ADX_14'] if adx_df is not None and 'ADX_14' in adx_df else np.nan
-    except: df['adx'] = np.nan
-    df['vol_sma20'] = df['volume'].rolling(20,1).mean()
+    except:
+        df['adx'] = np.nan
 
-    bb = ta.bbands(df['close'], length=20, std=2)
+    # Volume MA
+    df['vol_sma20'] = df['volume'].rolling(20, min_periods=1).mean()
+
+    # Bollinger Bands safe
+    try:
+        bb = ta.bbands(df['close'], length=20, std=2)
+    except:
+        bb = None
     ucol, lcol = robust_bbcols(bb)
-    df['bb_upper'] = bb[ucol]; df['bb_lower'] = bb[lcol]
+    if bb is not None and ucol and lcol:
+        df['bb_upper'] = bb[ucol]
+        df['bb_lower'] = bb[lcol]
+    else:
+        df['bb_upper'] = np.nan
+        df['bb_lower'] = np.nan
 
-    high14 = df['high'].rolling(14).max()
-    low14  = df['low'].rolling(14).min()
+    # W%R
+    high14 = df['high'].rolling(14, min_periods=1).max()
+    low14  = df['low'].rolling(14, min_periods=1).min()
     df['wpr'] = (high14 - df['close'])/(high14-low14) * -100
 
-    df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD)
-    atr_ce = ta.atr(df['high'], df['low'], df['close'], length=22)
-    high20 = df['high'].rolling(22,1).max()
-    df['chandelier_exit'] = high20 - 3.0 * atr_ce
+    # ATR
+    try:
+        df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD)
+    except:
+        df['atr'] = np.nan
 
+    # Chandelier Exit safe
+    try:
+        atr_ce = ta.atr(df['high'], df['low'], df['close'], length=22)
+        high20 = df['high'].rolling(22, min_periods=1).max()
+        if atr_ce is not None:
+            df['chandelier_exit'] = high20 - 3.0 * atr_ce
+        else:
+            df['chandelier_exit'] = np.nan
+    except:
+        df['chandelier_exit'] = np.nan
+
+    # SuperTrend safe
     try:
         st = ta.supertrend(df['high'], df['low'], df['close'], length=10, multiplier=3.0)
         df['supertrend_dir'] = st['SUPERTd_10_3.0']
-    except: df['supertrend_dir'] = 0
+    except:
+        df['supertrend_dir'] = 0
+
+    # Ensure RSI present
+    try:
+        df['rsi'] = ta.rsi(df['close'], length=14)
+    except:
+        df['rsi'] = np.nan
+    df['rsi'] = df['rsi'].ffill().bfill()
 
     return df.replace({None: np.nan}).infer_objects(copy=False).reset_index(drop=True)
 
@@ -123,11 +170,15 @@ def combine_signals(df, params):
 
 def apply_ml_filter(df, model):
     if not USE_ML or model is None: return df
-    df['rsi'] = ta.rsi(df['close'], length=14)
+    # features must match model training
     df['ema10'] = ta.ema(df['close'], length=10)
     df['ema21'] = ta.ema(df['close'], length=21)
     df['volumechange'] = df['volume'].pct_change().fillna(0)
     features = ['rsi','atr','adx','ema10','ema21','volumechange']
+    for col in features:
+        if col not in df.columns:
+            df[col] = np.nan
+    df[features] = df[features].ffill().bfill()
     df = df.dropna(subset=features).reset_index(drop=True)
     if df.empty: return df
     df['ml_signal'] = model.predict(df[features])
@@ -144,21 +195,17 @@ def backtest(df, symbol, params):
         to_close=[]
         for pid,pos in positions.items():
             ret = (price - pos['entry_price']) / pos['entry_price']
-            # ATR SL dynamic
             if pos['entry_type'] in ['Breakout','BB_Breakout']:
                 atr_stop = pos['entry_price'] - params['ATR_SL_BREAK'] * pos['entry_atr']
             else:
                 atr_stop = pos['entry_price'] - params['ATR_SL_PULL'] * pos['entry_atr']
-            # Delay ATR SL until 3 bars
             if (date - pos['entry_date']).days < 3:
                 atr_stop = -np.inf
-            # trailing
             if price > pos['high']: pos['high']=price
             if not pos['trail_active'] and ret >= TRAIL_TRIGGER:
                 pos['trail_active']=True; pos['trail_stop']=row['chandelier_exit']
             if pos['trail_active'] and row['chandelier_exit'] > pos['trail_stop']:
                 pos['trail_stop']=row['chandelier_exit']
-            # exit conditions
             if ret >= PROFIT_TARGET: reason = 'Profit Target'
             elif price <= atr_stop: reason = 'ATR Stop Loss'
             elif pos['trail_active'] and price <= pos['trail_stop']: reason = 'Chandelier Exit'
@@ -188,8 +235,6 @@ def backtest(df, symbol, params):
 
 # ==== WALK-FORWARD ====
 def walk_forward(all_data, train_years=2, test_months=6):
-    start_year = all_data['date'].dt.year.min()
-    end_year   = all_data['date'].dt.year.max()
     model = joblib.load(MODEL_PATH) if USE_ML and os.path.exists(MODEL_PATH) else None
     current = all_data['date'].min()
     results=[]
@@ -199,7 +244,6 @@ def walk_forward(all_data, train_years=2, test_months=6):
         train_df = all_data[(all_data['date']>=current) & (all_data['date']<=train_end)]
         test_df  = all_data[(all_data['date']>train_end) & (all_data['date']<=test_end)]
         if train_df.empty or test_df.empty: break
-        # optimise
         best_params=None; best_score=-np.inf
         for comb in itertools.product(*PARAM_GRID.values()):
             params = dict(zip(PARAM_GRID.keys(), comb))
@@ -260,7 +304,11 @@ if __name__=="__main__":
             if not df.empty:
                 trades += backtest(df,sym,params)
         log_df=pd.DataFrame(trades)
-    log_df.to_csv("v3_wfo_trades.csv",index=False)
-    print(f"Total Trades: {len(log_df)} | PnL: {log_df['pnl'].sum():,.0f} | Win Rate: {(log_df['pnl']>0).mean()*100:.2f}%")
-    print("\nBy entry_type:\n",log_df.groupby('entry_type')['pnl'].agg(['count','sum','mean']))
-    print("\nBy exit_reason:\n",log_df.groupby('exit_reason')['pnl'].agg(['count','sum','mean']))
+    if log_df.empty or 'pnl' not in log_df.columns:
+        print("No trades found or 'pnl' column missing in results.")
+    else:
+        log_df.to_csv("v3_wfo_trades.csv",index=False)
+        print(f"Total Trades: {len(log_df)} | PnL: {log_df['pnl'].sum():,.0f} | "
+              f"Win Rate: {(log_df['pnl']>0).mean()*100:.2f}%")
+        print("\nBy entry_type:\n",log_df.groupby('entry_type')['pnl'].agg(['count','sum','mean']))
+        print("\nBy exit_reason:\n",log_df.groupby('exit_reason')['pnl'].agg(['count','sum','mean']))

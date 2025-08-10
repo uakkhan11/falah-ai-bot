@@ -55,8 +55,12 @@ def calc_charges(buy_val,sell_val):
     return stt+stamp+exch+gst+sebi+DP_CHARGE
 
 def robust_bbcols(bb):
-    ucol = [c for c in bb.columns if 'BBU' in c][0]
-    lcol = [c for c in bb.columns if 'BBL' in c][0]
+    if bb is None or not hasattr(bb, 'columns'):
+        return None, None
+    u_candidates = [c for c in bb.columns if 'BBU' in c]
+    l_candidates = [c for c in bb.columns if 'BBL' in c]
+    ucol = u_candidates[0] if u_candidates else None
+    lcol = l_candidates[0] if l_candidates else None
     return ucol, lcol
 
 def add_indicators(df):

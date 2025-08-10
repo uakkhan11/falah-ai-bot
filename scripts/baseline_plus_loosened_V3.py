@@ -334,3 +334,5 @@ if __name__=="__main__":
         print("No trades found or 'pnl' column missing in results.")
     else:
         print(f"Total Trades: {len(log_df)} | PnL: {log_df['pnl'].sum():,.0f} | Win Rate: {(log_df['pnl']>0).mean()*100:.2f}%")
+        print("\nBy entry_type:\n", log_df.groupby('entry_type')['pnl'].agg(['count','sum','mean']))
+        print("\nBy exit_reason:\n", log_df.groupby('exit_reason')['pnl'].agg(['count','sum','mean']))

@@ -72,7 +72,18 @@ def add_indicators(df, atr_period=14):
     df['donchian_high'] = df['high'].rolling(20, 1).max()
     df['ema200'] = ta.ema(df['close'], length=200)
     adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
-    df['adx'] = adx_df['ADX_14'] if 'ADX_14' in adx_df.columns else np.nan
+    def add_indicators(df, atr_period=14):
+    # ... previous code ...
+    try:
+        adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
+        if adx_df is not None and 'ADX_14' in adx_df.columns:
+            df['adx'] = adx_df['ADX_14']
+        else:
+            df['adx'] = np.nan
+    except Exception:
+        df['adx'] = np.nan
+    # ... rest of code ...
+    return df.dropna().reset_index(drop=True)
     df['vol_sma20'] = df['volume'].rolling(20, 1).mean()
     
     # Bollinger Bands

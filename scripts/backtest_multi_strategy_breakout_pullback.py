@@ -13,7 +13,7 @@ MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 TRADE_LOG_CSV = os.path.join(BASE_DIR, "backtest_trade_log_multi.csv")
 
 # Edit this to your best NIFTY symbols
-SYMBOLS_TO_TEST = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"]
+SYMBOLS_TO_TEST = ["RELIANCE", "BHARTIARTL", "CIPLA", "BRITANNIA", "BPCL"]
 USE_ML_CONFIRM = True
 
 # Strategy params

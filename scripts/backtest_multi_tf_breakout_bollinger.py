@@ -39,7 +39,7 @@ VOLUME_MULT        = 1.2
 
 # Bollinger Bands
 BB_PERIOD          = 20
-BB_STD_DEV         = 2
+BB_STD_DEV         = 2   # keep as INT for config, will auto-match float column names
 
 # CNC cost breakdown
 STT_RATE         = 0.001
@@ -58,51 +58,90 @@ def calc_charges(buy_val, sell_val):
     sebi  = (buy_val + sell_val) * SEBI_RATE
     return stt + stamp + exch + gst + sebi + DP_CHARGE
 
-# ===== DATA PREP =====
+def robust_bbcols(bb, period, std):
+    upper = None
+    lower = None
+    # float-convert std for matching columns like BBU_20_2.0
+    std_str = f"{float(std):.1f}"
+    for col in bb.columns:
+        if col.startswith(f"BBU_{period}_"):
+            upper = col
+        if col.startswith(f"BBL_{period}_"):
+            lower = col
+    if upper is None or lower is None:
+        # Try with explicit float
+        for col in bb.columns:
+            if col.startswith(f'BBU_{period}_{std_str}'):
+                upper = col
+            if col.startswith(f'BBL_{period}_{std_str}'):
+                lower = col
+    # fallback: pick first matching
+    if upper is None:
+        upper = [c for c in bb.columns if 'BBU' in c][0]
+    if lower is None:
+        lower = [c for c in bb.columns if 'BBL' in c][0]
+    return upper, lower
+
 def load_model():
     if RETRAIN_MODEL:
         # Placeholder: add your retraining code here
-        # e.g., model = train_model(new_features, labels)
-        # joblib.dump(model, MODEL_PATH)
         pass
     return joblib.load(MODEL_PATH) if USE_ML_CONFIRM else None
 
 def add_indicators(df):
-    # Multi-Timeframe Weekly Confirmation
-    # Weekly data must be aggregated separately
+    # --- Weekly Donchian High (for daily only) ---
     if TIMEFRAME == 'daily':
         df_weekly = df.resample('W-MON', on='date').agg({
             'open':'first','high':'max','low':'min','close':'last','volume':'sum'
         }).dropna().reset_index()
-        df_weekly['weekly_donchian_high'] = df_weekly['high'].rolling(20).max()
+        df_weekly['weekly_donchian_high'] = df_weekly['high'].rolling(20, min_periods=1).max()
         df['weekly_donchian_high'] = df_weekly.set_index('date')['weekly_donchian_high'].reindex(df['date'], method='ffill').values
 
-    # Daily/Intraday indicators
+    # --- Daily/Intraday Indicators ---
+    if 'high' in df.columns and len(df) >= 20:
+        df['donchian_high'] = df['high'].rolling(20, min_periods=1).max()
+    else:
+        df['donchian_high'] = np.nan
+
     df['ema200'] = ta.ema(df['close'], length=200)
-    df['adx']    = ta.adx(df['high'], df['low'], df['close'], length=14)['ADX_14']
-    df['vol_sma20'] = df['volume'].rolling(20).mean()
-    df['donchian_high'] = df['high'].rolling(20).max()
-    # Bollinger Bands
-    bb = ta.bbands(df['close'], length=BB_PERIOD, std=BB_STD_DEV)
-    if bb is not None:
-        # Handle float formatting of std in column names
-        upper_col = [c for c in bb.columns if c.startswith(f'BBU_{BB_PERIOD}_')][0]
-        lower_col = [c for c in bb.columns if c.startswith(f'BBL_{BB_PERIOD}_')][0]
+    try:
+        adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
+        df['adx'] = adx_df['ADX_14'] if adx_df is not None and 'ADX_14' in adx_df.columns else np.nan
+    except Exception:
+        df['adx'] = np.nan
+    df['vol_sma20'] = df['volume'].rolling(20, min_periods=1).mean()
+    try:
+        bb = ta.bbands(df['close'], length=BB_PERIOD, std=BB_STD_DEV)
+        upper_col, lower_col = robust_bbcols(bb, BB_PERIOD, BB_STD_DEV)
         df['bb_upper'] = bb[upper_col]
         df['bb_lower'] = bb[lower_col]
+    except Exception:
+        # In case bb calculation fails
+        df['bb_upper'] = np.nan
+        df['bb_lower'] = np.nan
+
+    # Drop initial rows with NaNs in required indicators (so downstream code is safe)
+    df = df.dropna(subset=['donchian_high','ema200','adx','vol_sma20','bb_upper','bb_lower']).reset_index(drop=True)
+    return df
+
 # ===== SIGNALS =====
 def breakout_signal(df):
-    # Daily breakout confirmed by weekly breakout if available
+    # Defensive checks
+    if 'donchian_high' not in df.columns or df['donchian_high'].isnull().all():
+        df['breakout_signal'] = 0
+        return df
     cond_daily = (df['close'] > df['donchian_high'].shift(1))
     cond_vol   = (df['volume'] > VOLUME_MULT * df['vol_sma20'])
     cond_weekly = True
-    if 'weekly_donchian_high' in df.columns:
+    if 'weekly_donchian_high' in df.columns and not df['weekly_donchian_high'].isnull().all():
         cond_weekly = (df['close'] > df['weekly_donchian_high'].shift(1))
     df['breakout_signal'] = (cond_daily & cond_vol & cond_weekly).astype(int)
     return df
 
 def bollinger_breakout_signal(df):
-    # Price closes above upper Bollinger Band with volume surge
+    if 'bb_upper' not in df.columns or df['bb_upper'].isnull().all():
+        df['bb_breakout_signal'] = 0
+        return df
     df['bb_breakout_signal'] = (
         (df['close'] > df['bb_upper']) &
         (df['volume'] > VOLUME_MULT * df['vol_sma20'])
@@ -110,25 +149,25 @@ def bollinger_breakout_signal(df):
     return df
 
 def pullback_signal(df):
-    # Price pulls to lower BB and then reclaims middle band (mean)
+    if 'bb_lower' not in df.columns or df['bb_lower'].isnull().all():
+        df['bb_pullback_signal'] = 0
+        return df
     cond_pull = df['close'] < df['bb_lower']
     cond_resume = df['close'] > df['bb_lower'].shift(1)
     df['bb_pullback_signal'] = (cond_pull.shift(1) & cond_resume).astype(int)
     return df
 
 def combine_signals(df):
-    # Tag and combine signals in priority order
     df['entry_signal'] = 0
     df['signal_type'] = ''
-    # 1. Weekly+Daily breakout
     df.loc[df['breakout_signal']==1, ['entry_signal','signal_type']] = [1,'Breakout']
-    # 2. Bollinger Band breakout
     df.loc[(df['entry_signal']==0)&(df['bb_breakout_signal']==1), ['entry_signal','signal_type']] = [1,'BB_Breakout']
-    # 3. Bollinger pullback
     df.loc[(df['entry_signal']==0)&(df['bb_pullback_signal']==1), ['entry_signal','signal_type']] = [1,'BB_Pullback']
+    # If still no type, mark as "Other" for diagnostics
+    df.loc[(df['entry_signal']==1)&(df['signal_type']==''), 'signal_type'] = "Other"
     return df
 
-# ===== AI FEATURES =====
+# ===== AI FEATURES & ML FILTER =====
 def add_ml_features(df):
     df['rsi'] = ta.rsi(df['close'], length=14)
     df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
@@ -141,7 +180,7 @@ def ml_filter(df, model):
     features = ['rsi','atr','adx','ema10','ema21','volumechange']
     df = add_ml_features(df)
     df['ml_signal'] = model.predict(df[features])
-    # Apply only to breakout signals
+    # Only allow entry if both signal and ML agree
     df['entry_signal'] = np.where((df['entry_signal']==1)&(df['ml_signal']==1),1,0)
     df = df[df['entry_signal']==1].reset_index(drop=True)
     return df
@@ -176,7 +215,6 @@ def backtest(df, symbol):
             if pos['trail_active']:
                 new_stop = price*(1-TRAIL_DISTANCE)
                 if new_stop>pos['trail_stop']: pos['trail_stop']=new_stop
-            # Check exit
             if ret>=PROFIT_TARGET or ret<=-STOP_LOSS or sig==0 or (pos['trail_active'] and price<=pos['trail_stop']):
                 buy_val = pos['shares']*pos['entry_price']
                 sell_val=pos['shares']*price

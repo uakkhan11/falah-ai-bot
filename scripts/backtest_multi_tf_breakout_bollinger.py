@@ -176,6 +176,17 @@ def add_ml_features(df):
     df['volumechange'] = df['volume'].pct_change().fillna(0)
     return df.dropna().reset_index(drop=True)
 
+def ml_signals(df, model):
+    features = ['rsi','atr','adx','ema10','ema21','volumechange']
+    df = add_ml_features(df).dropna(subset=features).reset_index(drop=True)
+    if df.empty:
+        # No valid rows, skip prediction
+        df['ml_signal'] = pd.Series(dtype='int')
+        return df
+    X = df[features]
+    df['ml_signal'] = model.predict(X)
+    return df
+
 def ml_filter(df, model):
     features = ['rsi','atr','adx','ema10','ema21','volumechange']
     df = add_ml_features(df)

@@ -135,7 +135,7 @@ def add_indicators(df):
         df['rsi'] = np.nan
 
     # Fill RSI NaNs forward if possible, else leave — will be handled later
-    df['rsi'] = df['rsi'].fillna(method='bfill').fillna(method='ffill')
+   df['rsi'] = df['rsi'].bfill().ffill()
 
     return df.replace({None: np.nan}).infer_objects(copy=False).reset_index(drop=True)
 

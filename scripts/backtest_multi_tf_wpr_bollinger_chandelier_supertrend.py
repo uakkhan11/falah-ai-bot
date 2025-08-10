@@ -167,7 +167,7 @@ def bollinger_pullback_signal(df):
     cond_pull = df['close'] < df['bb_lower']
     cond_resume = df['close'] > df['bb_lower'].shift(1)
     df['bb_pullback_signal'] = (cond_pull.shift(1) & cond_resume).astype(int)
-    df['bb_pullback_signal'].fillna(0, inplace=True)
+    df['bb_pullback_signal'] = df['bb_pullback_signal'].fillna(0)
     return df
 
 def wpr_signal(df):

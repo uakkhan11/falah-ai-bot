@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
-import os, pandas as pd, numpy as np
+import pandas as pd
+import numpy as np
+import os
 import pandas_ta as ta
 import joblib
 from datetime import datetime, timedelta
 import itertools
-from typing import Dict, List, Tuple
-import pandas as pd
-import numpy as np
 
-# ==== CONFIGURATION ====
+# -- GLOBAL pandas option --
+pd.set_option('future.no_silent_downcasting', True)
+
+# ==== CONFIG ====
 BASE_DIR = "/root/falah-ai-bot"
 DATA_DIRS = {
     'daily': os.path.join(BASE_DIR, "swing_data"),
     '1hour': os.path.join(BASE_DIR, "intraday_swing_data"),
     '15minute': os.path.join(BASE_DIR, "scalping_data"),
 }
+TIMEFRAME = 'daily'
+DATA_PATH = DATA_DIRS[TIMEFRAME]
+MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
+USE_ML_CONFIRM = True
 
-# Parameters for optimization
+# Parameters for optimization and walk-forward
 PARAM_GRID = {
     'ATR_MULTIPLIER': [1.5, 2.0, 2.5, 3.0],
     'ATR_PERIOD': [14, 20, 22],
@@ -25,11 +31,6 @@ PARAM_GRID = {
     'ADX_THRESHOLD': [15, 20]
 }
 
-TIMEFRAME = 'daily'
-DATA_PATH = DATA_DIRS[TIMEFRAME]
-MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
-
-# Base strategy parameters
 INITIAL_CAPITAL = 1_000_000
 POSITION_SIZE = 100_000
 TRAIL_TRIGGER = 0.05
@@ -38,7 +39,6 @@ TRANSACTION_COST = 0.001
 MAX_POSITIONS = 5
 MAX_TRADES = 2000
 
-# Cost structure
 STT_RATE = 0.001
 STAMP_DUTY_RATE = 0.00015
 EXCHANGE_RATE = 0.0000345
@@ -55,6 +55,7 @@ def calc_charges(buy_val, sell_val):
     return stt + stamp + exch + gst + sebi + DP_CHARGE
 
 def robust_bbcols(bb, period, std):
+    std_str = f"{float(std):.1f}"
     upper = [c for c in bb.columns if c.startswith(f"BBU_{period}_")]
     lower = [c for c in bb.columns if c.startswith(f"BBL_{period}_")]
     if not upper: upper = [c for c in bb.columns if 'BBU' in c]
@@ -66,13 +67,9 @@ def add_indicators(df, atr_period=14):
     if TIMEFRAME == 'daily':
         try:
             df_weekly = df.resample('W-MON', on='date').agg({
-                'open': 'first',
-                'high': 'max',
-                'low': 'min',
-                'close': 'last',
-                'volume': 'sum'
+                'open':'first','high':'max','low':'min','close':'last','volume':'sum'
             }).dropna().reset_index()
-            df_weekly['weekly_donchian_high'] = df_weekly['high'].rolling(20, min_periods=1).max()
+            df_weekly['weekly_donchian_high'] = df_weekly['high'].rolling(20, 1).max()
             df['weekly_donchian_high'] = (
                 df_weekly.set_index('date')['weekly_donchian_high']
                 .reindex(df['date'], method='ffill').values
@@ -80,32 +77,24 @@ def add_indicators(df, atr_period=14):
         except Exception:
             df['weekly_donchian_high'] = np.nan
 
-    # --- Donchian High ---
-    df['donchian_high'] = df['high'].rolling(20, min_periods=1).max()
+    df['donchian_high'] = df['high'].rolling(20, 1).max()
+    df['ema200'] = ta.ema(df['close'], length=200)
 
-    # --- EMA200 ---
-    try:
-        df['ema200'] = ta.ema(df['close'], length=200)
-    except Exception:
-        df['ema200'] = np.nan
-
-    # --- ADX (safe) ---
+    # --- ADX (guarded) ---
     try:
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
         if adx_df is not None and 'ADX_14' in adx_df.columns:
             df['adx'] = adx_df['ADX_14']
         else:
             df['adx'] = np.nan
-    except:
+    except Exception:
         df['adx'] = np.nan
 
-    # --- Volume SMA20 ---
     if 'volume' in df.columns:
         df['vol_sma20'] = df['volume'].rolling(20, min_periods=1).mean()
     else:
         df['vol_sma20'] = np.nan
 
-    # --- Bollinger Bands ---
     try:
         bb = ta.bbands(df['close'], length=20, std=2)
         ucol, lcol = robust_bbcols(bb, 20, 2)
@@ -115,7 +104,6 @@ def add_indicators(df, atr_period=14):
         df['bb_upper'] = np.nan
         df['bb_lower'] = np.nan
 
-    # --- Williams %R ---
     try:
         high14 = df['high'].rolling(14).max()
         low14 = df['low'].rolling(14).min()
@@ -123,69 +111,48 @@ def add_indicators(df, atr_period=14):
     except Exception:
         df['wpr'] = np.nan
 
-    # --- ATR for volatility-based stops ---
     try:
         df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=atr_period)
     except Exception:
         df['atr'] = np.nan
 
-    # --- Chandelier Exit (ATR-based trailing stop) ---
     try:
-            atr_ce = ta.atr(df['high'], df['low'], df['close'], length=22)
-            high20 = df['high'].rolling(22, min_periods=1).max()
-            df['chandelier_exit'] = high20 - 3.0 * atr_ce
-        except Exception:
-            df['chandelier_exit'] = np.nan
-    
-        # --- Replace None with np.nan to avoid TypeError in comparisons ---
-        numeric_cols = [
-            'close', 'donchian_high', 'ema200', 'adx', 'vol_sma20',
-            'bb_upper', 'bb_lower', 'wpr', 'atr', 'chandelier_exit'
-        ]
-        df[numeric_cols] = (
-            df[numeric_cols]
-            .replace({None: np.nan})
-            .infer_objects(copy=False)  # preserves correct dtypes without warning
-        )
-    
-        return df.reset_index(drop=True)
+        atr_ce = ta.atr(df['high'], df['low'], df['close'], length=22)
+        high20 = df['high'].rolling(22, min_periods=1).max()
+        df['chandelier_exit'] = high20 - 3.0 * atr_ce
+    except Exception:
+        df['chandelier_exit'] = np.nan
+
+    # -- Clean None/NaN for comparisons --
+    numeric_cols = [
+        'close','donchian_high','ema200','adx','vol_sma20',
+        'bb_upper','bb_lower','wpr','atr','chandelier_exit'
+    ]
+    df[numeric_cols] = df[numeric_cols].replace({None: np.nan}).infer_objects(copy=False)
+    return df.reset_index(drop=True)
 
 def generate_signals(df, volume_mult=1.2):
-    # Breakout signals
     cond_daily = df['close'] > df['donchian_high'].shift(1)
     cond_vol = df['volume'] > volume_mult * df['vol_sma20']
     cond_weekly = df['close'] > df['weekly_donchian_high'].shift(1) if 'weekly_donchian_high' in df else True
     df['breakout_signal'] = (cond_daily & cond_vol & cond_weekly).astype(int)
-    
-    # BB signals
     df['bb_breakout_signal'] = ((df['close'] > df['bb_upper']) & (df['volume'] > volume_mult * df['vol_sma20'])).astype(int)
     cond_pull = df['close'] < df['bb_lower']
     cond_resume = df['close'] > df['bb_lower'].shift(1)
-    df['bb_pullback_signal'] = (cond_pull.shift(1) & cond_resume).astype(int)
-    
-    # W%R signal
+    df['bb_pullback_signal'] = ((cond_pull.shift(1)) & cond_resume).astype(int)
     df['wpr_buy_signal'] = ((df['wpr'] < -80) & (df['wpr'].shift(1) >= -80)).astype(int)
-    
     return df
 
 def combine_signals(df, adx_threshold=15, volume_mult=1.2):
-    # Regime filter
     regime_mask = (df['close'] > df['ema200']) & (df['adx'] > adx_threshold) & (df['volume'] > volume_mult * df['vol_sma20'])
-    
-    # Chandelier entry confirmation
-    chandelier_confirm = df['close'] > df['chandelier_exit']
-    
+    chand_confirm = df['close'] > df['chandelier_exit']
     df['entry_signal'] = 0
     df['entry_type'] = ''
-    
-    # Priority-based signal combination with regime and Chandelier filters
-    mask = regime_mask & chandelier_confirm
-    
-    df.loc[(df['breakout_signal'] == 1) & mask, ['entry_signal', 'entry_type']] = [1, 'Breakout']
-    df.loc[(df['bb_breakout_signal'] == 1) & mask & (df['entry_signal'] == 0), ['entry_signal', 'entry_type']] = [1, 'BB_Breakout']
-    df.loc[(df['bb_pullback_signal'] == 1) & mask & (df['entry_signal'] == 0), ['entry_signal', 'entry_type']] = [1, 'BB_Pullback']
-    df.loc[(df['wpr_buy_signal'] == 1) & mask & (df['entry_signal'] == 0), ['entry_signal', 'entry_type']] = [1, 'W%R_Buy']
-    
+    mask = regime_mask & chand_confirm
+    df.loc[(df['breakout_signal'] == 1) & mask, ['entry_signal','entry_type']] = [1,'Breakout']
+    df.loc[(df['bb_breakout_signal'] == 1) & mask & (df['entry_signal']==0), ['entry_signal','entry_type']] = [1,'BB_Breakout']
+    df.loc[(df['bb_pullback_signal'] == 1) & mask & (df['entry_signal']==0), ['entry_signal','entry_type']] = [1,'BB_Pullback']
+    df.loc[(df['wpr_buy_signal'] == 1) & mask & (df['entry_signal']==0), ['entry_signal','entry_type']] = [1,'W%R_Buy']
     return df
 
 def apply_ml_filter(df, model, use_ai=True):
@@ -193,95 +160,68 @@ def apply_ml_filter(df, model, use_ai=True):
         df['ml_signal'] = 1
         df['ai_confirmed'] = 'N/A'
         return df
-    
-    # ML features
+    # ML features (keep same as used in model training!)
     df['rsi'] = ta.rsi(df['close'], length=14)
     df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
     df['ema10'] = ta.ema(df['close'], length=10)
     df['ema21'] = ta.ema(df['close'], length=21)
     df['volumechange'] = df['volume'].pct_change().fillna(0)
-    
-    features = ['rsi', 'atr', 'adx', 'ema10', 'ema21', 'volumechange']
+    features = ['rsi','atr','adx','ema10','ema21','volumechange']
     df = df.dropna(subset=features).reset_index(drop=True)
-    
     if df.empty:
         return df
-    
     try:
         X = df[features]
         df['ml_signal'] = model.predict(X)
-        df['ai_confirmed'] = np.where((df['entry_signal'] == 1) & (df['ml_signal'] == 1), 'Yes', 'No')
-        df['entry_signal'] = np.where((df['entry_signal'] == 1) & (df['ml_signal'] == 1), 1, 0)
+        df['ai_confirmed'] = np.where((df['entry_signal']==1)&(df['ml_signal']==1),'Yes','No')
+        df['entry_signal'] = np.where((df['entry_signal']==1)&(df['ml_signal']==1),1,0)
     except Exception as e:
         print(f"ML Error: {e}")
         df['ml_signal'] = 1
         df['ai_confirmed'] = 'Error'
-    
     return df
 
 def categorize_trade_duration(days):
-    if days <= 1:
-        return 'Day_Trade'
-    elif days <= 7:
-        return 'Short_Swing'
-    elif days <= 30:
-        return 'Medium_Swing'
-    elif days <= 90:
-        return 'Long_Swing'
-    else:
-        return 'Position_Trade'
+    if days <= 1: return 'Day_Trade'
+    elif days <= 7: return 'Short_Swing'
+    elif days <= 30: return 'Medium_Swing'
+    elif days <= 90: return 'Long_Swing'
+    else: return 'Position_Trade'
 
 def backtest_with_params(df, symbol, params, model=None, use_ai=True):
-    # Extract parameters
+    # Param unpack
     atr_mult = params['ATR_MULTIPLIER']
     atr_period = params['ATR_PERIOD']
     profit_target = params['PROFIT_TARGET']
     volume_mult = params['VOLUME_MULT']
     adx_threshold = params['ADX_THRESHOLD']
-    
-    # Add indicators and signals
+    # Indicators/signals
     df = add_indicators(df, atr_period)
     df = generate_signals(df, volume_mult)
     df = combine_signals(df, adx_threshold, volume_mult)
-    df = apply_ml_filter(df, model, use_ai)
-    
+    df = apply_ml_filter(df, model, use_ai=use_ai)
     if df.empty:
         return []
-    
     cash = INITIAL_CAPITAL
     positions = {}
     trades = []
     trade_count = 0
-    
-    for i in range(1, len(df)):
+    for i in range(1,len(df)):
         row = df.iloc[i]
-        date = row['date']
-        price = row['close']
-        sig = row['entry_signal']
-        sigtype = row['entry_type']
+        date = row['date']; price = row['close']
+        sig = row['entry_signal']; sigtype = row['entry_type']
         ai_conf = row.get('ai_confirmed', 'N/A')
-        
-        # Exit logic
+        # EXIT
         to_close = []
         for pid, pos in positions.items():
             ret = (price - pos['entry_price']) / pos['entry_price']
-            
-            # ATR-based stop loss
             atr_stop_price = pos['entry_price'] - (pos['entry_atr'] * atr_mult)
-            
-            if price > pos['high']:
-                pos['high'] = price
-            
-            # Dynamic trailing stop
+            if price > pos['high']: pos['high'] = price
             chandelier_stop = row['chandelier_exit']
             if not pos['trail_active'] and ret >= TRAIL_TRIGGER:
-                pos['trail_active'] = True
-                pos['trail_stop'] = chandelier_stop
-            
+                pos['trail_active'] = True; pos['trail_stop'] = chandelier_stop
             if pos['trail_active'] and chandelier_stop > pos['trail_stop']:
                 pos['trail_stop'] = chandelier_stop
-            
-            # Exit conditions
             exit_reason = None
             if ret >= profit_target:
                 exit_reason = 'Profit Target'
@@ -291,14 +231,12 @@ def backtest_with_params(df, symbol, params, model=None, use_ai=True):
                 exit_reason = 'Signal Exit'
             elif pos['trail_active'] and price <= pos['trail_stop']:
                 exit_reason = 'Chandelier Exit'
-            
             if exit_reason:
                 buy_val = pos['shares'] * pos['entry_price']
                 sell_val = pos['shares'] * price
                 charges = calc_charges(buy_val, sell_val)
-                pnl = sell_val * (1 - TRANSACTION_COST) - buy_val - charges
+                pnl = sell_val * (1-TRANSACTION_COST) - buy_val - charges
                 days_held = (date - pos['entry_date']).days
-                
                 trades.append({
                     'symbol': symbol,
                     'entry_date': pos['entry_date'].strftime('%Y-%m-%d'),
@@ -315,26 +253,20 @@ def backtest_with_params(df, symbol, params, model=None, use_ai=True):
                     'atr_stop_price': atr_stop_price,
                     'entry_atr': pos['entry_atr']
                 })
-                
-                cash += sell_val * (1 - TRANSACTION_COST)
+                cash += sell_val * (1-TRANSACTION_COST)
                 to_close.append(pid)
                 trade_count += 1
-                
                 if trade_count >= MAX_TRADES:
                     break
-        
         for pid in to_close:
             positions.pop(pid)
-        
         if trade_count >= MAX_TRADES:
             break
-        
-        # Entry logic
+        # ENTRY
         if sig == 1 and len(positions) < MAX_POSITIONS and cash >= POSITION_SIZE:
             shares = POSITION_SIZE / price
             current_atr = row['atr']
-            
-            positions[len(positions) + 1] = {
+            positions[len(positions)+1] = {
                 'entry_date': date,
                 'entry_price': price,
                 'entry_atr': current_atr,
@@ -345,162 +277,49 @@ def backtest_with_params(df, symbol, params, model=None, use_ai=True):
                 'entry_type': sigtype,
                 'ai_confirmed': ai_conf
             }
-            
             cash -= POSITION_SIZE * (1 + TRANSACTION_COST)
-    
     return trades
 
-def optimize_parameters(train_data, param_grid, model=None, use_ai=True):
-    best_params = None
-    best_score = -np.inf
-    
-    # Generate parameter combinations
-    keys = param_grid.keys()
-    values = param_grid.values()
-    
-    for combination in itertools.product(*values):
-        params = dict(zip(keys, combination))
-        
-        all_trades = []
-        for symbol_file in os.listdir(DATA_PATH):
-            if not symbol_file.endswith('.csv'):
-                continue
-            
-            symbol = symbol_file.replace('.csv', '')
-            symbol_data = train_data[train_data['symbol'] == symbol].copy()
-            
-            if symbol_data.empty:
-                continue
-            
-            trades = backtest_with_params(symbol_data, symbol, params, model, use_ai)
-            all_trades.extend(trades)
-        
-        if all_trades:
-            trade_df = pd.DataFrame(all_trades)
-            # Score based on total PnL adjusted for drawdown
-            total_pnl = trade_df['pnl'].sum()
-            win_rate = (trade_df['pnl'] > 0).mean()
-            score = total_pnl * win_rate  # Simple scoring function
-            
-            if score > best_score:
-                best_score = score
-                best_params = params
-    
-    return best_params if best_params else list(param_grid.values())[0]
-
-def walk_forward_test(data, train_years=2, test_years=1):
-    # Load model
-    model = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None
-    
-    results = []
-    start_year = data['date'].dt.year.min()
-    end_year = data['date'].dt.year.max()
-    
-    current_year = start_year + train_years
-    
-    while current_year + test_years <= end_year:
-        # Training window
-        train_data = data[data['date'].dt.year.between(current_year - train_years, current_year - 1)]
-        
-        # Test window
-        test_data = data[data['date'].dt.year.between(current_year, current_year + test_years - 1)]
-        
-        if train_data.empty or test_data.empty:
-            current_year += test_years
-            continue
-        
-        print(f"Training: {current_year - train_years}-{current_year - 1}, Testing: {current_year}-{current_year + test_years - 1}")
-        
-        # Optimize parameters on training data
-        best_params = optimize_parameters(train_data, PARAM_GRID, model, use_ai=True)
-        
-        # Test with AI
-        all_trades_ai = []
-        for symbol_file in os.listdir(DATA_PATH):
-            if not symbol_file.endswith('.csv'):
-                continue
-            
-            symbol = symbol_file.replace('.csv', '')
-            symbol_data = test_data[test_data['symbol'] == symbol].copy()
-            
-            if symbol_data.empty:
-                continue
-            
-            trades = backtest_with_params(symbol_data, symbol, best_params, model, use_ai=True)
-            all_trades_ai.extend(trades)
-        
-        # Test without AI
-        all_trades_no_ai = []
-        for symbol_file in os.listdir(DATA_PATH):
-            if not symbol_file.endswith('.csv'):
-                continue
-            
-            symbol = symbol_file.replace('.csv', '')
-            symbol_data = test_data[test_data['symbol'] == symbol].copy()
-            
-            if symbol_data.empty:
-                continue
-            
-            trades = backtest_with_params(symbol_data, symbol, best_params, model, use_ai=False)
-            all_trades_no_ai.extend(trades)
-        
-        # Store results
-        results.append({
-            'period': f"{current_year}-{current_year + test_years - 1}",
-            'best_params': best_params,
-            'trades_with_ai': all_trades_ai,
-            'trades_without_ai': all_trades_no_ai
-        })
-        
-        current_year += test_years
-    
-    return results
-
-def analyze_results(results):
-    print("=== WALK-FORWARD TEST RESULTS ===\n")
-    
-    for result in results:
-        period = result['period']
-        trades_ai = pd.DataFrame(result['trades_with_ai']) if result['trades_with_ai'] else pd.DataFrame()
-        trades_no_ai = pd.DataFrame(result['trades_without_ai']) if result['trades_without_ai'] else pd.DataFrame()
-        
-        print(f"Period: {period}")
-        print(f"Best Parameters: {result['best_params']}")
-        
-        if not trades_ai.empty:
-            print("WITH AI:")
-            print(f"  Total Trades: {len(trades_ai)}")
-            print(f"  Total PnL: ₹{trades_ai['pnl'].sum():,.2f}")
-            print(f"  Win Rate: {(trades_ai['pnl'] > 0).mean()*100:.2f}%")
-            print("  By Trade Category:")
-            print(trades_ai.groupby('trade_category')['pnl'].agg(['count', 'sum', 'mean']))
-            print("  By Entry Type:")
-            print(trades_ai.groupby('entry_type')['pnl'].agg(['count', 'sum', 'mean']))
-        
-        if not trades_no_ai.empty:
-            print("\nWITHOUT AI:")
-            print(f"  Total Trades: {len(trades_no_ai)}")
-            print(f"  Total PnL: ₹{trades_no_ai['pnl'].sum():,.2f}")
-            print(f"  Win Rate: {(trades_no_ai['pnl'] > 0).mean()*100:.2f}%")
-        
-        print("-" * 80)
-
+# --------- SIMPLE DEMO USAGE (all symbols, 5 years, current parameters, AI ON) --------
 if __name__ == "__main__":
-    # Load all data
     all_data = []
     for file in os.listdir(DATA_PATH):
         if not file.endswith(".csv"):
             continue
-        
         symbol = file.replace(".csv", "")
         df = pd.read_csv(os.path.join(DATA_PATH, file), parse_dates=['date'])
         df['symbol'] = symbol
         all_data.append(df)
-    
     combined_data = pd.concat(all_data, ignore_index=True)
     cutoff_date = datetime.now() - timedelta(days=5 * 365)
     combined_data = combined_data[combined_data['date'] >= cutoff_date]
-    
-    print("Starting Walk-Forward Testing...")
-    results = walk_forward_test(combined_data)
-    analyze_results(results)
+    # Pull current best parameters, or set manually here:
+    params = {
+        'ATR_MULTIPLIER':2.0,'ATR_PERIOD':14,'PROFIT_TARGET':0.10,'VOLUME_MULT':1.2,'ADX_THRESHOLD':15
+    }
+    model = joblib.load(MODEL_PATH) if USE_ML_CONFIRM and os.path.exists(MODEL_PATH) else None
+
+    all_trades = []
+    for symbol in combined_data['symbol'].unique():
+        df = combined_data[combined_data['symbol']==symbol].copy()
+        if df.empty:
+            continue
+        trades = backtest_with_params(df, symbol, params, model, use_ai=USE_ML_CONFIRM)
+        all_trades.extend(trades)
+
+    # ---- SAVE + REPORTS ----
+    log_df = pd.DataFrame(all_trades)
+    log_df.to_csv("trade_log_summary.csv", index=False)
+    print(f"Total Trades: {len(log_df)} | Overall PnL: {log_df['pnl'].sum():,.0f} | Win Rate: {(log_df['pnl']>0).mean()*100:.2f}%")
+    print("\nPnL by entry_type:"); print(log_df.groupby('entry_type')['pnl'].agg(['count','sum','mean']))
+    print("\nExit reason performance:"); print(log_df.groupby('exit_reason')['pnl'].agg(['count','sum','mean']).sort_values('sum', ascending=False))
+    print("\nPer-symbol performance:\n", log_df.groupby('symbol')['pnl'].agg(['count','sum','mean']).sort_values('sum',ascending=False).head(15))
+    log_df['exit_date']=pd.to_datetime(log_df['exit_date'])
+    print("\nYearly trade breakdown:\n", log_df.groupby(log_df['exit_date'].dt.year)['pnl'].agg(['count','sum','mean']))
+    log_df['trade_category'] = log_df['days_held'].apply(categorize_trade_duration)
+    print("\nPnL by trade category:\n", log_df.groupby('trade_category')['pnl'].agg(['count','sum','mean']))
+    log_df = log_df.sort_values('exit_date')
+    log_df['cum_pnl'] = log_df['pnl'].cumsum()
+    roll_max = log_df['cum_pnl'].cummax(); dd = roll_max - log_df['cum_pnl']; max_dd = dd.max()
+    sharpe = log_df['return_pct'].mean()/log_df['return_pct'].std() if log_df['return_pct'].std()!=0 else np.nan
+    print(f"\nMax Drawdown: {max_dd:.2f} | Sharpe: {sharpe:.2f} | Avg Hold Days: {log_df['days_held'].mean():.2f}")

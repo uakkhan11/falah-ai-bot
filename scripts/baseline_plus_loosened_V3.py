@@ -100,7 +100,15 @@ def add_indicators(df):
 
     atr_ce = ta.atr(df['high'], df['low'], df['close'], length=22)
     high20 = df['high'].rolling(22,1).max()
-    df['chandelier_exit'] = high20 - 3.0 * atr_ce
+    try:
+    atr_ce = ta.atr(df['high'], df['low'], df['close'], length=22)
+    high20 = df['high'].rolling(22, min_periods=1).max()
+    if atr_ce is not None:
+        df['chandelier_exit'] = high20 - 3.0 * atr_ce
+    else:
+        df['chandelier_exit'] = np.nan
+except Exception:
+    df['chandelier_exit'] = np.nan
 
     return df.replace({None: np.nan}).infer_objects(copy=False).reset_index(drop=True)
 

@@ -53,8 +53,8 @@ def willr_signals(df):
     df['signal'] = 0
     df.loc[buy, 'signal']  = 1
     df.loc[sell,'signal']  = 0
+    df = df.reset_index(drop=True)
     return df.dropna(subset=['w%r'])
-df = df.reset_index(drop=True)
 
 
 # -----------------------

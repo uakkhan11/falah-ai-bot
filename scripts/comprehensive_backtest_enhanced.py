@@ -186,12 +186,12 @@ def apply_ml_filter(df, model, use_ai=True):
     
     # ML features
     df['rsi'] = ta.rsi(df['close'], length=14)
-    df['atr_ml'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+    df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
     df['ema10'] = ta.ema(df['close'], length=10)
     df['ema21'] = ta.ema(df['close'], length=21)
     df['volumechange'] = df['volume'].pct_change().fillna(0)
     
-    features = ['rsi', 'atr_ml', 'adx', 'ema10', 'ema21', 'volumechange']
+    features = ['rsi', 'atr', 'adx', 'ema10', 'ema21', 'volumechange']
     df = df.dropna(subset=features).reset_index(drop=True)
     
     if df.empty:

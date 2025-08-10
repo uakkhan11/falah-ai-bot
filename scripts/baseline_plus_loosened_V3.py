@@ -330,4 +330,7 @@ if __name__=="__main__":
     all_df=pd.concat(all_data,ignore_index=True)
     log_df = walk_forward(all_df)
     log_df.to_csv("v3_fast_trades.csv",index=False)
-    print(f"Total Trades: {len(log_df)} | PnL: {log_df['pnl'].sum():,.0f} | Win Rate: {(log_df['pnl']>0).mean()*100:.2f}%")
+    if log_df.empty or 'pnl' not in log_df.columns:
+        print("No trades found or 'pnl' column missing in results.")
+    else:
+        print(f"Total Trades: {len(log_df)} | PnL: {log_df['pnl'].sum():,.0f} | Win Rate: {(log_df['pnl']>0).mean()*100:.2f}%")

@@ -131,21 +131,24 @@ def add_indicators(df, atr_period=14):
 
     # --- Chandelier Exit (ATR-based trailing stop) ---
     try:
-        atr_ce = ta.atr(df['high'], df['low'], df['close'], length=22)
-        high20 = df['high'].rolling(22, min_periods=1).max()
-        df['chandelier_exit'] = high20 - 3.0 * atr_ce
-    except Exception:
-        df['chandelier_exit'] = np.nan
-
-    # --- Replace None with np.nan to avoid TypeError in comparisons ---
-    pd.set_option('future.no_silent_downcasting', True)
+            atr_ce = ta.atr(df['high'], df['low'], df['close'], length=22)
+            high20 = df['high'].rolling(22, min_periods=1).max()
+            df['chandelier_exit'] = high20 - 3.0 * atr_ce
+        except Exception:
+            df['chandelier_exit'] = np.nan
     
+        # --- Replace None with np.nan to avoid TypeError in comparisons ---
         numeric_cols = [
-        'close', 'donchian_high', 'ema200', 'adx', 'vol_sma20',
-        'bb_upper', 'bb_lower', 'wpr', 'atr', 'chandelier_exit'
+            'close', 'donchian_high', 'ema200', 'adx', 'vol_sma20',
+            'bb_upper', 'bb_lower', 'wpr', 'atr', 'chandelier_exit'
         ]
-        df[numeric_cols] = df[numeric_cols].replace({None: np.nan}).infer_objects(copy=False)
-    return df.reset_index(drop=True)
+        df[numeric_cols] = (
+            df[numeric_cols]
+            .replace({None: np.nan})
+            .infer_objects(copy=False)  # preserves correct dtypes without warning
+        )
+    
+        return df.reset_index(drop=True)
 
 def generate_signals(df, volume_mult=1.2):
     # Breakout signals

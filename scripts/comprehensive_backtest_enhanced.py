@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import itertools
 from typing import Dict, List, Tuple
 import pandas as pd
+import numpy as np
 
 # ==== CONFIGURATION ====
 BASE_DIR = "/root/falah-ai-bot"
@@ -138,7 +139,12 @@ def add_indicators(df, atr_period=14):
 
     # --- Replace None with np.nan to avoid TypeError in comparisons ---
     pd.set_option('future.no_silent_downcasting', True)
-
+    
+        numeric_cols = [
+        'close', 'donchian_high', 'ema200', 'adx', 'vol_sma20',
+        'bb_upper', 'bb_lower', 'wpr', 'atr', 'chandelier_exit'
+    ]
+    df[numeric_cols] = df[numeric_cols].replace({None: np.nan}).infer_objects(copy=False)
     return df.reset_index(drop=True)
 
 def generate_signals(df, volume_mult=1.2):

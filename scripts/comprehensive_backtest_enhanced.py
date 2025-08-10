@@ -74,15 +74,18 @@ def add_indicators(df, atr_period=14):
     adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
     def add_indicators(df, atr_period=14):
         try:
-            adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
-            if adx_df is not None and 'ADX_14' in adx_df.columns:
-                df['adx'] = adx_df['ADX_14']
-            else:
-                df['adx'] = np.nan
-        except Exception:
+        adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
+        if adx_df is not None and 'ADX_14' in adx_df.columns:
+            df['adx'] = adx_df['ADX_14']
+        else:
             df['adx'] = np.nan
-    return df.dropna().reset_index(drop=True)
-    df['vol_sma20'] = df['volume'].rolling(20, 1).mean()
+    except:
+        df['adx'] = np.nan
+
+    if 'volume' in df.columns:
+        df['vol_sma20'] = df['volume'].rolling(20, min_periods=1).mean()
+    else:
+        df['vol_sma20'] = np.nan
     
     # Bollinger Bands
     bb = ta.bbands(df['close'], length=20, std=2)

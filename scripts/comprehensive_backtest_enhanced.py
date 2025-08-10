@@ -5,6 +5,7 @@ import joblib
 from datetime import datetime, timedelta
 import itertools
 from typing import Dict, List, Tuple
+import pandas as pd
 
 # ==== CONFIGURATION ====
 BASE_DIR = "/root/falah-ai-bot"
@@ -136,7 +137,7 @@ def add_indicators(df, atr_period=14):
         df['chandelier_exit'] = np.nan
 
     # --- Replace None with np.nan to avoid TypeError in comparisons ---
-    df = df.replace({None: np.nan}).infer_objects(copy=False)
+    pd.set_option('future.no_silent_downcasting', True)
 
     return df.reset_index(drop=True)
 

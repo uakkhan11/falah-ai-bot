@@ -176,24 +176,33 @@ def add_ml_features(df):
     df['volumechange'] = df['volume'].pct_change().fillna(0)
     return df.dropna().reset_index(drop=True)
 
-def ml_signals(df, model):
-    features = ['rsi','atr','adx','ema10','ema21','volumechange']
-    df = add_ml_features(df).dropna(subset=features).reset_index(drop=True)
-    if df.empty:
-        # No valid rows, skip prediction
-        df['ml_signal'] = pd.Series(dtype='int')
-        return df
-    X = df[features]
-    df['ml_signal'] = model.predict(X)
-    return df
-
 def ml_filter(df, model):
-    features = ['rsi','atr','adx','ema10','ema21','volumechange']
+    features = ['rsi', 'atr', 'adx', 'ema10', 'ema21', 'volumechange']
+    
+    # Generate ML features and remove any rows with NaNs
     df = add_ml_features(df)
-    df['ml_signal'] = model.predict(df[features])
-    # Only allow entry if both signal and ML agree
-    df['entry_signal'] = np.where((df['entry_signal']==1)&(df['ml_signal']==1),1,0)
-    df = df[df['entry_signal']==1].reset_index(drop=True)
+    df = df.dropna(subset=features).reset_index(drop=True)
+    
+    # Safety check: if no rows, return empty ml_signal
+    if df.empty:
+        df['ml_signal'] = pd.Series([0] * len(df), index=df.index, dtype=int)
+        return df
+    
+    # Prepare X for prediction
+    X = df[features]
+    
+    # Double-check shape before predicting
+    if X.shape[0] == 0:
+        df['ml_signal'] = pd.Series([0] * len(df), index=df.index, dtype=int)
+        return df
+    
+    # Prediction
+    try:
+        df['ml_signal'] = model.predict(X)
+    except Exception as e:
+        print(f"[ML ERROR] Model prediction failed: {e}")
+        df['ml_signal'] = pd.Series([0] * len(df), index=df.index, dtype=int)
+    
     return df
 
 # ===== REGIME FILTER =====

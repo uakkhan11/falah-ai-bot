@@ -136,7 +136,7 @@ def add_indicators(df, atr_period=14):
         df['chandelier_exit'] = np.nan
 
     # --- Replace None with np.nan to avoid TypeError in comparisons ---
-    df = df.replace({None: np.nan})
+    df = df.replace({None: np.nan}).infer_objects(copy=False)
 
     return df.reset_index(drop=True)
 

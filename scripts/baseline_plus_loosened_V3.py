@@ -5,7 +5,13 @@
 baseline_plus_v3_wfo_fast.py
 Same trading logic as v3, but with indicator caching and parallel parameter search for much faster execution.
 """
-
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    message="pkg_resources is deprecated as an API",
+    category=UserWarning,
+    module="pandas_ta"
+)
 import os
 import pandas as pd
 import numpy as np

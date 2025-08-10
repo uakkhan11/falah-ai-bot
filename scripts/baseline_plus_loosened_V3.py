@@ -171,14 +171,52 @@ def combine_signals(df, params):
 
 # ==== ML filter ====
 def apply_ml_filter(df, model):
-    if not USE_ML or model is None: return df
+    if not USE_ML or model is None:
+        return df
+
+    # === Features expected by model (must match training time exactly!) ===
+    feature_cols = ['rsi', 'atr', 'adx', 'ema10', 'ema21', 'volumechange']
+
+    # --- Ensure needed features exist ---
+    # RSI
+    if 'rsi' not in df.columns:
+        try:
+            df['rsi'] = ta.rsi(df['close'], length=14)
+        except:
+            df['rsi'] = np.nan
+
+    # Always recompute short EMAs & volumechange
     df['ema10'] = ta.ema(df['close'], length=10)
     df['ema21'] = ta.ema(df['close'], length=21)
     df['volumechange'] = df['volume'].pct_change().fillna(0)
-    features = ['atr','adx','ema10','ema21','volumechange']
-    df = df.dropna(subset=features).reset_index(drop=True)
-    df['ml_signal'] = model.predict(df[features])
-    df['entry_signal'] = np.where((df['entry_signal']==1) & (df['ml_signal']==1), 1, 0)
+
+    # Ensure all required columns exist (fill with NaNs if missing)
+    for col in feature_cols:
+        if col not in df.columns:
+            df[col] = np.nan
+
+    # --- Fill NaNs in features to avoid dropping entire column ---
+    df[feature_cols] = df[feature_cols].ffill().bfill()
+
+    # Drop only rows that still have NaN after fill
+    df = df.dropna(subset=feature_cols).reset_index(drop=True)
+
+    if df.empty:
+        return df  # nothing to predict on in this slice
+
+    # === DEBUG: check for missing columns before predicting ===
+    missing_feats = [c for c in feature_cols if c not in df.columns]
+    if missing_feats:
+        print("⚠️ Missing features at prediction time:", missing_feats)
+
+    # Predict with exact same feature order as training
+    X = df[feature_cols]
+    df['ml_signal'] = model.predict(X)
+
+    # Apply ML confirmation mask
+    df['entry_signal'] = np.where(
+        (df['entry_signal'] == 1) & (df['ml_signal'] == 1), 1, 0
+    )
     return df
 
 # ==== Backtest ====

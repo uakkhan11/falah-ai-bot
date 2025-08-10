@@ -62,56 +62,83 @@ def robust_bbcols(bb, period, std):
 def add_indicators(df, atr_period=14):
     # --- Weekly Donchian for daily data ---
     if TIMEFRAME == 'daily':
-        df_weekly = df.resample('W-MON', on='date').agg({
-            'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
-        }).dropna().reset_index()
-        df_weekly['weekly_donchian_high'] = df_weekly['high'].rolling(20, 1).max()
-        df['weekly_donchian_high'] = (
-            df_weekly.set_index('date')['weekly_donchian_high']
-            .reindex(df['date'], method='ffill').values
-        )
-    
-    # --- Core Indicators ---
-    df['donchian_high'] = df['high'].rolling(20, 1).max()
-    df['ema200'] = ta.ema(df['close'], length=200)
+        try:
+            df_weekly = df.resample('W-MON', on='date').agg({
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last',
+                'volume': 'sum'
+            }).dropna().reset_index()
+            df_weekly['weekly_donchian_high'] = df_weekly['high'].rolling(20, min_periods=1).max()
+            df['weekly_donchian_high'] = (
+                df_weekly.set_index('date')['weekly_donchian_high']
+                .reindex(df['date'], method='ffill').values
+            )
+        except Exception:
+            df['weekly_donchian_high'] = np.nan
 
-    # --- ADX with None-check ---
+    # --- Donchian High ---
+    df['donchian_high'] = df['high'].rolling(20, min_periods=1).max()
+
+    # --- EMA200 ---
+    try:
+        df['ema200'] = ta.ema(df['close'], length=200)
+    except Exception:
+        df['ema200'] = np.nan
+
+    # --- ADX (safe) ---
     try:
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
         if adx_df is not None and 'ADX_14' in adx_df.columns:
             df['adx'] = adx_df['ADX_14']
         else:
             df['adx'] = np.nan
-    except Exception:
+    except:
         df['adx'] = np.nan
 
-    # --- Volume SMA (safe) ---
+    # --- Volume SMA20 ---
     if 'volume' in df.columns:
         df['vol_sma20'] = df['volume'].rolling(20, min_periods=1).mean()
     else:
         df['vol_sma20'] = np.nan
 
-    # --- Bollinger Bands (with robust column lookup) ---
-    bb = ta.bbands(df['close'], length=20, std=2)
-    ucol, lcol = robust_bbcols(bb, 20, 2)
-    df['bb_upper'] = bb[ucol[0]] if ucol else np.nan
-    df['bb_lower'] = bb[lcol[0]] if lcol else np.nan
+    # --- Bollinger Bands ---
+    try:
+        bb = ta.bbands(df['close'], length=20, std=2)
+        ucol, lcol = robust_bbcols(bb, 20, 2)
+        df['bb_upper'] = bb[ucol[0]] if ucol else np.nan
+        df['bb_lower'] = bb[lcol[0]] if lcol else np.nan
+    except Exception:
+        df['bb_upper'] = np.nan
+        df['bb_lower'] = np.nan
 
     # --- Williams %R ---
-    high14 = df['high'].rolling(14).max()
-    low14 = df['low'].rolling(14).min()
-    df['wpr'] = (high14 - df['close']) / (high14 - low14) * -100
-    
-    # --- ATR for volatility stops ---
-    df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=atr_period)
+    try:
+        high14 = df['high'].rolling(14).max()
+        low14 = df['low'].rolling(14).min()
+        df['wpr'] = (high14 - df['close']) / (high14 - low14) * -100
+    except Exception:
+        df['wpr'] = np.nan
+
+    # --- ATR for volatility-based stops ---
+    try:
+        df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=atr_period)
+    except Exception:
+        df['atr'] = np.nan
 
     # --- Chandelier Exit (ATR-based trailing stop) ---
-    atr_ce = ta.atr(df['high'], df['low'], df['close'], length=22)
-    high20 = df['high'].rolling(22, 1).max()
-    df['chandelier_exit'] = high20 - 3.0 * atr_ce
+    try:
+        atr_ce = ta.atr(df['high'], df['low'], df['close'], length=22)
+        high20 = df['high'].rolling(22, min_periods=1).max()
+        df['chandelier_exit'] = high20 - 3.0 * atr_ce
+    except Exception:
+        df['chandelier_exit'] = np.nan
+
+    # --- Replace None with np.nan to avoid TypeError in comparisons ---
+    df = df.replace({None: np.nan})
 
     return df.reset_index(drop=True)
-
 
 def generate_signals(df, volume_mult=1.2):
     # Breakout signals

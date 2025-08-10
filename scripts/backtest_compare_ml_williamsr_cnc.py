@@ -48,9 +48,14 @@ def calc_charges(buy_val, sell_val):
 # FEATURE CALCULATION (matches training set)
 # -----------------------
 def add_ml_features(df):
+    """Recalculate indicators exactly as ML model was trained on."""
     df['rsi'] = ta.rsi(df['close'], length=14)
     df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
-    df['adx'] = ta.adx(df['high'], df['low'], df['close'], length=14)['ADX_14']
+    adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
+    if adx_df is not None and 'ADX_14' in adx_df.columns:
+        df['adx'] = adx_df['ADX_14']
+    else:
+        df['adx'] = np.nan
     df['ema10'] = ta.ema(df['close'], length=10)
     df['ema21'] = ta.ema(df['close'], length=21)
     df['volumechange'] = df['volume'].pct_change().fillna(0)
@@ -64,9 +69,7 @@ def ml_signals(df, model, features):
     df = df.dropna(subset=features).reset_index(drop=True)
     X = df[features]
     df['signal'] = model.predict(X)
-    return df
-
-ml_features = ['rsi','atr','adx','ema10','ema21','volumechange']
+    return df.reset_index(drop=True)
 
 def willr_signals(df):
     df = df.copy()
@@ -88,7 +91,7 @@ def backtest(df):
     cash = INITIAL_CAPITAL
     positions = {}
     trades = []
-    count = 0
+    trade_count = 0
 
     for i in range(1, len(df)):
         date = df.at[i, 'date']
@@ -104,29 +107,31 @@ def backtest(df):
                 pos['high'] = price
             if not pos['trail_active'] and ret >= TRAIL_TRIGGER:
                 pos['trail_active'] = True
-                pos['trail_stop'] = price * (1 - TRAIL_DISTANCE)
+                pos['trail_stop']   = price * (1 - TRAIL_DISTANCE)
             if pos['trail_active']:
                 new_stop = price * (1 - TRAIL_DISTANCE)
                 if new_stop > pos['trail_stop']:
                     pos['trail_stop'] = new_stop
-            if days >= 1 and (ret >= PROFIT_TARGET or ret <= -STOP_LOSS or sig == 0 or (pos['trail_active'] and price <= pos['trail_stop'])):
-                buy_val = pos['shares'] * pos['entry_price']
+            if days >= 1 and (
+                ret >= PROFIT_TARGET or ret <= -STOP_LOSS or sig == 0 
+                or (pos['trail_active'] and price <= pos['trail_stop'])
+            ):
+                buy_val  = pos['shares'] * pos['entry_price']
                 sell_val = pos['shares'] * price
-                charges = calc_charges(buy_val, sell_val)
+                charges  = calc_charges(buy_val, sell_val)
                 exit_val = sell_val * (1 - TRANSACTION_COST)
-                pnl = exit_val - buy_val - charges
-                cash += exit_val
+                pnl      = exit_val - buy_val - charges
+                cash    += exit_val
                 trades.append({
                     'entry_date': pos['entry_date'], 'exit_date': date,
                     'pnl': pnl, 'return_pct': ret*100, 'days_held': days
                 })
                 to_close.append(pid)
-                count += 1
-                if count >= MAX_TRADES:
-                    break
+                trade_count += 1
         for pid in to_close:
             positions.pop(pid)
-        if count >= MAX_TRADES:
+
+        if trade_count >= MAX_TRADES:
             break
 
         # ENTRY
@@ -141,30 +146,30 @@ def backtest(df):
                 }
                 cash -= cost_val
 
-    # CLOSE REMAINING
-    last_date = df.iloc[-1]['date']
+    # Close remaining at end
+    last_date  = df.iloc[-1]['date']
     last_price = df.iloc[-1]['close']
     for pos in positions.values():
         days = (last_date - pos['entry_date']).days
         if days >= 1:
-            buy_val = pos['shares'] * pos['entry_price']
+            buy_val  = pos['shares'] * pos['entry_price']
             sell_val = pos['shares'] * last_price
-            charges = calc_charges(buy_val, sell_val)
+            charges  = calc_charges(buy_val, sell_val)
             exit_val = sell_val * (1 - TRANSACTION_COST)
-            pnl = exit_val - buy_val - charges
-            cash += exit_val
+            pnl      = exit_val - buy_val - charges
+            cash    += exit_val
             trades.append({
                 'entry_date': pos['entry_date'], 'exit_date': last_date,
                 'pnl': pnl, 'return_pct': ((last_price - pos['entry_price']) / pos['entry_price']) * 100,
                 'days_held': days
             })
 
-    # Metrics
     df_tr = pd.DataFrame(trades)
     total_ret = (cash - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
-    win_rate = (df_tr['pnl'] > 0).mean() * 100 if not df_tr.empty else 0
-    avg_hold = df_tr['days_held'].mean() if not df_tr.empty else 0
-    sharpe = df_tr['return_pct'].mean() / df_tr['return_pct'].std() if not df_tr.empty and df_tr['return_pct'].std() != 0 else 0
+    win_rate  = (df_tr['pnl'] > 0).mean() * 100 if not df_tr.empty else 0
+    avg_hold  = df_tr['days_held'].mean() if not df_tr.empty else 0
+    sharpe    = df_tr['return_pct'].mean() / df_tr['return_pct'].std() if not df_tr.empty and df_tr['return_pct'].std() != 0 else 0
+
     return total_ret, win_rate, avg_hold, sharpe, len(df_tr)
 
 # -----------------------
@@ -176,27 +181,38 @@ if __name__ == "__main__":
     ml_features = ['rsi', 'atr', 'adx', 'ema10', 'ema21', 'volumechange']
 
     summary = []
+
     for tf, folder in DATA_DIRS.items():
         ml_agg = {k: [] for k in ['return', 'win_rate', 'avg_hold', 'sharpe', 'trades']}
         wr_agg = {k: [] for k in ['return', 'win_rate', 'avg_hold', 'sharpe', 'trades']}
+
         for fn in os.listdir(folder):
-            if not fn.endswith('.csv'):
+            if not fn.endswith(".csv"):
                 continue
             df = pd.read_csv(os.path.join(folder, fn), parse_dates=['date'])
             if df.empty:
                 continue
+
             # ML backtest
-            if set(ml_features).issubset(df.columns):
-                df_ml = ml_signals(df, model, ml_features)
-                res_ml = backtest(df_ml)
-                for k, v in zip(ml_agg.keys(), res_ml):
-                    ml_agg[k].append(v)
-            # Williams %R backtest
-            df_wr = willr_signals(df)
-            if not df_wr.empty:
-                res_wr = backtest(df_wr)
-                for k, v in zip(wr_agg.keys(), res_wr):
-                    wr_agg[k].append(v)
+            try:
+                df_ml = ml_signals(df.copy(), model, ml_features)
+                if not df_ml.empty:
+                    res_ml = backtest(df_ml)
+                    for k, v in zip(ml_agg.keys(), res_ml):
+                        ml_agg[k].append(v)
+            except Exception as e:
+                print(f"ML backtest skipped for {fn}: {e}")
+
+            # W%R backtest
+            try:
+                df_wr = willr_signals(df.copy())
+                if not df_wr.empty:
+                    res_wr = backtest(df_wr)
+                    for k, v in zip(wr_agg.keys(), res_wr):
+                        wr_agg[k].append(v)
+            except Exception as e:
+                print(f"W%R backtest skipped for {fn}: {e}")
+
         summary.append({
             'timeframe': tf,
             'ML Return (%)': np.mean(ml_agg['return']) if ml_agg['return'] else 0,
@@ -210,5 +226,6 @@ if __name__ == "__main__":
             'W%R Sharpe': np.mean(wr_agg['sharpe']) if wr_agg['sharpe'] else 0,
             'W%R Trades': np.sum(wr_agg['trades']) if wr_agg['trades'] else 0,
         })
+
     print("\nBacktest Summary:")
     print(pd.DataFrame(summary).set_index('timeframe').round(2))

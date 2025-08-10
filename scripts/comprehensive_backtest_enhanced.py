@@ -73,7 +73,6 @@ def add_indicators(df, atr_period=14):
     df['ema200'] = ta.ema(df['close'], length=200)
     adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
     def add_indicators(df, atr_period=14):
-    # ... previous code ...
     try:
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
         if adx_df is not None and 'ADX_14' in adx_df.columns:

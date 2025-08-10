@@ -60,53 +60,58 @@ def robust_bbcols(bb, period, std):
     return upper, lower
 
 def add_indicators(df, atr_period=14):
-    # Weekly timeframe for daily data
+    # --- Weekly Donchian for daily data ---
     if TIMEFRAME == 'daily':
         df_weekly = df.resample('W-MON', on='date').agg({
             'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
         }).dropna().reset_index()
         df_weekly['weekly_donchian_high'] = df_weekly['high'].rolling(20, 1).max()
-        df['weekly_donchian_high'] = df_weekly.set_index('date')['weekly_donchian_high'].reindex(df['date'], method='ffill').values
+        df['weekly_donchian_high'] = (
+            df_weekly.set_index('date')['weekly_donchian_high']
+            .reindex(df['date'], method='ffill').values
+        )
     
-    # Core indicators
+    # --- Core Indicators ---
     df['donchian_high'] = df['high'].rolling(20, 1).max()
     df['ema200'] = ta.ema(df['close'], length=200)
-    adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
-    def add_indicators(df, atr_period=14):
-        try:
+
+    # --- ADX with None-check ---
+    try:
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
         if adx_df is not None and 'ADX_14' in adx_df.columns:
             df['adx'] = adx_df['ADX_14']
         else:
             df['adx'] = np.nan
-    except:
+    except Exception:
         df['adx'] = np.nan
 
+    # --- Volume SMA (safe) ---
     if 'volume' in df.columns:
         df['vol_sma20'] = df['volume'].rolling(20, min_periods=1).mean()
     else:
         df['vol_sma20'] = np.nan
-    
-    # Bollinger Bands
+
+    # --- Bollinger Bands (with robust column lookup) ---
     bb = ta.bbands(df['close'], length=20, std=2)
     ucol, lcol = robust_bbcols(bb, 20, 2)
-    df['bb_upper'] = bb[ucol]
-    df['bb_lower'] = bb[lcol]
-    
-    # Williams %R
+    df['bb_upper'] = bb[ucol[0]] if ucol else np.nan
+    df['bb_lower'] = bb[lcol[0]] if lcol else np.nan
+
+    # --- Williams %R ---
     high14 = df['high'].rolling(14).max()
     low14 = df['low'].rolling(14).min()
     df['wpr'] = (high14 - df['close']) / (high14 - low14) * -100
     
-    # ATR for volatility-based stops
+    # --- ATR for volatility stops ---
     df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=atr_period)
-    
-    # Chandelier Exit
+
+    # --- Chandelier Exit (ATR-based trailing stop) ---
     atr_ce = ta.atr(df['high'], df['low'], df['close'], length=22)
     high20 = df['high'].rolling(22, 1).max()
     df['chandelier_exit'] = high20 - 3.0 * atr_ce
-    
-    return df.dropna().reset_index(drop=True)
+
+    return df.reset_index(drop=True)
+
 
 def generate_signals(df, volume_mult=1.2):
     # Breakout signals

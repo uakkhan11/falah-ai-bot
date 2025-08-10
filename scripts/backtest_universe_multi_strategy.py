@@ -16,7 +16,7 @@ DATA_PATH = DATA_DIRS[TIMEFRAME]
 
 MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 TRADE_LOG_CSV = os.path.join(BASE_DIR, f"backtest_trade_log_{TIMEFRAME}.csv")
-USE_ML_CONFIRM = False   # Toggle AI confirmation
+USE_ML_CONFIRM = True   # Toggle AI confirmation
 
 # Strategy Parameters
 INITIAL_CAPITAL = 1_000_000

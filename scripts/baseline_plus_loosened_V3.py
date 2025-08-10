@@ -68,35 +68,56 @@ def robust_bbcols(bb):
 
 # ==== Indicators ====
 def add_indicators(df):
-    df = df.sort_values('date')
-    # Weekly Donchian
+    if 'date' in df.columns:
+        df = df.sort_values('date')
+        # Weekly Donchian
     df_weekly = df.resample('W-MON', on='date').agg({
         'open':'first','high':'max','low':'min','close':'last','volume':'sum'
     }).dropna().reset_index()
-    df_weekly['weekly_donchian_high'] = df_weekly['high'].rolling(20,1).max()
+    df_weekly['weekly_donchian_high'] = df_weekly['high'].rolling(20, min_periods=1).max()
     df['weekly_donchian_high'] = df_weekly.set_index('date')['weekly_donchian_high']\
         .reindex(df['date'], method='ffill').values
 
-    df['donchian_high'] = df['high'].rolling(20,1).max()
+    df['donchian_high'] = df['high'].rolling(20, min_periods=1).max()
     df['ema200'] = ta.ema(df['close'], length=200)
 
+    # ADX
     try:
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
-        df['adx'] = adx_df['ADX_14']
-    except: df['adx'] = np.nan
+        df['adx'] = adx_df['ADX_14'] if adx_df is not None else np.nan
+    except:
+        df['adx'] = np.nan
 
-    df['vol_sma20'] = df['volume'].rolling(20,1).mean()
+    # Volume MA
+    df['vol_sma20'] = df['volume'].rolling(20, min_periods=1).mean()
 
-    bb = ta.bbands(df['close'], length=20, std=2)
-    ucol, lcol = robust_bbcols(bb)
-    df['bb_upper'] = bb[ucol] if ucol else np.nan
-    df['bb_lower'] = bb[lcol] if lcol else np.nan
+    # Bollinger Bands
+    try:
+        bb = ta.bbands(df['close'], length=20, std=2)
+        if bb is not None:
+            ucol = [c for c in bb.columns if 'BBU' in c][0]
+            lcol = [c for c in bb.columns if 'BBL' in c][0]
+            df['bb_upper'] = bb[ucol]
+            df['bb_lower'] = bb[lcol]
+        else:
+            df['bb_upper'] = np.nan
+            df['bb_lower'] = np.nan
+    except:
+        df['bb_upper'] = np.nan
+        df['bb_lower'] = np.nan
 
-    high14 = df['high'].rolling(14).max()
-    low14 = df['low'].rolling(14).min()
-    df['wpr'] = (high14 - df['close'])/(high14-low14) * -100
+    # W%R
+    high14 = df['high'].rolling(14, min_periods=1).max()
+    low14  = df['low'].rolling(14, min_periods=1).min()
+    df['wpr'] = (high14 - df['close']) / (high14 - low14) * -100
 
-    df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD)
+    # ATR
+    try:
+        df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD)
+    except:
+        df['atr'] = np.nan
+
+    # Chandelier Exit
     try:
         atr_ce = ta.atr(df['high'], df['low'], df['close'], length=22)
         high20 = df['high'].rolling(22, min_periods=1).max()
@@ -104,8 +125,17 @@ def add_indicators(df):
             df['chandelier_exit'] = high20 - 3.0 * atr_ce
         else:
             df['chandelier_exit'] = np.nan
-    except Exception:
+    except:
         df['chandelier_exit'] = np.nan
+
+    # === Ensure RSI is always present ===
+    try:
+        df['rsi'] = ta.rsi(df['close'], length=14)
+    except:
+        df['rsi'] = np.nan
+
+    # Fill RSI NaNs forward if possible, else leave — will be handled later
+    df['rsi'] = df['rsi'].fillna(method='bfill').fillna(method='ffill')
 
     return df.replace({None: np.nan}).infer_objects(copy=False).reset_index(drop=True)
 

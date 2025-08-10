@@ -113,6 +113,11 @@ def add_indicators(df):
     except: df['rsi'] = np.nan
     df['rsi'] = df['rsi'].ffill().bfill()
 
+    cols_to_fill = ['ema200','adx','close','chandelier_exit','supertrend_dir']
+    for col in cols_to_fill:
+        if col in df.columns:
+            df[col] = df[col].fillna(method='ffill').fillna(method='bfill').fillna(np.nan)
+
     return df.reset_index(drop=True)
 
 # ==== SIGNALS ====

@@ -11,10 +11,10 @@ DAILY_DIR = os.path.join(BASE_DIR, "swing_data")
 MODEL_PATH = os.path.join(BASE_DIR, "model.pkl")
 
 # Your core symbol universe
-SYMBOLS_TO_TEST = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"]
+SYMBOLS_TO_TEST = ["RELIANCE", "BHARTIARTL", "CIPLA", "BRITANNIA", "BPCL"]
 
 USE_ML_CONFIRM = True   # Set False to use pure W%R
-NIFTY_FILE = os.path.join(DAILY_DIR, "NIFTY.csv")  # optional for market regime
+NIFTY_FILE = None  # optional for market regime
 
 # Trade params
 INITIAL_CAPITAL  = 1_000_000

@@ -84,18 +84,18 @@ class FalahTradingBot:
 
     def calculate_position_size(self, symbol, latest):
        try:
-        # Get live price from LiveDataManager
-        price = self.data_manager.get_current_price(symbol)
-        if not price or price <= 0:
-            print(f"⚠️  No valid price received for {symbol}, skipping position size calc.")
-            return 0
-        
-        # Position size is fixed rupee value divided by current price
-        quantity = int(self.config.POSITION_SIZE / price)
-        return max(quantity, 0)
+            # Get live price from LiveDataManager
+            price = self.data_manager.get_current_price(symbol)
+            if not price or price <= 0:
+                print(f"⚠️  No valid price received for {symbol}, skipping position size calc.")
+                return 0
+            
+            # Position size is fixed rupee value divided by current price
+            quantity = int(self.config.POSITION_SIZE / price)
+            return max(quantity, 0)
         except Exception as e:
-        print(f"Error calculating position size for {symbol}: {e}")
-        return 0
+            print(f"Error calculating position size for {symbol}: {e}")
+            return 0
 
 if __name__ == "__main__":
     bot = FalahTradingBot()

@@ -7,6 +7,8 @@ from kiteconnect import KiteConnect
 class Config:
     TOKEN_FILE = "falah_token.json"
     CREDS_FILE = "falah-credentials.json"
+    self.MAX_POSITION_LOSS_PCT = 0.03   # 3% per-position stop-loss
+    self.DAILY_LOSS_LIMIT_PCT = 0.02    # 2% total daily loss before halt
 
     def __init__(self):
         self.API_KEY = os.getenv('ZERODHA_API_KEY')

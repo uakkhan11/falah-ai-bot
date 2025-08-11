@@ -1,102 +1,45 @@
-#!/usr/bin/env python3
-import pandas as pd, numpy as np, pandas_ta as ta
-import sys
-import signal
-import time
-from datetime import datetime
-from config import Config
-from live_data_manager import LiveDataManager
-from order_manager import OrderManager
-from gsheet_manager import GSheetManager
+# strategy_utils.py
 
-class FalahTradingBot:
-    SHEET_KEY = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
-    WORKSHEET = "HalalList"
+import pandas as pd
+import numpy as np
+import pandas_ta as ta
 
-    def __init__(self):
-        # Load config and authenticate once
-        self.config = Config()
-        self.config.authenticate()
+def add_indicators(df):
+    # Your exact backtest code here, for example:
+    if 'date' in df.columns:
+        df = df.sort_values('date')
+    # … continue with weekly donchian, EMA200, ADX, BB, WPR, ATR, Supertrend, etc.
+    # Finally:
+    return df.reset_index(drop=True)
 
-        # Setup graceful shutdown
-        signal.signal(signal.SIGINT, self._shutdown)
-        signal.signal(signal.SIGTERM, self._shutdown)
-        self.running = False
+def breakout_signal(df):
+    cond_d = df['close'] > df['donchian_high'].shift(1)
+    cond_v = df['volume'] > VOLUME_MULT_BREAKOUT * df['vol_sma20']
+    cond_w = df['close'] > df['weekly_donchian_high'].shift(1)
+    df['breakout_signal'] = (cond_d & cond_v & cond_w).astype(int)
+    return df
 
-        # Initialize components
-        self.data_manager = LiveDataManager(self.config.kite)
-        self.order_manager = OrderManager(self.config.kite, self.config)
-        self.gsheet = GSheetManager()
+def bb_breakout_signal(df):
+    df['bb_breakout_signal'] = ((df['close'] > df['bb_upper']) &
+                                (df['volume'] > VOLUME_MULT_BREAKOUT * df['vol_sma20'])).astype(int)
+    return df
 
-        # Load instruments and symbols
-        self.data_manager.get_instruments()
-        self.trading_symbols = self._load_trading_symbols()
+def bb_pullback_signal(df):
+    cond_pull = df['close'] < df['bb_lower']
+    cond_resume = df['close'] > df['bb_lower'].shift(1)
+    df['bb_pullback_signal'] = (cond_pull.shift(1) & cond_resume).astype(int)
+    return df
 
-    def _shutdown(self, signum, frame):
-        print("\n🛑 Shutting down bot...")
-        self.running = False
+def combine_signals(df):
+    chand_or_st = (df['close'] > df['chandelier_exit']) | (df['supertrend_dir'] == 1)
+    regime_breakout = (df['close'] > df['ema200']) & (df['adx'] > ADX_THRESHOLD_BREAKOUT)
+    regime_default = (df['close'] > df['ema200']) & (df['adx'] > ADX_THRESHOLD_DEFAULT)
 
-    def _load_trading_symbols(self):
-        syms = self.gsheet.get_symbols_from_sheet(self.SHEET_KEY, self.WORKSHEET)
-        if not syms:
-            fallback = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"]
-            print("⚠️  Using fallback symbols:", fallback)
-            return fallback
-        print(f"📊 Trading {len(syms)} symbols")
-        return syms
-
-    def run(self):
-        print("🚀  Falah Trading Bot started!")
-        self.running = True
-        while self.running:
-            self.execute_strategy()
-            time.sleep(60)
-
-    def execute_strategy(self):
-        for symbol in self.trading_symbols:
-            try:
-                df = self.data_manager.get_historical_data(symbol)
-                if df is None or df.empty:
-                    continue
-
-                # Apply strategy functions
-                df = self.add_indicators(df)
-                df = self.breakout_signal(df)
-                df = self.bb_breakout_signal(df)
-                df = self.bb_pullback_signal(df)
-                df = self.combine_signals(df)
-
-                latest = df.iloc[-1]
-                if latest["entry_signal"] == 1:
-                    qty = self.calculate_position_size(symbol, latest)
-                    if qty > 0:
-                        self.order_manager.place_buy_order(symbol, qty)
-
-            except Exception as e:
-                print(f"Error processing {symbol}: {e}")
-
-    # Wrap global strategy functions as instance methods
-    def add_indicators(self, df):
-        return add_indicators(df)
-
-    def breakout_signal(self, df):
-        return breakout_signal(df)
-
-    def bb_breakout_signal(self, df):
-        return bb_breakout_signal(df)
-
-    def bb_pullback_signal(self, df):
-        return bb_pullback_signal(df)
-
-    def combine_signals(self, df):
-        return combine_signals(df)
-
-    def calculate_position_size(self, symbol, latest):
-        price = self.data_manager.get_current_price(symbol)
-        if not price:
-            return 0
-        return int(self.config.POSITION_SIZE / price)
-
-if __name__ == "__main__":
-    bot = FalahTradingBot()
-    bot.run()
+    df['entry_signal'] = 0; df['entry_type'] = ''
+    df.loc[(df['breakout_signal']==1) & chand_or_st & regime_breakout,
+           ['entry_signal','entry_type']] = [1,'Breakout']
+    df.loc[(df['bb_breakout_signal']==1) & chand_or_st & regime_breakout & (df['entry_signal']==0),
+           ['entry_signal','entry_type']] = [1,'BB_Breakout']
+    df.loc[(df['bb_pullback_signal']==1) & chand_or_st & regime_default & (df['entry_signal']==0),
+           ['entry_signal','entry_type']] = [1,'BB_Pullback']
+    return df

@@ -111,3 +111,21 @@ class GSheetManager:
             
         except Exception as e:
             self.logger.error(f"Error updating Google Sheet: {e}")
+
+def log_trade_to_sheet(self, symbol, action, price, quantity, timestamp):
+    """Log completed trades back to Google Sheet"""
+    trade_data = [{
+        'Symbol': symbol,
+        'Action': action,
+        'Price': price,
+        'Quantity': quantity,
+        'Timestamp': timestamp,
+        'P&L': 0  # Calculate based on your logic
+    }]
+    
+    self.gsheet.update_trading_results(
+        self.TRADES_SHEET_URL,
+        "Trades",
+        trade_data
+    )
+

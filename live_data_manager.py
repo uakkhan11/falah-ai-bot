@@ -5,10 +5,22 @@ from kiteconnect import KiteConnect
 import pandas_ta as ta
 
 class LiveDataManager:
-    def __init__(self, kite):
-        self.kite = kite
-        self.instruments = {}
-        self.current_data = {}
+    def get_bulk_current_prices(self, symbols):
+        try:
+            instruments = [f"NSE:{sym}" for sym in symbols]
+            quotes = self.kite.quote(instruments)
+
+            prices = {}
+            for sym in symbols:
+                key = f"NSE:{sym}"
+                if key in quotes and 'last_price' in quotes[key]:
+                    prices[sym] = quotes[key]['last_price']
+                else:
+                    prices[sym] = None
+            return prices
+        except Exception as e:
+            print(f"Error fetching bulk prices: {e}")
+            return {}
         
     def get_instruments(self):
         """Download and cache instrument list"""

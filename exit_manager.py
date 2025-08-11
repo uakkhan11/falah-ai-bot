@@ -8,23 +8,26 @@ import os
 class ExitManager:
     def __init__(self, config, data_manager, order_manager, trade_logger, notifier,
                  state_file="exit_state.json"):
+        """
+        Handles live trade exit logic using backtest rules with persistent trailing state,
+        plus Telegram alerts when stops tighten.
+        """
         self.config = config
         self.data_manager = data_manager
         self.order_manager = order_manager
         self.trade_logger = trade_logger
         self.notifier = notifier
         self.logger = logging.getLogger(__name__)
-        self.state_file = state_file
 
-        # State vars
+        self.state_file = state_file
         self.regime_fail_count = {}
         self.trailing_state = {}
 
-        # Load persisted state
+        # Load previous state if available
         self._load_state()
 
     def _load_state(self):
-        """Load trailing and regime states from JSON file."""
+        """Load trailing stop and regime fail states from file."""
         if os.path.exists(self.state_file):
             try:
                 with open(self.state_file, "r") as f:
@@ -36,7 +39,7 @@ class ExitManager:
                 print(f"⚠️ Failed to load exit state: {e}")
 
     def _save_state(self):
-        """Save trailing and regime states to JSON file."""
+        """Save trailing stop and regime fail states to file."""
         try:
             with open(self.state_file, "w") as f:
                 json.dump({
@@ -48,7 +51,8 @@ class ExitManager:
 
     def check_and_exit_positions(self, positions):
         """
-        Apply exit logic to open positions.
+        For each live position, check exit conditions and place sell orders if triggered.
+        Sends Telegram alerts if trailing stop is ratcheted upward.
         """
         for pos in positions:
             symbol = pos['symbol']
@@ -56,7 +60,7 @@ class ExitManager:
             if qty <= 0:
                 continue
 
-            # Fresh data for exit logic
+            # Pull recent candle data for exit logic
             df = self.data_manager.get_historical_data(symbol, interval="15minute", days=5)
             if df is None or df.empty:
                 continue
@@ -70,7 +74,7 @@ class ExitManager:
             ret = (current_price - entry_price) / entry_price
             atr_stop = entry_price - self.config.ATR_SL_MULT * latest['atr']
 
-            # Initialise if not existing (loaded or new)
+            # Init trailing state if not present
             if symbol not in self.trailing_state:
                 self.trailing_state[symbol] = {
                     'high_since': entry_price,
@@ -82,24 +86,32 @@ class ExitManager:
             if current_price > self.trailing_state[symbol]['high_since']:
                 self.trailing_state[symbol]['high_since'] = current_price
 
-            # Activate trail if trigger met
+            # Activate trailing if trigger hit
             if not self.trailing_state[symbol]['trail_active'] and ret >= self.config.TRAIL_TRIGGER:
                 self.trailing_state[symbol]['trail_active'] = True
                 self.trailing_state[symbol]['trail_stop'] = latest['chandelier_exit']
+                self.notifier.send_message(
+                    f"🔔 Trailing stop ACTIVATED for {symbol} at ₹{self.trailing_state[symbol]['trail_stop']:.2f}"
+                )
 
-            # Ratchet trail stop upwards
+            # Ratchet trailing stop upwards & notify
             if (self.trailing_state[symbol]['trail_active'] and
                     latest['chandelier_exit'] > self.trailing_state[symbol]['trail_stop']):
+                old_trail_stop = self.trailing_state[symbol]['trail_stop']
                 self.trailing_state[symbol]['trail_stop'] = latest['chandelier_exit']
+                self.notifier.send_message(
+                    f"🔔 Trailing stop RATCHET for {symbol}: "
+                    f"{old_trail_stop:.2f} → {self.trailing_state[symbol]['trail_stop']:.2f}"
+                )
 
-            # Regime OK check
+            # Regime check
             regime_ok = (latest['close'] > latest['ema200']) and (latest['adx'] > self.config.ADX_THRESHOLD_DEFAULT)
             if not regime_ok:
                 self.regime_fail_count[symbol] = self.regime_fail_count.get(symbol, 0) + 1
             else:
                 self.regime_fail_count[symbol] = 0
 
-            # Exit reason priority
+            # Decide exit reason
             reason = None
             if ret >= self.config.PROFIT_TARGET:
                 reason = 'Profit Target'
@@ -111,22 +123,23 @@ class ExitManager:
             elif self.regime_fail_count.get(symbol, 0) >= 2:
                 reason = 'Regime Exit'
 
+            # Execute exit if triggered
             if reason:
                 try:
-                    order_id = self.order_manager.place_sell_order(symbol, qty, price=current_price)
+                    self.order_manager.place_sell_order(symbol, qty, price=current_price)
                     self.trade_logger.log_trade(symbol, "SELL", qty, current_price,
                                                 status="EXIT_" + reason.replace(" ", "_"))
                     self.notifier.send_message(
                         f"🚪 Exit {symbol} ({reason}) @ ₹{current_price:.2f}"
                     )
-                    self.logger.info(f"Exited {symbol}: {reason}, qty={qty}, price={current_price}")
-                    # Reset state after exit
-                    if symbol in self.trailing_state:
-                        del self.trailing_state[symbol]
-                    if symbol in self.regime_fail_count:
-                        del self.regime_fail_count[symbol]
+                    self.logger.info(f"Exited {symbol} — Reason: {reason}, Qty: {qty}, Price: {current_price}")
+
+                    # Remove from state after exit
+                    self.trailing_state.pop(symbol, None)
+                    self.regime_fail_count.pop(symbol, None)
+
                 except Exception as e:
                     self.logger.error(f"Exit order failed for {symbol}: {e}")
 
-        # Save state every run
+        # Save after processing all symbols
         self._save_state()

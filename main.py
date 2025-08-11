@@ -20,6 +20,8 @@ from trade_logger import TradeLogger
 from order_tracker import OrderTracker
 from risk_manager import RiskManager
 from holding_tracker import HoldingTracker
+from telegram_notifier import TelegramNotifier
+from holding_tracker import HoldingTracker
 
 
 class FalahTradingBot:
@@ -46,11 +48,25 @@ class FalahTradingBot:
         self.order_tracker.update_order_statuses()
         positions = self.order_tracker.get_positions_with_pl()
         positions_with_age = self.holding_tracker.get_holdings_with_age(positions)
-
-for pos in positions_with_age:
-    print(f"{pos['symbol']}: Qty={pos['qty']}, PnL={pos['pnl']:.2f}, Status={pos['holding_status']}")
+        self.notifier.send_pnl_update(positions_with_age)
+        
+        # Optional: Detect & alert settlement status changes
+        for pos in positions_with_age:
+            symbol = pos['symbol']
+            status = pos['holding_status']
+            # Keep last status in memory to detect change
+            if not hasattr(self, 'last_status'):
+                self.last_status = {}
+            prev_status = self.last_status.get(symbol)
+            if prev_status != status:
+                self.notifier.send_t1_t2_change(symbol, status)
+                self.last_status[symbol] = status
         self.risk_manager = RiskManager(self.config, self.order_tracker)
         self.holding_tracker = HoldingTracker("trade_log.csv")
+        self.notifier = TelegramNotifier(
+            bot_token=self.config.TELEGRAM_BOT_TOKEN,
+            chat_id=self.config.TELEGRAM_CHAT_ID
+        )
 
         # Load instrument tokens and trading symbols
         self.data_manager.get_instruments()

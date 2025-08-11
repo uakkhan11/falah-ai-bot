@@ -6,8 +6,8 @@ from kiteconnect import KiteConnect
 class Config:
     def __init__(self):
         # Zerodha API credentials (set as environment variables)
-        self.API_KEY = os.getenv('ijzeuwuylr3g0kug')
-        self.API_SECRET = os.getenv('yy1wd2wn8r0wx4mus00vxllgss03nuqx')
+        self.API_KEY = os.getenv('ZERODHA_API_KEY')
+        self.API_SECRET = os.getenv('ZERODHA_API_SECRET')
         
         # Trading parameters from your backtest
         self.INITIAL_CAPITAL = 1_000_000

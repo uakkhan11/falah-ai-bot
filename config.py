@@ -9,6 +9,8 @@ class Config:
     CREDS_FILE = "falah-credentials.json"
     self.MAX_POSITION_LOSS_PCT = 0.03   # 3% per-position stop-loss
     self.DAILY_LOSS_LIMIT_PCT = 0.02    # 2% total daily loss before halt
+    self.TELEGRAM_BOT_TOKEN = os.getenv("7763450358:AAH32bWYyu_hXR6l-UaVMaarFGZ4YFOv6q8")
+    self.TELEGRAM_CHAT_ID   = os.getenv("6784139148")
 
     def __init__(self):
         self.API_KEY = os.getenv('ZERODHA_API_KEY')

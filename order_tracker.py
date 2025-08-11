@@ -10,41 +10,56 @@ class OrderTracker:
         self.logger = logging.getLogger(__name__)
 
     def update_order_statuses(self):
-        """Fetch orders and update trade log with execution details."""
+        """
+        Fetch all orders from Kite Connect and log their status,
+        filled quantities, and average prices back into the trade log.
+        """
         try:
             orders = self.kite.orders()
             for o in orders:
-                symbol = o["tradingsymbol"]
-                status = o["status"]
-                filled_qty = o["filled_quantity"]
-                avg_price = o["average_price"]
-                order_id = o["order_id"]
+                symbol   = o["tradingsymbol"]
+                action   = o["transaction_type"]
+                status   = o["status"]
+                filled   = o.get("filled_quantity", 0)
+                avg_price= o.get("average_price", 0.0)
 
-                # Update in Google Sheet / CSV
+                # Log each update (status can be: COMPLETE, CANCELLED, REJECTED, etc.)
                 self.trade_logger.log_trade(
-                    symbol, 
-                    "BUY" if o["transaction_type"] == "BUY" else "SELL", 
-                    filled_qty, avg_price, 
+                    symbol,
+                    action,
+                    filled,
+                    avg_price,
                     status
                 )
         except Exception as e:
             self.logger.error(f"Failed to update order statuses: {e}")
 
     def get_positions_with_pl(self):
-        """Fetch current positions with P/L."""
+        """
+        Fetch current net positions and calculate P/L for each.
+        Returns a list of dicts: [{symbol, qty, avg_price, last_price, pnl}, …]
+        """
         try:
-            positions = self.kite.positions()["net"]
+            net_positions = self.kite.positions().get("net", [])
             result = []
-            for p in positions:
-                pl = p["unrealised"] + p["realised"]
+            for p in net_positions:
+                symbol     = p["tradingsymbol"]
+                qty        = p.get("quantity", 0)
+                avg_price  = p.get("average_price", 0.0)
+                last_price = p.get("last_price", 0.0)
+                realised   = p.get("realised", 0.0)
+                unrealised = p.get("unrealised", 0.0)
+                pnl        = realised + unrealised
+
                 result.append({
-                    "symbol": p["tradingsymbol"],
-                    "qty": p["quantity"],
-                    "avg_price": p["average_price"],
-                    "last_price": p["last_price"],
-                    "pnl": pl
+                    "symbol": symbol,
+                    "qty": qty,
+                    "avg_price": avg_price,
+                    "last_price": last_price,
+                    "pnl": pnl
                 })
             return result
+
         except Exception as e:
             self.logger.error(f"Failed to fetch positions: {e}")
             return []

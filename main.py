@@ -21,7 +21,6 @@ from order_tracker import OrderTracker
 from risk_manager import RiskManager
 from holding_tracker import HoldingTracker
 from telegram_notifier import TelegramNotifier
-from holding_tracker import HoldingTracker
 
 
 class FalahTradingBot:
@@ -45,28 +44,15 @@ class FalahTradingBot:
             gsheet_manager=self.gsheet,
             gsheet_sheet_name="TradeLog"
         )
-        self.order_tracker.update_order_statuses()
-        positions = self.order_tracker.get_positions_with_pl()
-        positions_with_age = self.holding_tracker.get_holdings_with_age(positions)
-        self.notifier.send_pnl_update(positions_with_age)
-        
-        # Optional: Detect & alert settlement status changes
-        for pos in positions_with_age:
-            symbol = pos['symbol']
-            status = pos['holding_status']
-            # Keep last status in memory to detect change
-            if not hasattr(self, 'last_status'):
-                self.last_status = {}
-            prev_status = self.last_status.get(symbol)
-            if prev_status != status:
-                self.notifier.send_t1_t2_change(symbol, status)
-                self.last_status[symbol] = status
-        self.risk_manager = RiskManager(self.config, self.order_tracker)
+        self.order_tracker = OrderTracker(self.config.kite, self.trade_logger)
         self.holding_tracker = HoldingTracker("trade_log.csv")
+        self.risk_manager = RiskManager(self.config, self.order_tracker)
         self.notifier = TelegramNotifier(
             bot_token=self.config.TELEGRAM_BOT_TOKEN,
             chat_id=self.config.TELEGRAM_CHAT_ID
         )
+
+        self.last_status = {}  # for T1/T2 change tracking
 
         # Load instrument tokens and trading symbols
         self.data_manager.get_instruments()
@@ -93,78 +79,88 @@ class FalahTradingBot:
         while self.running:
             self.execute_strategy()
 
-            # Update orders / log status / PnL
+            # 🔍 Monitoring block
             self.order_tracker.update_order_statuses()
             positions = self.order_tracker.get_positions_with_pl()
-            for pos in positions:
-                print(f"{pos['symbol']}: Qty={pos['qty']}, PnL={pos['pnl']:.2f}")
+            positions_with_age = self.holding_tracker.get_holdings_with_age(positions)
+
+            # Send Telegram P&L update
+            self.notifier.send_pnl_update(positions_with_age)
+
+            # Send settlement status change alerts
+            for pos in positions_with_age:
+                symbol = pos['symbol']
+                status = pos['holding_status']
+                prev_status = self.last_status.get(symbol)
+                if prev_status != status:
+                    self.notifier.send_t1_t2_change(symbol, status)
+                    self.last_status[symbol] = status
 
             time.sleep(60)
 
     def execute_strategy(self):
-    live_prices = self.data_manager.get_bulk_current_prices(self.trading_symbols)
-    positions = self.order_tracker.get_positions_with_pl()
-    positions_dict = {pos['symbol']: pos for pos in positions}
+        live_prices = self.data_manager.get_bulk_current_prices(self.trading_symbols)
+        positions = self.order_tracker.get_positions_with_pl()
+        positions_dict = {pos['symbol']: pos for pos in positions}
 
-    def process_symbol(symbol):
-        try:
-            # Fetch multi-timeframe data
-            df_daily   = self.data_manager.get_historical_data(symbol, "day")
-            df_hourly  = self.data_manager.get_historical_data(symbol, "60minute")
-            df_fifteen = self.data_manager.get_historical_data(symbol, "15minute")
+        def process_symbol(symbol):
+            try:
+                # Fetch multi-timeframe data
+                df_daily = self.data_manager.get_historical_data(symbol, "day")
+                df_hourly = self.data_manager.get_historical_data(symbol, "60minute")
+                df_fifteen = self.data_manager.get_historical_data(symbol, "15minute")
 
-            # Skip incomplete data
-            if (df_daily is None or df_daily.empty or
-                df_fifteen is None or df_fifteen.empty):
-                return f"⚠️ Not enough data for {symbol}, skipped."
+                if (df_daily is None or df_daily.empty or
+                        df_fifteen is None or df_fifteen.empty):
+                    return f"⚠️ Not enough data for {symbol}, skipped."
 
-            # Skip if position/holdings already exist
-            if symbol in positions_dict and positions_dict[symbol]['qty'] > 0:
-                return f"⏩ Position already open for {symbol}, skipping order."
+                # Don't enter if position already open
+                if symbol in positions_dict and positions_dict[symbol]['qty'] > 0:
+                    return f"⏩ Position already open for {symbol}, skipping order."
 
-            # Apply indicator logic
-            df_daily = self.add_indicators(df_daily)
-            daily_trend_up = df_daily.iloc[-1]['close'] > df_daily.iloc[-1]['ema200']
+                # Indicator logic
+                df_daily = self.add_indicators(df_daily)
+                daily_trend_up = df_daily.iloc[-1]['close'] > df_daily.iloc[-1]['ema200']
 
-            hourly_confirm = True
-            if df_hourly is not None and not df_hourly.empty:
-                df_hourly = self.add_indicators(df_hourly)
-                hourly_confirm = df_hourly.iloc[-1]['close'] > df_hourly.iloc[-1]['ema200']
+                hourly_confirm = True
+                if df_hourly is not None and not df_hourly.empty:
+                    df_hourly = self.add_indicators(df_hourly)
+                    hourly_confirm = df_hourly.iloc[-1]['close'] > df_hourly.iloc[-1]['ema200']
 
-            df_fifteen = self.add_indicators(df_fifteen)
-            df_fifteen = self.breakout_signal(df_fifteen)
-            df_fifteen = self.bb_breakout_signal(df_fifteen)
-            df_fifteen = self.bb_pullback_signal(df_fifteen)
-            df_fifteen = self.combine_signals(df_fifteen)
+                df_fifteen = self.add_indicators(df_fifteen)
+                df_fifteen = self.breakout_signal(df_fifteen)
+                df_fifteen = self.bb_breakout_signal(df_fifteen)
+                df_fifteen = self.bb_pullback_signal(df_fifteen)
+                df_fifteen = self.combine_signals(df_fifteen)
 
-            latest_15m = df_fifteen.iloc[-1]
+                latest_15m = df_fifteen.iloc[-1]
 
-            if daily_trend_up and hourly_confirm and latest_15m['entry_signal'] == 1:
-                price = live_prices.get(symbol)
-                if price and price > 0:
-                    qty = int(self.config.POSITION_SIZE / price)
-                    if qty > 0 and self.risk_manager.allow_trade():
-                        order_id = self.order_manager.place_buy_order(symbol, qty, price=price)
-                        if order_id:
-                            self.trade_logger.log_trade(symbol, "BUY", qty, price, status="ORDER_PLACED")
+                if daily_trend_up and hourly_confirm and latest_15m['entry_signal'] == 1:
+                    price = live_prices.get(symbol)
+                    if price and price > 0:
+                        qty = int(self.config.POSITION_SIZE / price)
+                        if qty > 0 and self.risk_manager.allow_trade():
+                            order_id = self.order_manager.place_buy_order(symbol, qty, price=price)
+                            if order_id:
+                                self.trade_logger.log_trade(symbol, "BUY", qty, price, status="ORDER_PLACED")
+                                self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_PLACED")
+                            else:
+                                self.trade_logger.log_trade(symbol, "BUY", qty, price, status="ORDER_FAILED")
+                                self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_FAILED")
+                            return f"✅ Order attempt for {symbol} qty={qty}"
                         else:
-                            self.trade_logger.log_trade(symbol, "BUY", qty, price, status="ORDER_FAILED")
-                        return f"✅ Order attempt for {symbol} qty={qty}"
-                    else:
-                        return f"⏩ Trade blocked by risk rules for {symbol}"
+                            return f"⏩ Trade blocked by risk rules for {symbol}"
+                return f"ℹ️ No trade for {symbol}"
 
-            return f"ℹ️ No trade for {symbol}"
+            except Exception as e:
+                return f"❌ Error processing {symbol}: {e}"
 
-        except Exception as e:
-            return f"❌ Error processing {symbol}: {e}"
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(process_symbol, sym): sym for sym in self.trading_symbols}
+            for future in as_completed(futures):
+                print(future.result())
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(process_symbol, sym): sym for sym in self.trading_symbols}
-        for future in as_completed(futures):
-            print(future.result())
-
-
-    # Wrappers for strategy_utils
+    # Wrappers
     def add_indicators(self, df): return add_indicators(df)
     def breakout_signal(self, df): return breakout_signal(df)
     def bb_breakout_signal(self, df): return bb_breakout_signal(df)

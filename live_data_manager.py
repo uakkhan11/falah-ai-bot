@@ -7,18 +7,19 @@ class LiveDataManager:
     def __init__(self, kite):
         self.kite = kite
         self.instruments = {}
+        self.rate_limit_hit = False
 
     def _retry_api_call(self, func, *args, retries=3, delay=2, **kwargs):
-        """
-        Retry wrapper for Kite API calls with exponential backoff.
-        """
         for attempt in range(1, retries + 1):
             try:
-                return func(*args, **kwargs)
+                result = func(*args, **kwargs)
+                self.rate_limit_hit = False
+                return result
             except Exception as e:
                 if "429" in str(e) or "rate limit" in str(e).lower():
+                    self.rate_limit_hit = True
                     wait_time = delay * attempt
-                    print(f"⚠️ Rate limit hit. Waiting {wait_time}s before retry... (Attempt {attempt})")
+                    print(f"⚠️ Rate limit hit. Waiting {wait_time}s before retry (Attempt {attempt})...")
                     time.sleep(wait_time)
                 else:
                     print(f"Error in API call: {e}")

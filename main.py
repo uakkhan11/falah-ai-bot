@@ -83,16 +83,21 @@ class FalahTradingBot:
     def combine_signals(self, df):      return combine_signals(df)
 
     def calculate_position_size(self, symbol, latest):
+    """
+    Calculate how many shares to buy given the current market price
+    using POSITION_SIZE from config.
+    """
         try:
             # Get live price from LiveDataManager
             price = self.data_manager.get_current_price(symbol)
             if not price or price <= 0:
-                print(f"⚠️  No valid price received for {symbol}, skipping position size calc.")
+                print(f"⚠️ No valid price received for {symbol}, skipping position size calc.")
                 return 0
-            
-            # Position size is fixed rupee value divided by current price
+    
+            # Fixed rupee value per trade divided by current market price
             quantity = int(self.config.POSITION_SIZE / price)
             return max(quantity, 0)
+    
         except Exception as e:
             print(f"Error calculating position size for {symbol}: {e}")
             return 0

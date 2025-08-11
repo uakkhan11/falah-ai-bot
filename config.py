@@ -23,6 +23,7 @@ class Config:
         # Add trading parameters here as class attributes
         self.POSITION_SIZE = 100_000          # Position size per trade
         self.INITIAL_CAPITAL = 1_000_000      # Total capital (if used)
+        self.RISK_PER_TRADE = 0.01          # Risk 1% of account capital per trade
         self.MAX_POSITIONS = 5                 # Max concurrent positions
         self.PROFIT_TARGET = 0.10              # Profit target as fraction
         self.ATR_SL_MULT = 2.8                 # ATR multiplier for stop loss

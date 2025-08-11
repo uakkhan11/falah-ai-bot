@@ -83,10 +83,6 @@ class FalahTradingBot:
     def combine_signals(self, df):      return combine_signals(df)
 
     def calculate_position_size(self, symbol, latest):
-    """
-    Calculate how many shares to buy given the current market price
-    using POSITION_SIZE from config.
-    """
         try:
             # Get live price from LiveDataManager
             price = self.data_manager.get_current_price(symbol)

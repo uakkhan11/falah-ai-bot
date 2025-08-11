@@ -16,6 +16,7 @@ from config import Config
 from live_data_manager import LiveDataManager
 from order_manager import OrderManager
 from gsheet_manager import GSheetManager
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class FalahTradingBot:
     SHEET_KEY = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
@@ -58,31 +59,52 @@ class FalahTradingBot:
 
     def execute_strategy(self):
         live_prices = self.data_manager.get_bulk_current_prices(self.trading_symbols)
-        for symbol in self.trading_symbols:
+        
+        def process_symbol(symbol):
             try:
-                df = self.data_manager.get_historical_data(symbol)
-                if df is None or df.empty:
-                    continue
+                # Fetch multi-timeframe data
+                df_daily   = self.data_manager.get_historical_data(symbol, "day")
+                df_hourly  = self.data_manager.get_historical_data(symbol, "60minute")
+                df_fifteen = self.data_manager.get_historical_data(symbol, "15minute")
     
-                df = self.add_indicators(df)
-                df = self.breakout_signal(df)
-                df = self.bb_breakout_signal(df)
-                df = self.bb_pullback_signal(df)
-                df = self.combine_signals(df)
+                # Skip incomplete data
+                if (df_daily is None or df_daily.empty or
+                    df_fifteen is None or df_fifteen.empty):
+                    return f"⚠️ Not enough data for {symbol}, skipped."
     
-                latest = df.iloc[-1]
-                if latest['entry_signal'] == 1:
+                # Apply indicator logic
+                df_daily = self.add_indicators(df_daily)
+                daily_trend_up = df_daily.iloc[-1]['close'] > df_daily.iloc[-1]['ema200']
+    
+                hourly_confirm = True
+                if df_hourly is not None and not df_hourly.empty:
+                    df_hourly = self.add_indicators(df_hourly)
+                    hourly_confirm = df_hourly.iloc[-1]['close'] > df_hourly.iloc[-1]['ema200']
+    
+                df_fifteen = self.add_indicators(df_fifteen)
+                df_fifteen = self.breakout_signal(df_fifteen)
+                df_fifteen = self.bb_breakout_signal(df_fifteen)
+                df_fifteen = self.bb_pullback_signal(df_fifteen)
+                df_fifteen = self.combine_signals(df_fifteen)
+    
+                latest_15m = df_fifteen.iloc[-1]
+    
+                if daily_trend_up and hourly_confirm and latest_15m['entry_signal'] == 1:
                     price = live_prices.get(symbol)
-    
                     if price and price > 0:
                         qty = int(self.config.POSITION_SIZE / price)
                         if qty > 0:
                             self.order_manager.place_buy_order(symbol, qty, price=price)
-                    else:
-                        print(f"⚠️ Missing price for {symbol}, skipping buy order")
-    
+                            return f"✅ Order placed for {symbol} qty={qty}"
+                return f"ℹ️ No trade for {symbol}"
             except Exception as e:
-                print(f"Error processing {symbol}: {e}")
+                return f"❌ Error processing {symbol}: {e}"
+    
+        # Run in parallel threads
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(process_symbol, sym): sym for sym in self.trading_symbols}
+            for future in as_completed(futures):
+                print(future.result())
 
     # Wrap existing functions
     def add_indicators(self, df):       return add_indicators(df)

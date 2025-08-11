@@ -93,9 +93,9 @@ class FalahTradingBot:
             # Position size is fixed rupee value divided by current price
             quantity = int(self.config.POSITION_SIZE / price)
             return max(quantity, 0)
-        except Exception as e:
-            print(f"Error calculating position size for {symbol}: {e}")
-            return 0
+    except Exception as e:
+        print(f"Error calculating position size for {symbol}: {e}")
+        return 0
 
 if __name__ == "__main__":
     bot = FalahTradingBot()

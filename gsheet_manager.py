@@ -28,3 +28,11 @@ class GSheetManager:
         except Exception as e:
             self.logger.error(f"Error reading Google Sheet: {e}")
             return []
+
+def append_row(self, worksheet_name, row):
+    try:
+        sheet = self.gc.open_by_key(self.sheet_key)  # or use stored key
+        ws = sheet.worksheet(worksheet_name)
+        ws.append_row(row)
+    except Exception as e:
+        self.logger.error(f"Append row failed on sheet {worksheet_name}: {e}")

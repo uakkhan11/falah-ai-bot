@@ -128,8 +128,9 @@ def bb_pullback_signal(df):
 
 def combine_signals(df):
     chand_or_st = (df['close'] > df['chandelier_exit']) | (df['supertrend_dir'] == 1)
-    regime_breakout = (df['close'] > df['ema200']) & (df['adx'] > ADX_THRESHOLD_BREAKOUT)
-    regime_default = (df['close'] > df['ema200']) & (df['adx'] > ADX_THRESHOLD_DEFAULT)
+    
+    regime_breakout = df['close'].gt(df['ema200'], fill_value=False) & df['adx'].gt(ADX_THRESHOLD_BREAKOUT, fill_value=False)
+    regime_default = df['close'].gt(df['ema200'], fill_value=False) & df['adx'].gt(ADX_THRESHOLD_DEFAULT, fill_value=False)
 
     df['entry_signal'] = 0
     df['entry_type'] = ''

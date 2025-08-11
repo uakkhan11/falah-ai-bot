@@ -57,21 +57,30 @@ class FalahTradingBot:
             time.sleep(60)
 
     def execute_strategy(self):
+        live_prices = self.data_manager.get_bulk_current_prices(self.trading_symbols)
         for symbol in self.trading_symbols:
             try:
                 df = self.data_manager.get_historical_data(symbol)
                 if df is None or df.empty:
                     continue
+    
                 df = self.add_indicators(df)
                 df = self.breakout_signal(df)
                 df = self.bb_breakout_signal(df)
                 df = self.bb_pullback_signal(df)
                 df = self.combine_signals(df)
+    
                 latest = df.iloc[-1]
                 if latest['entry_signal'] == 1:
-                    qty = self.calculate_position_size(symbol, latest)
-                    if qty > 0:
-                        self.order_manager.place_buy_order(symbol, qty)
+                    price = live_prices.get(symbol)
+    
+                    if price and price > 0:
+                        qty = int(self.config.POSITION_SIZE / price)
+                        if qty > 0:
+                            self.order_manager.place_buy_order(symbol, qty, price=price)
+                    else:
+                        print(f"⚠️ Missing price for {symbol}, skipping buy order")
+    
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
 

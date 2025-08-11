@@ -17,7 +17,7 @@ class FalahTradingBot:
         self.setup_signal_handlers()
         
         # Initialize Google Sheets manager
-        self.gsheet = GSheetManager('/path/to/your/credentials.json')
+        self.gsheet = GSheetManager('falah-credentials.json')
         
         # Your Google Sheet details
         self.SYMBOLS_SHEET_URL = "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"

@@ -17,10 +17,17 @@ from live_data_manager import LiveDataManager
 from order_manager import OrderManager
 from gsheet_manager import GSheetManager
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from trade_logger import TradeLogger
 
 class FalahTradingBot:
-    SHEET_KEY = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
-    WORKSHEET = "HalalList"
+    def __init__(self):
+        # Existing init ...
+        self.gsheet = GSheetManager()  # Make sure sheet_key is passed or set
+        self.trade_logger = TradeLogger(
+            csv_path="trade_log.csv",
+            gsheet_manager=self.gsheet,
+            gsheet_sheet_name="TradeLog"
+        )
 
     def __init__(self):
         self.config = Config()
@@ -94,7 +101,13 @@ class FalahTradingBot:
                     if price and price > 0:
                         qty = int(self.config.POSITION_SIZE / price)
                         if qty > 0:
-                            self.order_manager.place_buy_order(symbol, qty, price=price)
+                            order_id = self.order_manager.place_buy_order(symbol, qty, price=price)
+                
+                            # ✅ Trade logging here
+                            if order_id:
+                                self.trade_logger.log_trade(symbol, "BUY", qty, price, status="ORDER_PLACED")
+                            else:
+                                self.trade_logger.log_trade(symbol, "BUY", qty, price, status="ORDER_FAILED")
                             return f"✅ Order placed for {symbol} qty={qty}"
                 return f"ℹ️ No trade for {symbol}"
             except Exception as e:

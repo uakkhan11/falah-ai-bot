@@ -9,6 +9,13 @@ from config import Config
 from live_data_manager import LiveDataManager
 from order_manager import OrderManager
 from gsheet_manager import GSheetManager  # New import
+from your_indicator_module import (
+    add_indicators,
+    breakout_signal,
+    bb_breakout_signal,
+    bb_pullback_signal,
+    combine_signals
+)
 
 class FalahTradingBot:
     def __init__(self):
@@ -87,6 +94,7 @@ class FalahTradingBot:
                     continue
                 
                 # Apply your existing indicators and signals
+                df = self.data_manager.get_historical_data(symbol)
                 df = self.add_indicators(df)
                 df = self.breakout_signal(df)
                 df = self.bb_breakout_signal(df)

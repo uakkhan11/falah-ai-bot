@@ -1,28 +1,44 @@
 # config.py
 
 import os
+import json
 from kiteconnect import KiteConnect
 
 class Config:
+    TOKEN_FILE = "falah_token.json"
+    CREDS_FILE = "falah-credentials.json"
+
     def __init__(self):
-        # Zerodha API credentials (set as environment variables)
         self.API_KEY = os.getenv('ZERODHA_API_KEY')
         self.API_SECRET = os.getenv('ZERODHA_API_SECRET')
-        
-        # Trading parameters from your backtest
-        self.INITIAL_CAPITAL = 1_000_000
-        self.POSITION_SIZE = 100_000
-        self.MAX_POSITIONS = 5
-        
-        # Initialize KiteConnect
+        if not self.API_KEY or not self.API_SECRET:
+            raise ValueError("Set ZERODHA_API_KEY and ZERODHA_API_SECRET in your VPS environment")
         self.kite = KiteConnect(api_key=self.API_KEY)
-        
+
     def authenticate(self):
-        # Manual authentication for now - we'll automate this later
-        login_url = self.kite.login_url()
-        print(f"Visit: {login_url}")
-        request_token = input("Enter request token: ")
-        
-        data = self.kite.generate_session(request_token, self.API_SECRET)
-        self.kite.set_access_token(data["access_token"])
-        return True
+        # Try loading saved token
+        token = None
+        if os.path.exists(self.TOKEN_FILE):
+            with open(self.TOKEN_FILE) as f:
+                data = json.load(f)
+                token = data.get("access_token")
+        if token:
+            try:
+                self.kite.set_access_token(token)
+                # Test call to verify token validity
+                self.kite.profile()
+                print("✅ Loaded saved access token")
+                return
+            except Exception:
+                print("⚠️  Saved token invalid, re-authenticating")
+        # Request new token
+        print("👉  Obtain new request token by logging in:")
+        print(self.kite.login_url())
+        req_token = input("Enter request token: ").strip()
+        sess = self.kite.generate_session(req_token, self.API_SECRET)
+        access_token = sess["access_token"]
+        self.kite.set_access_token(access_token)
+        # Save token
+        with open(self.TOKEN_FILE, "w") as f:
+            json.dump({"access_token": access_token}, f)
+        print("✅ New access token saved")

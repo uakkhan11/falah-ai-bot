@@ -21,6 +21,7 @@ from order_tracker import OrderTracker
 from risk_manager import RiskManager
 from holding_tracker import HoldingTracker
 from telegram_notifier import TelegramNotifier
+from exit_manager import ExitManager
 
 
 class FalahTradingBot:
@@ -50,6 +51,11 @@ class FalahTradingBot:
         self.notifier = TelegramNotifier(
             bot_token=self.config.TELEGRAM_BOT_TOKEN,
             chat_id=self.config.TELEGRAM_CHAT_ID
+        )
+        self.exit_manager = ExitManager(
+            self.config, self.data_manager, self.order_manager,
+            self.trade_logger, self.notifier,
+            state_file="exit_state.json"
         )
 
         # State trackers
@@ -83,11 +89,10 @@ class FalahTradingBot:
         while self.running:
             self.execute_strategy()
 
-            # Monitoring & alerts
+            # Monitoring
             self.order_tracker.update_order_statuses()
             positions = self.order_tracker.get_positions_with_pl()
             positions_with_age = self.holding_tracker.get_holdings_with_age(positions)
-
             self.notifier.send_pnl_update(positions_with_age)
 
             # Settlement changes
@@ -115,29 +120,31 @@ class FalahTradingBot:
                 self.last_summary_date = today
                 self.daily_trade_count = 0
 
+            # Exit logic
+            self.exit_manager.check_and_exit_positions(positions)
+
             time.sleep(60)
 
     def execute_strategy(self):
         symbols = self.trading_symbols
-
         for i in range(0, len(symbols), self.current_batch_size):
             batch = symbols[i:i + self.current_batch_size]
 
-            # Fetch data with retry/backoff
+            # Parallel historical & price fetch
             daily_data   = self.data_manager.get_historical_data_parallel(batch, interval="day", days=200)
             hourly_data  = self.data_manager.get_historical_data_parallel(batch, interval="60minute", days=60)
             fifteen_data = self.data_manager.get_historical_data_parallel(batch, interval="15minute", days=20)
             live_prices  = self.data_manager.get_bulk_current_prices(batch)
 
-            # Adaptive batch adjustment
+            # Adaptive batch sizing
             if self.data_manager.rate_limit_hit:
                 old_size = self.current_batch_size
                 self.current_batch_size = max(self.min_batch_size, self.current_batch_size - 5)
-                print(f"⚠️ Rate limit detected. Reducing batch size {old_size} → {self.current_batch_size}")
+                print(f"⚠️ Rate limit — batch {old_size} → {self.current_batch_size}")
             else:
                 if self.current_batch_size < self.max_batch_size:
                     self.current_batch_size += 2
-                    print(f"✅ Increasing batch size to {self.current_batch_size}")
+                    print(f"✅ Batch size → {self.current_batch_size}")
 
             positions = self.order_tracker.get_positions_with_pl()
             pos_dict = {p['symbol']: p for p in positions}
@@ -155,7 +162,6 @@ class FalahTradingBot:
                     if symbol in pos_dict and pos_dict[symbol]['qty'] > 0:
                         return f"⏩ Already holding {symbol}"
 
-                    # Trend
                     df_daily = self.add_indicators(df_daily)
                     daily_up = df_daily.iloc[-1]['close'] > df_daily.iloc[-1]['ema200']
 
@@ -164,14 +170,13 @@ class FalahTradingBot:
                         df_hourly = self.add_indicators(df_hourly)
                         hourly_ok = df_hourly.iloc[-1]['close'] > df_hourly.iloc[-1]['ema200']
 
-                    # Entry signals
                     df_fifteen = self.add_indicators(df_fifteen)
                     df_fifteen = self.breakout_signal(df_fifteen)
                     df_fifteen = self.bb_breakout_signal(df_fifteen)
                     df_fifteen = self.bb_pullback_signal(df_fifteen)
                     df_fifteen = self.combine_signals(df_fifteen)
-
                     latest = df_fifteen.iloc[-1]
+
                     if daily_up and hourly_ok and latest['entry_signal'] == 1:
                         price = live_prices.get(symbol)
                         if price and price > 0:
@@ -199,7 +204,7 @@ class FalahTradingBot:
                 for future in as_completed({executor.submit(process_symbol, s): s for s in batch}):
                     print(future.result())
 
-    # Wrappers
+    # Wrappers for strategy utils
     def add_indicators(self, df): return add_indicators(df)
     def breakout_signal(self, df): return breakout_signal(df)
     def bb_breakout_signal(self, df): return bb_breakout_signal(df)

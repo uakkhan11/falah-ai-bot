@@ -22,13 +22,17 @@ from trade_logger import TradeLogger
 class FalahTradingBot:
     def __init__(self):
         # Existing init ...
-        self.gsheet = GSheetManager()  # Make sure sheet_key is passed or set
+        self.gsheet = GSheetManager(
+            credentials_file="falah-credentials.json",
+            sheet_key="1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"  # your sheet key
+        )
+        
         self.trade_logger = TradeLogger(
             csv_path="trade_log.csv",
             gsheet_manager=self.gsheet,
             gsheet_sheet_name="TradeLog"
         )
-
+        
     def __init__(self):
         self.config = Config()
         self.running = False

@@ -19,6 +19,7 @@ from gsheet_manager import GSheetManager
 from trade_logger import TradeLogger
 from order_tracker import OrderTracker
 from risk_manager import RiskManager
+from holding_tracker import HoldingTracker
 
 
 class FalahTradingBot:
@@ -42,8 +43,14 @@ class FalahTradingBot:
             gsheet_manager=self.gsheet,
             gsheet_sheet_name="TradeLog"
         )
-        self.order_tracker = OrderTracker(self.config.kite, self.trade_logger)
+        self.order_tracker.update_order_statuses()
+        positions = self.order_tracker.get_positions_with_pl()
+        positions_with_age = self.holding_tracker.get_holdings_with_age(positions)
+
+for pos in positions_with_age:
+    print(f"{pos['symbol']}: Qty={pos['qty']}, PnL={pos['pnl']:.2f}, Status={pos['holding_status']}")
         self.risk_manager = RiskManager(self.config, self.order_tracker)
+        self.holding_tracker = HoldingTracker("trade_log.csv")
 
         # Load instrument tokens and trading symbols
         self.data_manager.get_instruments()

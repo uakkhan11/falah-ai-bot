@@ -1,18 +1,9 @@
 #!/usr/bin/env python3
+import pandas as pd, numpy as np, pandas_ta as ta
 import sys
 import signal
 import time
 from datetime import datetime
-
-# Import your existing strategy functions
-from strategy_utils import (
-    add_indicators,
-    breakout_signal,
-    bb_breakout_signal,
-    bb_pullback_signal,
-    combine_signals
-)
-
 from config import Config
 from live_data_manager import LiveDataManager
 from order_manager import OrderManager

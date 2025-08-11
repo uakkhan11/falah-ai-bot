@@ -1,13 +1,27 @@
 # live_data_manager.py
 
 import pandas as pd
-import time
 from datetime import datetime, timedelta
 from kiteconnect import KiteConnect
 import pandas_ta as ta
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 class LiveDataManager:
+    def __init__(self, kite: KiteConnect):
+        self.kite = kite
+        self.instruments = {}
+
     def get_bulk_current_prices(self, symbols):
+        """
+        Fetch the latest market prices (LTP) for multiple symbols in a single API call.
+
+        Args:
+            symbols (list of str): List of trading symbols, e.g. ["RELIANCE", "TCS"]
+
+        Returns:
+            dict: Mapping of symbol -> last_price or None if unavailable
+        """
         try:
             instruments = [f"NSE:{sym}" for sym in symbols]
             quotes = self.kite.quote(instruments)
@@ -23,61 +37,52 @@ class LiveDataManager:
         except Exception as e:
             print(f"Error fetching bulk prices: {e}")
             return {}
-        
-    def get_instruments(self):
-        """Download and cache instrument list"""
-        instruments = self.kite.instruments("NSE")
-        self.instruments = {item['tradingsymbol']: item['instrument_token'] 
-                           for item in instruments}
-        return self.instruments
-    
-    class LiveDataManager:
-    def __init__(self, kite):
-        self.kite = kite
-        self.instruments = {}
 
     def get_instruments(self):
-        """Download and cache NSE instrument list"""
-        instruments = self.kite.instruments("NSE")
-        self.instruments = {item['tradingsymbol']: item['instrument_token']
-                            for item in instruments}
-        return self.instruments
+        """
+        Download and cache all NSE instruments for symbol -> instrument_token mapping.
+
+        Returns:
+            dict: mapping trading symbol to instrument_token
+        """
+        try:
+            instruments = self.kite.instruments("NSE")
+            self.instruments = {item['tradingsymbol']: item['instrument_token'] for item in instruments}
+            return self.instruments
+        except Exception as e:
+            print(f"Error fetching instruments: {e}")
+            return {}
 
     def get_historical_data(self, symbol, interval="day", days=None):
         """
-        Fetch historical OHLCV data for the given symbol and timeframe.
+        Fetch historical OHLCV candle data for the given symbol and interval.
 
         Args:
-            symbol (str)     : Trading symbol e.g. 'RELIANCE'
-            interval (str)   : "day", "15minute", "60minute"
-            days (int|None)  : History length. If None, uses sensible defaults
-                               based on Zerodha API limits:
-                                  daily     -> 200 days
-                                  60minute  -> 60 days
-                                  15minute  -> 20 days
-        Returns:
-            pandas.DataFrame : OHLCV dataframe sorted by date
-        """
+            symbol (str): Trading symbol, e.g. 'RELIANCE'
+            interval (str): "day", "15minute", "60minute"
+            days (int or None): Number of days of historical data. Defaults based on interval.
 
+        Returns:
+            pandas.DataFrame: DataFrame with OHLCV data sorted by date or None on error
+        """
         token = self.instruments.get(symbol)
         if not token:
             print(f"❌ Instrument token not found for {symbol}")
             return None
 
-        # Zerodha historical data limits
+        # Zerodha API max limits for historical data days per interval
         interval_limits = {
-            "day":       200,
-            "60minute":   60,
-            "15minute":   20
+            "day": 200,
+            "60minute": 60,
+            "15minute": 20
         }
 
         if days is None:
             days = interval_limits.get(interval, 200)
         else:
-            # Enforce max allowed by Zerodha
             max_allowed = interval_limits.get(interval, days)
             if days > max_allowed:
-                print(f"⚠️ {interval} data is limited to {max_allowed} days by Zerodha API. Adjusting days.")
+                print(f"⚠️ {interval} data limited to {max_allowed} days by Zerodha API, adjusting days.")
                 days = max_allowed
 
         to_date = datetime.now()
@@ -99,11 +104,48 @@ class LiveDataManager:
             df['date'] = pd.to_datetime(df['date'])
             df = df.sort_values('date').reset_index(drop=True)
         return df
-    
+
     def get_current_price(self, symbol):
-        """Get current market price"""
+        """
+        Fetch the current market price (LTP) for a single symbol.
+
+        Args:
+            symbol (str): Trading symbol, e.g. 'RELIANCE'
+
+        Returns:
+            float or None: last traded price if available
+        """
         token = self.instruments.get(symbol)
         if token:
-            quote = self.kite.quote(f"NSE:{symbol}")
-            return quote[f"NSE:{symbol}"]["last_price"]
+            try:
+                quote = self.kite.quote(f"NSE:{symbol}")
+                return quote[f"NSE:{symbol}"]["last_price"]
+            except Exception as e:
+                print(f"Error fetching current price for {symbol}: {e}")
+                return None
         return None
+
+    def get_historical_data_parallel(self, symbols, interval="day", days=200, max_workers=8):
+        """
+        Fetch historical OHLCV data for multiple symbols in parallel threads.
+
+        Args:
+            symbols (list of str): List of trading symbols
+            interval (str): Interval like "day", "15minute", "60minute"
+            days (int): Number of days to fetch
+            max_workers (int): Number of concurrent threads
+
+        Returns:
+            dict: {symbol: DataFrame or None}
+        """
+        def fetch_symbol_hist(symbol):
+            df = self.get_historical_data(symbol, interval=interval, days=days)
+            return symbol, df
+
+        results = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(fetch_symbol_hist, sym) for sym in symbols]
+            for future in as_completed(futures):
+                sym, df = future.result()
+                results[sym] = df
+        return results

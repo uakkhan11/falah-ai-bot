@@ -2,7 +2,7 @@
 import sys
 import signal
 import time
-from datetime import datetime
+from datetime import datetime, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from strategy_utils import (
@@ -52,9 +52,11 @@ class FalahTradingBot:
             chat_id=self.config.TELEGRAM_CHAT_ID
         )
 
-        self.last_status = {}  # for T1/T2 change tracking
+        self.last_status = {}           # For T1/T2 change detection
+        self.last_summary_date = None   # For daily summary
+        self.daily_trade_count = 0      # Track today's trades
 
-        # Load instrument tokens and trading symbols
+        # Load data
         self.data_manager.get_instruments()
         self.trading_symbols = self.load_trading_symbols()
 
@@ -63,12 +65,10 @@ class FalahTradingBot:
         self.running = False
 
     def load_trading_symbols(self):
-        syms = self.gsheet.get_symbols_from_sheet(
-            worksheet_name="HalalList"
-        )
+        syms = self.gsheet.get_symbols_from_sheet(worksheet_name="HalalList")
         if not syms:
             fallback = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"]
-            print("⚠️  Using fallback symbols:", fallback)
+            print("⚠️ Using fallback symbols:", fallback)
             return fallback
         print(f"📊 Trading {len(syms)} symbols")
         return syms
@@ -79,23 +79,41 @@ class FalahTradingBot:
         while self.running:
             self.execute_strategy()
 
-            # 🔍 Monitoring block
+            # --- Monitoring ---
             self.order_tracker.update_order_statuses()
             positions = self.order_tracker.get_positions_with_pl()
             positions_with_age = self.holding_tracker.get_holdings_with_age(positions)
 
-            # Send Telegram P&L update
+            # P&L update to Telegram
             self.notifier.send_pnl_update(positions_with_age)
 
-            # Send settlement status change alerts
+            # Settlement status change alerts
             for pos in positions_with_age:
                 symbol = pos['symbol']
                 status = pos['holding_status']
-                prev_status = self.last_status.get(symbol)
-                if prev_status != status:
+                if self.last_status.get(symbol) != status:
                     self.notifier.send_t1_t2_change(symbol, status)
                     self.last_status[symbol] = status
 
+            # Daily Summary check
+            today = date.today()
+            if self.last_summary_date != today:
+                total_pnl = sum(p['pnl'] for p in positions_with_age)
+                holdings_lines = [
+                    f"{p['symbol']}: Qty={p['qty']} | PnL=₹{p['pnl']:.2f} | Status={p['holding_status']}"
+                    for p in positions_with_age
+                ]
+                summary_msg = (
+                    f"📅 <b>Daily Summary ({today.strftime('%d-%m-%Y')})</b>\n"
+                    f"Total P&L: ₹{total_pnl:.2f}\n"
+                    f"Trades Today: {self.daily_trade_count}\n\n"
+                    f"<b>Holdings:</b>\n" +
+                    ("\n".join(holdings_lines) if holdings_lines else "No holdings")
+                )
+                self.notifier.send_message(summary_msg)
+                self.last_summary_date = today
+                self.daily_trade_count = 0
+            # -----------------
             time.sleep(60)
 
     def execute_strategy(self):
@@ -105,7 +123,7 @@ class FalahTradingBot:
 
         def process_symbol(symbol):
             try:
-                # Fetch multi-timeframe data
+                # Data fetch
                 df_daily = self.data_manager.get_historical_data(symbol, "day")
                 df_hourly = self.data_manager.get_historical_data(symbol, "60minute")
                 df_fifteen = self.data_manager.get_historical_data(symbol, "15minute")
@@ -114,11 +132,11 @@ class FalahTradingBot:
                         df_fifteen is None or df_fifteen.empty):
                     return f"⚠️ Not enough data for {symbol}, skipped."
 
-                # Don't enter if position already open
+                # Skip if open
                 if symbol in positions_dict and positions_dict[symbol]['qty'] > 0:
                     return f"⏩ Position already open for {symbol}, skipping order."
 
-                # Indicator logic
+                # Indicators
                 df_daily = self.add_indicators(df_daily)
                 daily_trend_up = df_daily.iloc[-1]['close'] > df_daily.iloc[-1]['ema200']
 
@@ -132,26 +150,29 @@ class FalahTradingBot:
                 df_fifteen = self.bb_breakout_signal(df_fifteen)
                 df_fifteen = self.bb_pullback_signal(df_fifteen)
                 df_fifteen = self.combine_signals(df_fifteen)
-
                 latest_15m = df_fifteen.iloc[-1]
 
+                # Entry check
                 if daily_trend_up and hourly_confirm and latest_15m['entry_signal'] == 1:
                     price = live_prices.get(symbol)
                     if price and price > 0:
                         qty = int(self.config.POSITION_SIZE / price)
-                        if qty > 0 and self.risk_manager.allow_trade():
+                        allowed, reason = self.risk_manager.allow_trade()
+                        if qty > 0 and allowed:
                             order_id = self.order_manager.place_buy_order(symbol, qty, price=price)
                             if order_id:
                                 self.trade_logger.log_trade(symbol, "BUY", qty, price, status="ORDER_PLACED")
                                 self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_PLACED")
+                                self.daily_trade_count += 1
                             else:
                                 self.trade_logger.log_trade(symbol, "BUY", qty, price, status="ORDER_FAILED")
                                 self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_FAILED")
                             return f"✅ Order attempt for {symbol} qty={qty}"
                         else:
-                            return f"⏩ Trade blocked by risk rules for {symbol}"
+                            reason_msg = reason if reason else "Risk rules blocked trade"
+                            self.notifier.send_message(f"⚠️ Trade blocked for {symbol}: {reason_msg}")
+                            return f"⏩ Trade blocked for {symbol}: {reason_msg}"
                 return f"ℹ️ No trade for {symbol}"
-
             except Exception as e:
                 return f"❌ Error processing {symbol}: {e}"
 
@@ -160,7 +181,7 @@ class FalahTradingBot:
             for future in as_completed(futures):
                 print(future.result())
 
-    # Wrappers
+    # Strategy wrappers
     def add_indicators(self, df): return add_indicators(df)
     def breakout_signal(self, df): return breakout_signal(df)
     def bb_breakout_signal(self, df): return bb_breakout_signal(df)

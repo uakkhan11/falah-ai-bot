@@ -18,6 +18,8 @@ from order_manager import OrderManager
 from gsheet_manager import GSheetManager
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from trade_logger import TradeLogger
+from order_tracker import OrderTracker
+self.order_tracker = OrderTracker(self.config.kite, self.trade_logger)
 
 class FalahTradingBot:
     def __init__(self):
@@ -145,6 +147,11 @@ class FalahTradingBot:
         except Exception as e:
             print(f"Error calculating position size for {symbol}: {e}")
             return 0
+
+self.order_tracker.update_order_statuses()
+positions = self.order_tracker.get_positions_with_pl()
+for pos in positions:
+    print(f"{pos['symbol']}: Qty={pos['qty']}, PnL={pos['pnl']:.2f}")
 
 if __name__ == "__main__":
     bot = FalahTradingBot()

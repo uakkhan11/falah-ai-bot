@@ -19,7 +19,6 @@ from gsheet_manager import GSheetManager
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from trade_logger import TradeLogger
 from order_tracker import OrderTracker
-self.order_tracker = OrderTracker(self.config.kite, self.trade_logger)
 
 class FalahTradingBot:
     def __init__(self):
@@ -34,6 +33,7 @@ class FalahTradingBot:
             gsheet_manager=self.gsheet,
             gsheet_sheet_name="TradeLog"
         )
+        self.order_tracker = OrderTracker(self.config.kite, self.trade_logger)
         
     def __init__(self):
         self.config = Config()
@@ -124,6 +124,14 @@ class FalahTradingBot:
             futures = {executor.submit(process_symbol, sym): sym for sym in self.trading_symbols}
             for future in as_completed(futures):
                 print(future.result())
+
+    self.order_tracker.update_order_statuses()
+        positions = self.order_tracker.get_positions_with_pl()
+        for pos in positions:
+            print(f"{pos['symbol']}: Qty={pos['qty']}, PnL={pos['pnl']:.2f}")
+
+        # 3. Wait before next cycle
+        time.sleep(60)
 
     # Wrap existing functions
     def add_indicators(self, df):       return add_indicators(df)

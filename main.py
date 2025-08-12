@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import signal
+import logging
 import time
 from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,6 +14,7 @@ from strategy_utils import (
     combine_signals
 )
 from config import Config
+from improved_fetcher import SmartHalalFetcher
 from live_data_manager import LiveDataManager
 from order_manager import OrderManager
 from gsheet_manager import GSheetManager
@@ -78,6 +80,23 @@ class FalahTradingBot:
         print("\n🛑 Shutting down bot...")
         self.running = False
 
+    def update_analysis_data():
+        try:
+            logging.info("📊 Updating historical data & indicators before strategy execution...")
+            fetcher = SmartHalalFetcher()
+            fetcher.fetch_all()
+            logging.info("✅ Data update completed successfully.")
+        except Exception as e:
+            logging.error(f"❌ Data update failed: {e}")
+    
+    if __name__ == "__main__":
+        # 1⃣ First update the analysis data
+        update_analysis_data()
+    
+        # 2⃣ Then run the bot as usual
+        bot = FalahTradingBot()
+        bot.run()
+    
     def load_trading_symbols(self):
         syms = self.gsheet.get_symbols_from_sheet(worksheet_name="HalalList")
         if not syms:

@@ -4,8 +4,8 @@ import json
 from kiteconnect import KiteConnect
 
 # 1️⃣  Your Zerodha API credentials
-API_KEY = "your_api_key_here"
-API_SECRET = "your_api_secret_here"
+API_KEY = "ijzeuwuylr3g0kug"
+API_SECRET = "yy1wd2wn8r0wx4mus00vxllgss03nuqx"
 
 # File to save the generated access token
 TOKENS_FILE = "A_tokens.json"

@@ -35,6 +35,7 @@ class TradeLogger:
                                         If None, current time will be used.
         """
         # Set timestamp automatically if not passed
+        """    
         if not timestamp:
             timestamp = datetime.now().isoformat(timespec="seconds")
     

@@ -70,9 +70,9 @@ class Config:
             user_profile = self.kite.profile()
             logging.info(f"Authenticated using saved ACCESS_TOKEN. User: {user_profile['user_name']}")
             print(f"Authenticated using saved ACCESS_TOKEN. User: {user_profile['user_name']}")
-            return
-        except Exception:
-            logging.warning("Saved ACCESS_TOKEN invalid, login required.")
+        return
+    except Exception:
+       logging.warning("Saved ACCESS_TOKEN invalid, login required.")
 
     # Manual new token flow
     login_url = self.kite.login_url()

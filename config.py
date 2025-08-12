@@ -39,6 +39,7 @@ class Config:
     def _load_saved_token(self):
         """Load saved access token if present."""
         if os.path.exists(TOKENS_FILE):
+            print(f"🔍 Loading access token from: {os.path.abspath(TOKENS_FILE)}")
             try:
                 with open(TOKENS_FILE, "r") as f:
                     data = json.load(f)

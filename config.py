@@ -60,7 +60,6 @@ class Config:
             logging.warning(f"Could not save token: {e}")
 
     def authenticate(self):
-    """Authenticate by manually pasting the request_token."""
     self._load_saved_token()
     self.kite = KiteConnect(api_key=self.API_KEY)
 

@@ -60,8 +60,8 @@ class Config:
             logging.warning(f"Could not save token: {e}")
 
     def authenticate(self):
-    self._load_saved_token()
-    self.kite = KiteConnect(api_key=self.API_KEY)
+        self._load_saved_token()
+        self.kite = KiteConnect(api_key=self.API_KEY)
 
     # Use saved token if valid
     if self.ACCESS_TOKEN:

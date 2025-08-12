@@ -4,6 +4,7 @@ import os
 import json
 import logging
 from kiteconnect import KiteConnect
+from auto_auth import auto_authenticate  # your local redirect server auth helper
 
 TOKENS_FILE = "kite_tokens.json"
 
@@ -22,7 +23,21 @@ class Config:
 
         logging.basicConfig(level=logging.INFO)
 
+    def authenticate(self):
+        """
+        Use the local redirect server flow to authenticate and
+        obtain KiteConnect instance.
+        """
+        kite = auto_authenticate()
+        if not kite:
+            raise Exception("Authentication failed.")
+        self.kite = kite
+
     def _load_saved_token(self):
+        """
+        (Optional, not required with auto_auth.py approach)
+        Load saved access token from file if needed.
+        """
         if os.path.exists(TOKENS_FILE):
             try:
                 with open(TOKENS_FILE, "r") as f:
@@ -35,41 +50,13 @@ class Config:
                 logging.warning(f"Could not load saved token: {e}")
 
     def _save_token(self):
+        """
+        (Optional, used in other approach)
+        Save access token to file.
+        """
         try:
             with open(TOKENS_FILE, "w") as f:
                 json.dump({"access_token": self.ACCESS_TOKEN}, f)
             logging.info("ACCESS_TOKEN saved to file.")
         except Exception as e:
             logging.warning(f"Could not save token: {e}")
-
-    def authenticate(self):
-        """Authenticates KiteConnect with saved or fresh token."""
-        self._load_saved_token()
-        self.kite = KiteConnect(api_key=self.API_KEY)
-
-        # If we already have a token, set it
-        if self.ACCESS_TOKEN:
-            self.kite.set_access_token(self.ACCESS_TOKEN)
-            logging.info("Authenticated using saved token.")
-            return
-
-        # Otherwise, do interactive login flow
-        login_url = self.kite.login_url()
-        print(f"\n🔑 LOGIN URL:\n{login_url}\n")
-        print("1. Open in browser & login with 2FA.")
-        print("2. You'll be redirected to your app's redirect URL.")
-        print("3. Copy the `request_token` from that URL.")
-
-        request_token = input("Paste request_token here: ").strip()
-
-        try:
-            session_data = self.kite.generate_session(
-                request_token, api_secret=self.API_SECRET
-            )
-            self.ACCESS_TOKEN = session_data["access_token"]
-            self.kite.set_access_token(self.ACCESS_TOKEN)
-            self._save_token()
-            logging.info("✅ Authentication successful.")
-        except Exception as e:
-            logging.error(f"Authentication failed: {e}")
-            raise

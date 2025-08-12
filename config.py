@@ -23,11 +23,11 @@ class Config:
         self.MAX_POSITIONS = 5
         self.DAILY_LOSS_LIMIT_PCT = 0.05
 
-        # Zerodha API credentials
+        # Zerodha API
         self.API_KEY = "your_api_key_here"
         self.API_SECRET = "your_api_secret_here"
 
-        # Telegram config (optional)
+        # Telegram (optional)
         self.TELEGRAM_BOT_TOKEN = "your_telegram_bot_token"
         self.TELEGRAM_CHAT_ID = "your_telegram_chat_id"
 
@@ -35,6 +35,8 @@ class Config:
         self.kite = None
 
         logging.basicConfig(level=logging.INFO)
+
+        print(f"📍 Token file path set to: {os.path.abspath(TOKENS_FILE)}")
 
     def _load_saved_token(self):
         """Load saved access token if present."""
@@ -47,68 +49,62 @@ class Config:
                     if token:
                         self.ACCESS_TOKEN = token
                         logging.info("Loaded ACCESS_TOKEN from file.")
+                    else:
+                        logging.warning("Token file found but no access_token key present.")
             except Exception as e:
                 logging.warning(f"Could not load saved token: {e}")
+        else:
+            print(f"⚠️ No token file found at {os.path.abspath(TOKENS_FILE)}")
 
     def _save_token(self):
         """Save current access token to file."""
         try:
             with open(TOKENS_FILE, "w") as f:
                 json.dump({"access_token": self.ACCESS_TOKEN}, f)
-            logging.info("ACCESS_TOKEN saved to file.")
+            logging.info(f"ACCESS_TOKEN saved to: {os.path.abspath(TOKENS_FILE)}")
         except Exception as e:
             logging.warning(f"Could not save token: {e}")
 
     def authenticate(self):
-        """
-        Authenticate by loading a saved token if available,
-        otherwise run the manual request_token flow.
-        """
-        # 1. Try loading a saved access token
+        """Authenticate — load saved token or request a new one."""
         self._load_saved_token()
         self.kite = KiteConnect(api_key=self.API_KEY)
 
-        # 2. Use saved token if valid
+        # Use saved token if valid
         if self.ACCESS_TOKEN:
+            print("🔑 Trying saved ACCESS_TOKEN...")
             self.kite.set_access_token(self.ACCESS_TOKEN)
             try:
                 user_profile = self.kite.profile()
-                logging.info(
-                    f"Authenticated using saved ACCESS_TOKEN. User: {user_profile['user_name']}"
-                )
-                print(
-                    f"Authenticated using saved ACCESS_TOKEN. User: {user_profile['user_name']}"
-                )
+                logging.info(f"Authenticated using saved ACCESS_TOKEN. User: {user_profile['user_name']}")
+                print(f"✅ Authenticated using saved ACCESS_TOKEN. User: {user_profile['user_name']}")
                 return
             except Exception:
-                logging.warning("Saved ACCESS_TOKEN invalid, login required.")
+                logging.warning("🚫 Saved ACCESS_TOKEN invalid, new login required.")
 
-        # 3. Manual new token flow
+        # Manual login flow
         login_url = self.kite.login_url()
-        print(f"\n🔑 LOGIN URL:\n{login_url}\n")
-        print("1. Open in browser & login with 2FA.")
-        print("2. Copy the request_token from the redirected URL.")
+        print(f"\n🔗 LOGIN URL:\n{login_url}\n")
+        print("1️⃣ Open in browser & login with 2FA.")
+        print("2️⃣ Copy the request_token from the redirected URL.")
 
         request_token = input("Paste request_token here: ").strip()
 
         try:
-            session_data = self.kite.generate_session(
-                request_token, api_secret=self.API_SECRET
-            )
-            print(f"Session data received: {session_data}")  # Debug print
-
+            print("📡 Exchanging request_token for access_token...")
+            session_data = self.kite.generate_session(request_token, api_secret=self.API_SECRET)
+            print(f"📦 Session data received: {session_data}")
             self.ACCESS_TOKEN = session_data.get("access_token")
+
             if not self.ACCESS_TOKEN:
-                print("Error: Access token not found in session data.")
+                print("❌ Error: No access_token found in session data. Aborting.")
                 return
 
-            # 4. Set and save the new access token
             self.kite.set_access_token(self.ACCESS_TOKEN)
             self._save_token()
-
             logging.info("✅ Authentication successful and token saved.")
             print("✅ Authentication successful and token saved.")
         except Exception as e:
             logging.error(f"Authentication failed: {e}")
-            print(f"Authentication failed: {e}")
+            print(f"❌ Authentication failed: {e}")
             raise

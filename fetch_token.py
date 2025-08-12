@@ -8,7 +8,7 @@ API_KEY = "ijzeuwuylr3g0kug"
 API_SECRET = "yy1wd2wn8r0wx4mus00vxllgss03nuqx"
 
 # File to save the generated access token
-TOKENS_FILE = "A_tokens.json"
+TOKENS_FILE = "kite_tokens.json"
 
 def main():
     kite = KiteConnect(api_key=API_KEY)

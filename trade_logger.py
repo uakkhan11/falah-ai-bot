@@ -23,6 +23,7 @@ class TradeLogger:
         self.logger = logging.getLogger(__name__)
         
     def log_trade(self, symbol, action, quantity, price, status="EXECUTED", timestamp=None):
+        
         Log a trade event locally (CSV) and optionally to Google Sheets.
     
         Args:

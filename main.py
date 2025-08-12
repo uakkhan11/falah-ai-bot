@@ -22,6 +22,7 @@ from risk_manager import RiskManager
 from holding_tracker import HoldingTracker
 from telegram_notifier import TelegramNotifier
 from exit_manager import ExitManager
+from capital_manager import CapitalManager
 
 
 class FalahTradingBot:
@@ -33,7 +34,7 @@ class FalahTradingBot:
         signal.signal(signal.SIGTERM, self.shutdown)
         self.config.authenticate()
 
-        # Modules
+        # Core modules
         self.data_manager = LiveDataManager(self.config.kite)
         self.order_manager = OrderManager(self.config.kite, self.config)
         self.gsheet = GSheetManager(
@@ -51,6 +52,9 @@ class FalahTradingBot:
         self.notifier = TelegramNotifier(
             bot_token=self.config.TELEGRAM_BOT_TOKEN,
             chat_id=self.config.TELEGRAM_CHAT_ID
+        )
+        self.capital_manager = CapitalManager(
+            self.config, self.order_tracker, self.order_manager, self.notifier
         )
         self.exit_manager = ExitManager(
             self.config, self.data_manager, self.order_manager,
@@ -107,6 +111,9 @@ class FalahTradingBot:
         print("🚀 Bot started")
         self.running = True
         while self.running:
+            # Update capital info
+            self.capital_manager.update_funds()
+            
             self.execute_strategy()
 
             # Monitoring
@@ -121,10 +128,11 @@ class FalahTradingBot:
                     self.notifier.send_t1_t2_change(pos['symbol'], pos['holding_status'])
                     self.last_status[pos['symbol']] = pos['holding_status']
 
-            # Daily summary
+            # Daily summary with capital info
             today = date.today()
             if self.last_summary_date != today:
                 total_pnl = sum(p['pnl'] for p in positions_with_age)
+                cap_summary = self.capital_manager.get_capital_summary()
                 hold_lines = [
                     f"{p['symbol']}: Qty={p['qty']} | PnL=₹{p['pnl']:.2f} | Status={p['holding_status']}"
                     for p in positions_with_age
@@ -133,6 +141,9 @@ class FalahTradingBot:
                     f"📅 <b>Daily Summary ({today.strftime('%d-%m-%Y')})</b>\n"
                     f"Total P&L: ₹{total_pnl:.2f}\n"
                     f"Trades Today: {self.daily_trade_count}\n\n"
+                    f"<b>Capital:</b>\n"
+                    f"Available: ₹{cap_summary['available']:,.0f}\n"
+                    f"Utilization: {cap_summary['utilization_pct']:.1f}%\n\n"
                     f"<b>Holdings:</b>\n" +
                     ("\n".join(hold_lines) if hold_lines else "No holdings")
                 )
@@ -201,22 +212,38 @@ class FalahTradingBot:
                         price = live_prices.get(symbol)
                         if price and price > 0:
                             atr = latest['atr']
-                            qty = self.calculate_dynamic_position_size(symbol, price, atr)
+                            desired_qty = self.calculate_dynamic_position_size(symbol, price, atr)
 
-                            allowed, reason = self.risk_manager.allow_trade()
+                            # Capital check & adjustment
+                            qty, capital_reason = self.capital_manager.adjust_quantity_for_capital(
+                                symbol, price, desired_qty
+                            )
+
+                            allowed, risk_reason = self.risk_manager.allow_trade()
                             if qty > 0 and allowed:
                                 order_id = self.order_manager.place_buy_order(symbol, qty, price=price)
                                 if order_id:
+                                    # Mark capital as allocated
+                                    self.capital_manager.allocate_capital(qty * price)
+                                    
                                     self.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_PLACED")
                                     self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_PLACED")
+                                    
+                                    # Alert if quantity was adjusted
+                                    if capital_reason and desired_qty != qty:
+                                        self.notifier.send_message(f"💰 {symbol} size adjusted: {desired_qty} → {qty} due to capital limits")
+                                    
                                     self.daily_trade_count += 1
                                 else:
                                     self.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_FAILED")
                                     self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_FAILED")
                                 return f"✅ Order placed for {symbol} qty={qty}"
+                            elif not allowed:
+                                self.notifier.send_message(f"⚠️ Trade blocked for {symbol}: {risk_reason}")
+                                return f"⏩ Risk blocked {symbol}: {risk_reason}"
                             else:
-                                self.notifier.send_message(f"⚠️ Trade blocked for {symbol}: {reason or 'Risk rules blocked'}")
-                                return f"⏩ Blocked {symbol}: {reason}"
+                                self.notifier.send_message(f"💰 Trade blocked for {symbol}: {capital_reason}")
+                                return f"⏩ Capital blocked {symbol}: insufficient funds"
                     return f"ℹ️ No trade for {symbol}"
 
                 except Exception as e:

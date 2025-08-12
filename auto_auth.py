@@ -58,7 +58,7 @@ def auto_authenticate():
 
     # 3. Open KiteConnect login URL in your default browser
     kite = KiteConnect(api_key=API_KEY)
-    login_url = kite.login_url(redirect_uri=REDIRECT_URI)
+    login_url = kite.login_url()
     print("🔑 Opening login URL in your browser...")
     webbrowser.open(login_url)
 

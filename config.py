@@ -24,12 +24,12 @@ class Config:
         self.DAILY_LOSS_LIMIT_PCT = 0.05
 
         # Zerodha API
-        self.API_KEY = "your_api_key_here"
-        self.API_SECRET = "your_api_secret_here"
+        self.API_KEY = "ijzeuwuylr3g0kug"
+        self.API_SECRET = "yy1wd2wn8r0wx4mus00vxllgss03nuqx"
 
         # Telegram (optional)
-        self.TELEGRAM_BOT_TOKEN = "your_telegram_bot_token"
-        self.TELEGRAM_CHAT_ID = "your_telegram_chat_id"
+        self.TELEGRAM_BOT_TOKEN = "7763450358:AAH32bWYyu_hXR6l-UaVMaarFGZ4YFOv6q8"
+        self.TELEGRAM_CHAT_ID = "6784139148"
 
         self.ACCESS_TOKEN = None
         self.kite = None

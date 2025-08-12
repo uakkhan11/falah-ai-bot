@@ -3,7 +3,7 @@
 import os
 import json
 import logging
-from auto_auth import auto_authenticate  # Local Redirect Server auth helper
+from kiteconnect import KiteConnect
 
 TOKENS_FILE = "kite_tokens.json"
 
@@ -23,36 +23,21 @@ class Config:
         self.MAX_POSITIONS = 5
         self.DAILY_LOSS_LIMIT_PCT = 0.05
 
-        # --- Zerodha API credentials ---
+        # Zerodha API credentials
         self.API_KEY = "your_api_key_here"
         self.API_SECRET = "your_api_secret_here"
 
-        # --- Telegram credentials ---
+        # Telegram config (optional)
         self.TELEGRAM_BOT_TOKEN = "your_telegram_bot_token"
         self.TELEGRAM_CHAT_ID = "your_telegram_chat_id"
 
-        # Access token placeholder
         self.ACCESS_TOKEN = None
-
-        # Holds KiteConnect client after authentication
         self.kite = None
 
-        # Logging configuration
         logging.basicConfig(level=logging.INFO)
 
-    def authenticate(self):
-        """
-        Authenticate using local redirect server flow from auto_auth.py
-        and set the authenticated KiteConnect instance.
-        """
-        kite = auto_authenticate()
-        if not kite:
-            raise Exception("Authentication failed.")
-        self.kite = kite
-
-    # Optional: legacy helpers in case you want to manage token file manually.
     def _load_saved_token(self):
-        """Load saved access token from file if needed."""
+        """Load saved access token if present."""
         if os.path.exists(TOKENS_FILE):
             try:
                 with open(TOKENS_FILE, "r") as f:
@@ -65,10 +50,44 @@ class Config:
                 logging.warning(f"Could not load saved token: {e}")
 
     def _save_token(self):
-        """Save access token to file."""
+        """Save current access token to file."""
         try:
             with open(TOKENS_FILE, "w") as f:
                 json.dump({"access_token": self.ACCESS_TOKEN}, f)
             logging.info("ACCESS_TOKEN saved to file.")
         except Exception as e:
             logging.warning(f"Could not save token: {e}")
+
+    def authenticate(self):
+        """Authenticate by manually pasting the request_token."""
+        self._load_saved_token()
+        self.kite = KiteConnect(api_key=self.API_KEY)
+
+        # Use saved token if valid
+        if self.ACCESS_TOKEN:
+            self.kite.set_access_token(self.ACCESS_TOKEN)
+            try:
+                self.kite.profile()
+                logging.info("Authenticated using saved ACCESS_TOKEN.")
+                return
+            except Exception:
+                logging.warning("Saved ACCESS_TOKEN invalid, login required.")
+
+        # Manual new token flow
+        login_url = self.kite.login_url()
+        print(f"\n🔑 LOGIN URL:\n{login_url}\n")
+        print("1. Open in browser & login with 2FA.")
+        print("2. You will be redirected to your app's redirect URL.")
+        print("3. Copy the request_token from that URL.")
+
+        request_token = input("Paste request_token here: ").strip()
+
+        try:
+            session_data = self.kite.generate_session(request_token, api_secret=self.API_SECRET)
+            self.ACCESS_TOKEN = session_data["access_token"]
+            self.kite.set_access_token(self.ACCESS_TOKEN)
+            self._save_token()
+            logging.info("✅ Authentication successful.")
+        except Exception as e:
+            logging.error(f"Authentication failed: {e}")
+            raise

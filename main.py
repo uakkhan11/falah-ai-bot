@@ -27,16 +27,34 @@ from exit_manager import ExitManager
 from capital_manager import CapitalManager
 
 
+# --------------------
+# Step 1: Pre-bot data update
+# --------------------
+def update_analysis_data():
+    try:
+        logging.info("📊 Updating historical data & indicators before strategy execution...")
+        fetcher = SmartHalalFetcher()
+        fetcher.fetch_all()
+        logging.info("✅ Data update completed successfully.")
+    except Exception as e:
+        logging.error(f"❌ Data update failed: {e}")
+
+
+# --------------------
+# Step 2: Main bot class
+# --------------------
 class FalahTradingBot:
     def __init__(self):
-        # Config
+        # Config & shutdown signals
         self.config = Config()
         self.running = False
         signal.signal(signal.SIGINT, self.shutdown)
         signal.signal(signal.SIGTERM, self.shutdown)
+
+        # Authenticate to Kite API
         self.config.authenticate()
 
-        # Core modules
+        # Core components
         self.data_manager = LiveDataManager(self.config.kite)
         self.order_manager = OrderManager(self.config.kite, self.config)
         self.gsheet = GSheetManager(
@@ -64,7 +82,7 @@ class FalahTradingBot:
             state_file="exit_state.json"
         )
 
-        # State
+        # Internal state tracking
         self.last_status = {}
         self.last_summary_date = None
         self.daily_trade_count = 0
@@ -72,31 +90,18 @@ class FalahTradingBot:
         self.min_batch_size = 5
         self.max_batch_size = 25
 
-        # Load
+        # Load instruments and trading list
         self.data_manager.get_instruments()
         self.trading_symbols = self.load_trading_symbols()
 
+    # --------------------
+    # Shutdown handler
+    # --------------------
     def shutdown(self, signum, frame):
         print("\n🛑 Shutting down bot...")
         self.running = False
 
-    def update_analysis_data():
-        try:
-            logging.info("📊 Updating historical data & indicators before strategy execution...")
-            fetcher = SmartHalalFetcher()
-            fetcher.fetch_all()
-            logging.info("✅ Data update completed successfully.")
-        except Exception as e:
-            logging.error(f"❌ Data update failed: {e}")
-    
-    if __name__ == "__main__":
-        # 1⃣ First update the analysis data
-        update_analysis_data()
-    
-        # 2⃣ Then run the bot as usual
-        bot = FalahTradingBot()
-        bot.run()
-    
+    # --------------------
     def load_trading_symbols(self):
         syms = self.gsheet.get_symbols_from_sheet(worksheet_name="HalalList")
         if not syms:
@@ -106,48 +111,47 @@ class FalahTradingBot:
         print(f"📊 Trading {len(syms)} symbols")
         return syms
 
+    # --------------------
     def calculate_dynamic_position_size(self, symbol, price, atr):
-        """
-        ATR-based dynamic sizing: risk % of capital / stop distance
-        """
         if atr is None or atr <= 0:
             return 0
-
         stop_loss_distance = atr * self.config.ATR_SL_MULT
         if stop_loss_distance <= 0 or stop_loss_distance > price * 0.5:
             return 0
-
         account_value = self.config.INITIAL_CAPITAL
         risk_amount = account_value * self.config.RISK_PER_TRADE
         qty = int(risk_amount / stop_loss_distance)
-
         if qty <= 0 or (qty * price) > account_value:
             return 0
-
         return qty
 
+    # --------------------
     def run(self):
         print("🚀 Bot started")
         self.running = True
+
         while self.running:
-            # Update capital info
+            # Capital updates
             self.capital_manager.update_funds()
-            
+
+            # Core strategy execution
             self.execute_strategy()
 
-            # Monitoring
+            # Order and PnL tracking
             self.order_tracker.update_order_statuses()
             positions = self.order_tracker.get_positions_with_pl()
             positions_with_age = self.holding_tracker.get_holdings_with_age(positions)
+
+            # Push PnL to user
             self.notifier.send_pnl_update(positions_with_age)
 
-            # Settlement changes
+            # Detect status change of holdings (T1/T2 changes)
             for pos in positions_with_age:
                 if self.last_status.get(pos['symbol']) != pos['holding_status']:
                     self.notifier.send_t1_t2_change(pos['symbol'], pos['holding_status'])
                     self.last_status[pos['symbol']] = pos['holding_status']
 
-            # Daily summary with capital info
+            # Daily summary
             today = date.today()
             if self.last_summary_date != today:
                 total_pnl = sum(p['pnl'] for p in positions_with_age)
@@ -170,23 +174,25 @@ class FalahTradingBot:
                 self.last_summary_date = today
                 self.daily_trade_count = 0
 
-            # Exit logic
+            # Check exit conditions
             self.exit_manager.check_and_exit_positions(positions)
 
             time.sleep(60)
 
+    # --------------------
     def execute_strategy(self):
         symbols = self.trading_symbols
+
         for i in range(0, len(symbols), self.current_batch_size):
             batch = symbols[i:i + self.current_batch_size]
 
-            # Data fetch
+            # Fetch required data
             daily_data   = self.data_manager.get_historical_data_parallel(batch, interval="day", days=200)
             hourly_data  = self.data_manager.get_historical_data_parallel(batch, interval="60minute", days=60)
             fifteen_data = self.data_manager.get_historical_data_parallel(batch, interval="15minute", days=20)
             live_prices  = self.data_manager.get_bulk_current_prices(batch)
 
-            # Adaptive batch
+            # Adjust batch size if API limits hit
             if self.data_manager.rate_limit_hit:
                 old_size = self.current_batch_size
                 self.current_batch_size = max(self.min_batch_size, self.current_batch_size - 5)
@@ -199,6 +205,7 @@ class FalahTradingBot:
             positions = self.order_tracker.get_positions_with_pl()
             pos_dict = {p['symbol']: p for p in positions}
 
+            # Worker function per symbol
             def process_symbol(symbol):
                 try:
                     df_daily   = daily_data.get(symbol)
@@ -233,25 +240,20 @@ class FalahTradingBot:
                             atr = latest['atr']
                             desired_qty = self.calculate_dynamic_position_size(symbol, price, atr)
 
-                            # Capital check & adjustment
-                            qty, capital_reason = self.capital_manager.adjust_quantity_for_capital(
-                                symbol, price, desired_qty
-                            )
-
+                            qty, cap_reason = self.capital_manager.adjust_quantity_for_capital(symbol, price, desired_qty)
                             allowed, risk_reason = self.risk_manager.allow_trade()
+
                             if qty > 0 and allowed:
                                 order_id = self.order_manager.place_buy_order(symbol, qty, price=price)
                                 if order_id:
-                                    # Mark capital as allocated
                                     self.capital_manager.allocate_capital(qty * price)
-                                    
                                     self.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_PLACED")
                                     self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_PLACED")
-                                    
-                                    # Alert if quantity was adjusted
-                                    if capital_reason and desired_qty != qty:
-                                        self.notifier.send_message(f"💰 {symbol} size adjusted: {desired_qty} → {qty} due to capital limits")
-                                    
+
+                                    if cap_reason and desired_qty != qty:
+                                        self.notifier.send_message(
+                                            f"💰 {symbol} size adjusted: {desired_qty} → {qty} due to capital limits"
+                                        )
                                     self.daily_trade_count += 1
                                 else:
                                     self.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_FAILED")
@@ -261,10 +263,9 @@ class FalahTradingBot:
                                 self.notifier.send_message(f"⚠️ Trade blocked for {symbol}: {risk_reason}")
                                 return f"⏩ Risk blocked {symbol}: {risk_reason}"
                             else:
-                                self.notifier.send_message(f"💰 Trade blocked for {symbol}: {capital_reason}")
+                                self.notifier.send_message(f"💰 Trade blocked for {symbol}: {cap_reason}")
                                 return f"⏩ Capital blocked {symbol}: insufficient funds"
                     return f"ℹ️ No trade for {symbol}"
-
                 except Exception as e:
                     return f"❌ Error processing {symbol}: {e}"
 
@@ -272,7 +273,8 @@ class FalahTradingBot:
                 for future in as_completed({executor.submit(process_symbol, s): s for s in batch}):
                     print(future.result())
 
-    # Wrappers
+    # --------------------
+    # Wrappers for indicators
     def add_indicators(self, df): return add_indicators(df)
     def breakout_signal(self, df): return breakout_signal(df)
     def bb_breakout_signal(self, df): return bb_breakout_signal(df)
@@ -280,6 +282,10 @@ class FalahTradingBot:
     def combine_signals(self, df): return combine_signals(df)
 
 
+# --------------------
+# Step 3: Entry point
+# --------------------
 if __name__ == "__main__":
+    update_analysis_data()
     bot = FalahTradingBot()
     bot.run()

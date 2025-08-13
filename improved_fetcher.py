@@ -149,14 +149,14 @@ class SmartHalalFetcher:
                 cumulative_volume = df['volume'].cumsum()
                 # Avoid division by zero
                 df['vwap'] = ((typical_price * df['volume']).cumsum() / 
-                             cumulative_volume).fillna(method='ffill')
+                             cumulative_volume).ffill()
 
             # Volume indicators
             df['volume_sma'] = df['volume'].rolling(20).mean()
             df['volume_ratio'] = df['volume'] / df['volume_sma']
             
             # Fill NaN values with forward fill then backward fill
-            df = df.fillna(method='ffill').fillna(method='bfill')
+            df = df.ffill().bfill()
             
             return df
         except Exception as e:

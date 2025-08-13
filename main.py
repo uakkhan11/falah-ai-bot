@@ -25,6 +25,7 @@ from holding_tracker import HoldingTracker
 from telegram_notifier import TelegramNotifier
 from exit_manager import ExitManager
 from capital_manager import CapitalManager
+from live_price_streamer import LivePriceStreamer
 
 
 # --------------------
@@ -94,6 +95,12 @@ class FalahTradingBot:
         self.data_manager.get_instruments()
         self.trading_symbols = self.load_trading_symbols()
 
+        # Prepare instrument tokens list
+        self.instrument_tokens = [self.data_manager.token_map[s] for s in self.trading_symbols if s in self.data_manager.token_map]
+
+        # Initialize live price streamer (but do not start yet)
+        self.live_price_streamer = LivePriceStreamer(self.config.kite, self.instrument_tokens)
+
     # --------------------
     # Shutdown handler
     # --------------------
@@ -128,7 +135,10 @@ class FalahTradingBot:
     # --------------------
     def run(self):
         print("🚀 Bot started")
-        self.running = True
+        if self.live_price_streamer._is_market_open():
+            self.live_price_streamer.start()
+        else:
+            print("Market closed; skipping live price streaming.")
 
         while self.running:
             # Capital updates
@@ -178,6 +188,10 @@ class FalahTradingBot:
             self.exit_manager.check_and_exit_positions(positions)
 
             time.sleep(60)
+
+            # On shutdown
+            self.live_price_streamer.stop()
+
 
     # --------------------
     def execute_strategy(self):
@@ -235,8 +249,8 @@ class FalahTradingBot:
                     latest = df_fifteen.iloc[-1]
 
                     if daily_up and hourly_ok and latest['entry_signal'] == 1:
-                        price = live_prices.get(symbol)
-                        if price and price > 0:
+                        price = self.live_price_streamer.get_price(symbol)
+                        if price is None or price <= 0:
                             atr = latest['atr']
                             desired_qty = self.calculate_dynamic_position_size(symbol, price, atr)
 

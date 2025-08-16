@@ -21,8 +21,7 @@ class TelegramNotifier:
         except TelegramError as e:
             self.logger.error(f"Telegram send failed: {e}")
 
-
-    def send_trade_alert(self, symbol, action, qty, price, status):
+    async def send_trade_alert(self, symbol, action, qty, price, status):
         msg = (
             f"📢 <b>{action} ALERT</b>\n"
             f"Symbol: <b>{symbol}</b>\n"
@@ -30,20 +29,20 @@ class TelegramNotifier:
             f"Price: ₹{price}\n"
             f"Status: {status}"
         )
-        self.send_message(msg)
+        await self.send_message(msg)
 
-    def send_pnl_update(self, positions_with_age):
+    async def send_pnl_update(self, positions_with_age):
         if not positions_with_age:
-            self.send_message("💼 No current positions.")
+            await self.send_message("💼 No current positions.")
             return
         lines = ["📊 <b>Portfolio P&L Update</b>"]
         for p in positions_with_age:
             lines.append(f"{p['symbol']}: Qty={p['qty']}, PnL=₹{p['pnl']:.2f}, Status={p['holding_status']}")
-        self.send_message("\n".join(lines))
+        await self.send_message("\n".join(lines))
 
-    def send_t1_t2_change(self, symbol, new_status):
+    async def send_t1_t2_change(self, symbol, new_status):
         msg = (
             f"📅 <b>Settlement Status Change</b>\n"
             f"{symbol} → {new_status}"
         )
-        self.send_message(msg)
+        await self.send_message(msg)

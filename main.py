@@ -181,7 +181,7 @@ class FalahTradingBot:
                     f"<b>Holdings:</b>\n" +
                     ("\n".join(hold_lines) if hold_lines else "No holdings")
                 )
-                self.notifier.send_message(summary_msg)
+                asyncio.create_task(self.notifier.send_message(some_message))
                 self.last_summary_date = today
                 self.daily_trade_count = 0
 

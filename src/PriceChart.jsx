@@ -27,10 +27,11 @@ function PriceChart() {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+    <div className="bg-white rounded-lg shadow-md p-6 mb-8 max-w-3xl w-full mx-auto">
       <Line data={data} options={options} />
     </div>
   );
+
 }
 
 export default PriceChart;

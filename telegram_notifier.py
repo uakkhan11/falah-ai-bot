@@ -1,6 +1,3 @@
-# telegram_notifier.py
-
-# telegram_notifier.py
 import logging
 from telegram import Bot
 from telegram.error import TelegramError
@@ -18,6 +15,7 @@ class TelegramNotifier:
     def send_message(self, text):
         """Send a plain text message to the configured Telegram chat."""
         if not self.bot:
+            self.logger.warning("No bot instance. Message cannot be sent.")
             return
         try:
             self.bot.send_message(chat_id=self.chat_id, text=text, parse_mode="HTML")
@@ -25,11 +23,13 @@ class TelegramNotifier:
             self.logger.error(f"Telegram send failed: {e}")
 
     def send_trade_alert(self, symbol, action, qty, price, status):
-        msg = f"📢 <b>{action} ALERT</b>\n" \
-              f"Symbol: <b>{symbol}</b>\n" \
-              f"Qty: {qty}\n" \
-              f"Price: ₹{price}\n" \
-              f"Status: {status}"
+        msg = (
+            f"📢 <b>{action} ALERT</b>\n"
+            f"Symbol: <b>{symbol}</b>\n"
+            f"Qty: {qty}\n"
+            f"Price: ₹{price}\n"
+            f"Status: {status}"
+        )
         self.send_message(msg)
 
     def send_pnl_update(self, positions_with_age):
@@ -42,6 +42,8 @@ class TelegramNotifier:
         self.send_message("\n".join(lines))
 
     def send_t1_t2_change(self, symbol, new_status):
-        msg = f"📅 <b>Settlement Status Change</b>\n" \
-              f"{symbol} → {new_status}"
+        msg = (
+            f"📅 <b>Settlement Status Change</b>\n"
+            f"{symbol} → {new_status}"
+        )
         self.send_message(msg)

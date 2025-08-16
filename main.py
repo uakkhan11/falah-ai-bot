@@ -57,9 +57,10 @@ class FalahTradingBot:
 
         # Authenticate to Kite API
         self.config.authenticate()
+
         # Core components
-        self.data_manager = LiveDataManager(self.config.kite)
-        self.order_manager = OrderManager(self.config.kite, self.config)
+        self.data_manager = LiveDataManager(self.kite)
+        self.order_manager = OrderManager(self.kite, self.config)
         self.gsheet = GSheetManager(
             credentials_file="falah-credentials.json",
             sheet_key="1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
@@ -69,7 +70,7 @@ class FalahTradingBot:
             gsheet_manager=self.gsheet,
             gsheet_sheet_name="TradeLog"
         )
-        self.order_tracker = OrderTracker(self.config.kite, self.trade_logger)
+        self.order_tracker = OrderTracker(self.kite, self.trade_logger)
         self.holding_tracker = HoldingTracker("trade_log.csv")
         self.risk_manager = RiskManager(self.config, self.order_tracker)
         self.notifier = TelegramNotifier(
@@ -91,15 +92,20 @@ class FalahTradingBot:
         self.current_batch_size = 25
         self.min_batch_size = 5
         self.max_batch_size = 25
+
         # Load instruments and trading list
-        self.data_manager.get_instruments()
+        self.data_manager.get_instruments()  # populates self.data_manager.instruments
         self.trading_symbols = self.load_trading_symbols()
-        instruments_list = self.kite.instruments("NSE")
-        self.instruments = {item['tradingsymbol']: item['instrument_token'] for item in instruments_list}
-        # Prepare instrument tokens list
-        self.instrument_tokens = [self.data_manager.instruments[s] for s in self.trading_symbols if s in self.data_manager.instruments]
+
+        # Use instruments dict from data_manager (no redundant fetch)
+        self.instruments = self.data_manager.instruments
+
+        # Prepare instrument tokens list for live price streamer
+        self.instrument_tokens = [self.instruments[s] for s in self.trading_symbols if s in self.instruments]
+
         # Initialize live price streamer (but do not start yet)
-        self.live_price_streamer = LivePriceStreamer(self.config.kite, self.instrument_tokens)
+        self.live_price_streamer = LivePriceStreamer(self.kite, self.instrument_tokens)
+
 
     # Shutdown handler
     def shutdown(self, signum, frame):

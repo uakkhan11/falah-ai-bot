@@ -2,9 +2,61 @@
 import sys
 import signal
 import logging
+import threading
 import time
 from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from fastapi import FastAPI
+
+app = FastAPI()
+
+# ---- Your Bot Class (already implemented) ----
+# from your code: class FalahTradingBot
+from mybot import FalahTradingBot  # import your bot class if placed in mybot.py
+
+# Global bot object reference
+bot = None
+
+def run_bot():
+    global bot
+    bot = FalahTradingBot()
+    bot.run()  # your bot's main loop
+
+# FastAPI startup event: start the bot in the background
+@app.on_event("startup")
+def startup_event():
+    # Start bot thread
+    threading.Thread(target=run_bot, daemon=True).start()
+
+# API endpoint example: get portfolio summary
+@app.get("/api/portfolio")
+def get_portfolio():
+    if bot:
+        # Replace these lines with actual calls to your bot's methods or data
+        return {
+            "portfolio_value": 25421,  # bot.capital_manager.get_capital_summary()['available']
+            "todays_profit": "+7.2%",  # Get from bot or logger
+            "open_trades": 12,         # len(bot.order_tracker.get_positions_with_pl())
+        }
+    return {}
+
+# API endpoint example: get trades
+@app.get("/api/trades")
+def get_trades():
+    if bot:
+        # Replace this with actual trades from your bot
+        return [
+            {"id": 1, "symbol": "AAPL", "quantity": 10, "price": 192.38, "status": "Open"},
+            {"id": 2, "symbol": "TSLA", "quantity": 5, "price": 247.11, "status": "Closed"},
+        ]
+    return []
+
+# ---- Main entry to run FastAPI server ----
+# DO NOT call bot.run() in the main block, threading will launch it!
+
+# Then run:
+# uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
 
 from strategy_utils import (
     add_indicators,

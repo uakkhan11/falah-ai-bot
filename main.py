@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import asyncio
+asyncio.run(self.send_message(text))
 import sys
 import signal
 import logging

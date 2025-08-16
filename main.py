@@ -95,7 +95,7 @@ class FalahTradingBot:
         self.trading_symbols = self.load_trading_symbols()
         self.token_map = {instr['symbol']: instr['token'] for instr in instruments}
         # Prepare instrument tokens list
-        self.instrument_tokens = [self.data_manager.token_map[s] for s in self.trading_symbols if s in self.data_manager.token_map]
+        self.instrument_tokens = [self.data_manager.instruments[s] for s in self.trading_symbols if s in self.data_manager.instruments]
         # Initialize live price streamer (but do not start yet)
         self.live_price_streamer = LivePriceStreamer(self.config.kite, self.instrument_tokens)
 

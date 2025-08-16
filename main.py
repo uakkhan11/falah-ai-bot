@@ -6,6 +6,7 @@ import threading
 import time
 from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from config import Config
 from fastapi import FastAPI
 
 app = FastAPI()

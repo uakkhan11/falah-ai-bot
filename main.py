@@ -93,7 +93,7 @@ class FalahTradingBot:
         # Load instruments and trading list
         self.data_manager.get_instruments()
         self.trading_symbols = self.load_trading_symbols()
-        self.token_map = {instr['symbol']: instr['token'] for instr in instruments}
+        self.instruments = {item['tradingsymbol']: item['instrument_token'] for item in instruments_list}
         # Prepare instrument tokens list
         self.instrument_tokens = [self.data_manager.instruments[s] for s in self.trading_symbols if s in self.data_manager.instruments]
         # Initialize live price streamer (but do not start yet)

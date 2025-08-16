@@ -18,14 +18,11 @@ class LiveDataManager:
         self.rate_limit_hit = False
 
     def get_instruments(self):
-        """
-        Download and cache NSE instruments: trading symbol -> instrument token.
-        """
         try:
-            instruments_list = self.kite.instruments("NSE")
+            instruments_list = self.kite.instruments("NSE")  # <<--- THIS LINE fetches the data
             self.instruments = {
                 item['tradingsymbol']: item['instrument_token']
-                for item in instruments_list
+                for item in instruments_list                    # <<--- instruments_list is now defined
             }
             return self.instruments
         except Exception as e:

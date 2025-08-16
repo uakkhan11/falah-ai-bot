@@ -12,15 +12,15 @@ class TelegramNotifier:
             self.logger.error(f"Telegram bot init failed: {e}")
             self.bot = None
 
-    def send_message(self, text):
-        """Send a plain text message to the configured Telegram chat."""
+    async def send_message(self, text):
         if not self.bot:
             self.logger.warning("No bot instance. Message cannot be sent.")
             return
         try:
-            self.bot.send_message(chat_id=self.chat_id, text=text, parse_mode="HTML")
+            await self.bot.send_message(chat_id=self.chat_id, text=text, parse_mode="HTML")
         except TelegramError as e:
             self.logger.error(f"Telegram send failed: {e}")
+
 
     def send_trade_alert(self, symbol, action, qty, price, status):
         msg = (

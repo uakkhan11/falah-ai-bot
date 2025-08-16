@@ -1,4 +1,5 @@
 import { useState } from "react";
+import PriceChart from "./PriceChart";
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -25,7 +26,7 @@ function App() {
   return (
     <div className="flex min-h-screen bg-gray-100">
       {/* Sidebar */}
-      <aside className={`bg-gray-900 text-white ${sidebarOpen ? 'w-64' : 'w-16'} transition-all duration-200 flex flex-col`}>
+      <aside className={`bg-gray-900 text-white ${sidebarOpen ? "w-64" : "w-16"} transition-all duration-200 flex flex-col`}>
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
           <h2 className={`text-xl font-bold ${sidebarOpen ? "block" : "hidden"}`}>Falah Dashboard</h2>
           <button
@@ -33,7 +34,7 @@ function App() {
             onClick={() => setSidebarOpen(!sidebarOpen)}
             aria-label="Toggle Sidebar"
           >
-            &#9776;
+            ☰
           </button>
         </div>
         <nav className="flex-1 p-2 space-y-2">
@@ -77,6 +78,9 @@ function App() {
             </div>
           </div>
 
+          {/* Portfolio Chart */}
+          <PriceChart />
+
           {/* Trades Table Section */}
           <div>
             <h2 className="text-2xl font-semibold mb-4">Trades Table</h2>
@@ -110,7 +114,6 @@ function App() {
                 </button>
               </div>
             </div>
-
             {/* Trades Table */}
             <div className="overflow-x-auto bg-white rounded shadow p-4">
               <table className="min-w-full table-auto">

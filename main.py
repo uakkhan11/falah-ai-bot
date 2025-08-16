@@ -6,14 +6,27 @@ import threading
 import time
 from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from config import Config
+from live_data_manager import LiveDataManager
 from fastapi import FastAPI
 
 app = FastAPI()
 
 # ---- Your Bot Class (already implemented) ----
 # from your code: class FalahTradingBot
-# (Include all your existing imports here, like strategy_utils, config, etc.)
+
+from config import Config
+from improved_fetcher import SmartHalalFetcher
+from live_data_manager import LiveDataManager
+from order_manager import OrderManager
+from gsheet_manager import GSheetManager
+from trade_logger import TradeLogger
+from order_tracker import OrderTracker
+from risk_manager import RiskManager
+from holding_tracker import HoldingTracker
+from telegram_notifier import TelegramNotifier
+from exit_manager import ExitManager
+from capital_manager import CapitalManager
+from live_price_streamer import LivePriceStreamer
 
 # --------------------
 # Step 1: Pre-bot data update

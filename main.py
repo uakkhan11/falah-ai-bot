@@ -12,7 +12,6 @@ app = FastAPI()
 
 # ---- Your Bot Class (already implemented) ----
 # from your code: class FalahTradingBot
-from mybot import FalahTradingBot  # import your bot class if placed in mybot.py
 
 # Global bot object reference
 bot = None

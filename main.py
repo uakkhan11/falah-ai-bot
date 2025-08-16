@@ -126,7 +126,6 @@ class FalahTradingBot:
         return qty
 
     def run(self):
-        import asyncio
         print("🚀 Bot started")
         self.running = True
         if self.live_price_streamer._is_market_open():
@@ -142,7 +141,6 @@ class FalahTradingBot:
             positions = self.order_tracker.get_positions_with_pl()
             positions_with_age = self.holding_tracker.get_holdings_with_age(positions)
 
-            # Use asyncio.create_task to send async notifications without blocking
             asyncio.create_task(self.notifier.send_pnl_update(positions_with_age))
 
             for pos in positions_with_age:
@@ -150,7 +148,6 @@ class FalahTradingBot:
                     asyncio.create_task(self.notifier.send_t1_t2_change(pos['symbol'], pos['holding_status']))
                     self.last_status[pos['symbol']] = pos['holding_status']
 
-            # Daily summary
             today = date.today()
             if self.last_summary_date != today:
                 total_pnl = sum(p['pnl'] for p in positions_with_age)
@@ -179,7 +176,6 @@ class FalahTradingBot:
         self.live_price_streamer.stop()
 
     def execute_strategy(self):
-        import asyncio
         symbols = self.trading_symbols
         for i in range(0, len(symbols), self.current_batch_size):
             batch = symbols[i:i + self.current_batch_size]
@@ -259,6 +255,7 @@ class FalahTradingBot:
                             else:
                                 asyncio.create_task(self.notifier.send_message(f"💰 Trade blocked for {symbol}: {cap_reason}"))
                                 return f"⏩ Capital blocked {symbol}: insufficient funds"
+
                     return f"ℹ️ No trade for {symbol}"
                 except Exception as e:
                     return f"❌ Error processing {symbol}: {e}"
@@ -280,7 +277,7 @@ bot = None
 def run_bot():
     global bot
     bot = FalahTradingBot()
-    bot.run()  # your bot's main loop
+    bot.run()
 
 # FastAPI startup event: start the bot in the background
 @app.on_event("startup")
@@ -291,11 +288,10 @@ def startup_event():
 @app.get("/api/portfolio")
 def get_portfolio():
     if bot:
-        # Replace these lines with actual calls to your bot's methods or data
         return {
-            "portfolio_value": 25421,  # bot.capital_manager.get_capital_summary()['available']
-            "todays_profit": "+7.2%",  # Get from bot or logger
-            "open_trades": 12,         # len(bot.order_tracker.get_positions_with_pl())
+            "portfolio_value": 25421,  # Placeholder or replace with real data
+            "todays_profit": "+7.2%",
+            "open_trades": 12,
         }
     return {}
 
@@ -303,7 +299,6 @@ def get_portfolio():
 @app.get("/api/trades")
 def get_trades():
     if bot:
-        # Replace this with actual trades from your bot
         return [
             {"id": 1, "symbol": "AAPL", "quantity": 10, "price": 192.38, "status": "Open"},
             {"id": 2, "symbol": "TSLA", "quantity": 5, "price": 247.11, "status": "Closed"},

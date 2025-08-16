@@ -46,6 +46,7 @@ class FalahTradingBot:
     def __init__(self):
         # Config & shutdown signals
         self.config = Config()
+        self.kite = self.config.kite
         self.running = False
 
         # Only set signal handlers if running in the main thread

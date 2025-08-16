@@ -7,7 +7,6 @@ import time
 from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import FastAPI
-
 import asyncio
 
 from config import Config
@@ -96,17 +95,10 @@ class FalahTradingBot:
         # Load instruments and trading list
         self.data_manager.get_instruments()  # populates self.data_manager.instruments
         self.trading_symbols = self.load_trading_symbols()
-
-        # Use instruments dict from data_manager (no redundant fetch)
         self.instruments = self.data_manager.instruments
-
-        # Prepare instrument tokens list for live price streamer
         self.instrument_tokens = [self.instruments[s] for s in self.trading_symbols if s in self.instruments]
-
-        # Initialize live price streamer (but do not start yet)
         self.live_price_streamer = LivePriceStreamer(self.kite, self.instrument_tokens)
 
-    # Shutdown handler
     def shutdown(self, signum, frame):
         print("\n🛑 Shutting down bot...")
         self.running = False
@@ -134,6 +126,7 @@ class FalahTradingBot:
         return qty
 
     def run(self):
+        import asyncio
         print("🚀 Bot started")
         self.running = True
         if self.live_price_streamer._is_market_open():
@@ -142,24 +135,19 @@ class FalahTradingBot:
             print("Market closed; skipping live price streaming.")
 
         while self.running:
-            # Capital updates
             self.capital_manager.update_funds()
-
-            # Core strategy execution
             self.execute_strategy()
-
-            # Order and PnL tracking
             self.order_tracker.update_order_statuses()
+
             positions = self.order_tracker.get_positions_with_pl()
             positions_with_age = self.holding_tracker.get_holdings_with_age(positions)
 
-            # Push PnL to user
-            self.notifier.send_pnl_update(positions_with_age)
+            # Use asyncio.create_task to send async notifications without blocking
+            asyncio.create_task(self.notifier.send_pnl_update(positions_with_age))
 
-            # Detect status change of holdings (T1/T2 changes)
             for pos in positions_with_age:
                 if self.last_status.get(pos['symbol']) != pos['holding_status']:
-                    self.notifier.send_t1_t2_change(pos['symbol'], pos['holding_status'])
+                    asyncio.create_task(self.notifier.send_t1_t2_change(pos['symbol'], pos['holding_status']))
                     self.last_status[pos['symbol']] = pos['holding_status']
 
             # Daily summary
@@ -181,30 +169,25 @@ class FalahTradingBot:
                     f"<b>Holdings:</b>\n" +
                     ("\n".join(hold_lines) if hold_lines else "No holdings")
                 )
-                asyncio.create_task(self.notifier.send_trade_alert(...))
+                asyncio.create_task(self.notifier.send_message(summary_msg))
                 self.last_summary_date = today
                 self.daily_trade_count = 0
 
-            # Check exit conditions
             self.exit_manager.check_and_exit_positions(positions)
-
             time.sleep(60)
 
-        # On shutdown
         self.live_price_streamer.stop()
 
     def execute_strategy(self):
+        import asyncio
         symbols = self.trading_symbols
         for i in range(0, len(symbols), self.current_batch_size):
             batch = symbols[i:i + self.current_batch_size]
-
-            # Fetch required data
             daily_data = self.data_manager.get_historical_data_parallel(batch, interval="day", days=200)
             hourly_data = self.data_manager.get_historical_data_parallel(batch, interval="60minute", days=60)
             fifteen_data = self.data_manager.get_historical_data_parallel(batch, interval="15minute", days=20)
             live_prices = self.data_manager.get_bulk_current_prices(batch)
 
-            # Adjust batch size if API limits hit
             if self.data_manager.rate_limit_hit:
                 old_size = self.current_batch_size
                 self.current_batch_size = max(self.min_batch_size, self.current_batch_size - 5)
@@ -217,15 +200,13 @@ class FalahTradingBot:
             positions = self.order_tracker.get_positions_with_pl()
             pos_dict = {p['symbol']: p for p in positions}
 
-            # Worker function per symbol
             def process_symbol(symbol):
                 try:
                     df_daily = daily_data.get(symbol)
                     df_hourly = hourly_data.get(symbol)
                     df_fifteen = fifteen_data.get(symbol)
 
-                    if (df_daily is None or df_daily.empty or
-                        df_fifteen is None or df_fifteen.empty):
+                    if (df_daily is None or df_daily.empty or df_fifteen is None or df_fifteen.empty):
                         return f"⚠️ Not enough data for {symbol}"
 
                     if symbol in pos_dict and pos_dict[symbol]['qty'] > 0:
@@ -248,7 +229,7 @@ class FalahTradingBot:
                     latest = df_fifteen.iloc[-1]
                     if daily_up and hourly_ok and latest['entry_signal'] == 1:
                         price = self.live_price_streamer.get_price(symbol)
-                        if price is None or price <= 0:
+                        if price is not None and price > 0:
                             atr = latest['atr']
                             desired_qty = self.calculate_dynamic_position_size(symbol, price, atr)
                             qty, cap_reason = self.capital_manager.adjust_quantity_for_capital(symbol, price, desired_qty)
@@ -259,22 +240,24 @@ class FalahTradingBot:
                                 if order_id:
                                     self.capital_manager.allocate_capital(qty * price)
                                     self.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_PLACED")
-                                    self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_PLACED")
+                                    asyncio.create_task(self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_PLACED"))
 
                                     if cap_reason and desired_qty != qty:
-                                        self.notifier.send_message(
-                                            f"💰 {symbol} size adjusted: {desired_qty} → {qty} due to capital limits"
+                                        asyncio.create_task(
+                                            self.notifier.send_message(
+                                                f"💰 {symbol} size adjusted: {desired_qty} → {qty} due to capital limits"
+                                            )
                                         )
                                     self.daily_trade_count += 1
                                 else:
                                     self.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_FAILED")
-                                    self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_FAILED")
+                                    asyncio.create_task(self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_FAILED"))
                                 return f"✅ Order placed for {symbol} qty={qty}"
                             elif not allowed:
-                                self.notifier.send_message(f"⚠️ Trade blocked for {symbol}: {risk_reason}")
+                                asyncio.create_task(self.notifier.send_message(f"⚠️ Trade blocked for {symbol}: {risk_reason}"))
                                 return f"⏩ Risk blocked {symbol}: {risk_reason}"
                             else:
-                                self.notifier.send_message(f"💰 Trade blocked for {symbol}: {cap_reason}")
+                                asyncio.create_task(self.notifier.send_message(f"💰 Trade blocked for {symbol}: {cap_reason}"))
                                 return f"⏩ Capital blocked {symbol}: insufficient funds"
                     return f"ℹ️ No trade for {symbol}"
                 except Exception as e:

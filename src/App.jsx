@@ -2,6 +2,16 @@ import { useState } from "react";
 import PriceChart from "./PriceChart";
 
 function App() {
+    return (
+    <>
+      <div className="bg-blue-600 text-white p-4 font-bold">
+        Tailwind CSS is working!
+      </div>
+      
+      {/* The rest of your dashboard JSX here */}
+    </>
+  );
+}
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const trades = [

@@ -85,7 +85,7 @@ class FalahTradingBot:
         if hasattr(self.data_manager, 'instruments') and self.data_manager.instruments:
             self.instruments = self.data_manager.instruments
         else:
-            logging.error("Error: data_manager.instruments is None or empty after get_instruments()")
+            logging.error("Error: Could not fetch instruments. Check API credentials, endpoints, and file paths.")
             self.instruments = {}
             self.trading_symbols = self.load_trading_symbols()
         missing = [s for s in self.trading_symbols if s not in self.instruments]

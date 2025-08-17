@@ -19,11 +19,14 @@ class LiveDataManager:
 
     def get_instruments(self):
         try:
-            instruments_list = self.kite.instruments("NSE")  # <<--- THIS LINE fetches the data
+            instruments_list = self.kite.instruments("NSE")
+            print(f"Fetched instruments_list: {type(instruments_list)}, size: {len(instruments_list) if instruments_list else 'None'}")
             self.instruments = {
                 item['tradingsymbol']: item['instrument_token']
-                for item in instruments_list                    # <<--- instruments_list is now defined
+                for item in instruments_list or []
             }
+            if not self.instruments:
+                print("❌ No instruments loaded! Check Kite credentials and API limits.")
             return self.instruments
         except Exception as e:
             print(f"❌ Error fetching instruments: {e}")

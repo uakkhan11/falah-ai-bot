@@ -164,42 +164,68 @@ class SmartHalalFetcher:
             return df
 
     def _fetch_symbol_timeframe(self, symbol, token, tf_name, cfg):
-        """Fetch single symbol/timeframe with retries and better error handling."""
         to_dt = datetime.now()
-        from_dt = to_dt - timedelta(days=cfg['lookback_days'])
-
+        output_file = os.path.join(cfg['output_dir'], f"{symbol}.csv")
+        
+        if os.path.exists(output_file):
+            try:
+                df_existing = pd.read_csv(output_file)
+                df_existing['date'] = pd.to_datetime(df_existing['date'])
+                last_date = df_existing['date'].max()
+                # Add one interval to last_date to avoid duplicate candles
+                if tf_name == 'daily':
+                    start_date = last_date + pd.Timedelta(days=1)
+                elif tf_name == '15minute':
+                    start_date = last_date + pd.Timedelta(minutes=15)
+                elif tf_name == '1hour':
+                    start_date = last_date + pd.Timedelta(hours=1)
+                else:
+                    start_date = last_date
+            except Exception as e:
+                logging.warning(f"{symbol}-{tf_name}: Failed to read existing data, fetching full range: {e}")
+                start_date = to_dt - timedelta(days=cfg['lookback_days'])
+        else:
+            start_date = to_dt - timedelta(days=cfg['lookback_days'])
+        
+        if start_date >= to_dt:
+            logging.info(f"{symbol}-{tf_name}: Data already up-to-date.")
+            return True  # No need to fetch
+        
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 time.sleep(RATE_LIMIT_DELAY)
-                candles = self.kite.historical_data(token, from_dt, to_dt, cfg['interval'])
+                candles = self.kite.historical_data(token, start_date, to_dt, cfg['interval'])
                 
                 if not candles:
-                    logging.warning(f"{symbol}-{tf_name}: No candle data returned")
-                    return False
+                    logging.info(f"{symbol}-{tf_name}: No new candles to fetch.")
+                    return True
                 
-                df = pd.DataFrame(candles)
-                if len(df) < cfg['min_bars_required']:
-                    logging.warning(f"{symbol}-{tf_name}: Insufficient data ({len(df)} < {cfg['min_bars_required']})")
-                    return False
-
-                # Data preprocessing
-                df.rename(columns={'date': 'datetime'}, inplace=True)
-                df['date'] = pd.to_datetime(df['datetime']).dt.tz_localize(None)
+                df_new = pd.DataFrame(candles)
+                df_new.rename(columns={'date': 'datetime'}, inplace=True)
+                df_new['date'] = pd.to_datetime(df_new['datetime']).dt.tz_localize(None)
                 
-                # Calculate features
-                df = self._calculate_features(df, tf_name)
+                df_new = self._calculate_features(df_new, tf_name)
                 
-                # Select and save columns
                 save_cols = [c for c in ['date','open','high','low','close','volume',
                                          'rsi','atr','adx','ema_fast','ema_slow',
-                                         'volume_sma','volume_ratio','vwap'] if c in df.columns]
+                                         'volume_sma','volume_ratio','vwap'] if c in df_new.columns]
+                df_out = df_new[save_cols].copy()
                 
-                df_out = df[save_cols].copy()
-                output_file = os.path.join(cfg['output_dir'], f"{symbol}.csv")
-                df_out.to_csv(output_file, index=False)
+                if os.path.exists(output_file):
+                    # Append only new rows to avoid duplicates
+                    df_out = df_out[df_out['date'] > last_date]
+                    if not df_out.empty:
+                        df_existing = pd.read_csv(output_file)
+                        df_updated = pd.concat([df_existing, df_out])
+                        df_updated.to_csv(output_file, index=False)
+                        logging.info(f"{symbol}-{tf_name}: Appended {len(df_out)} new candles.")
+                    else:
+                        logging.info(f"{symbol}-{tf_name}: No new candles after last date.")
+                else:
+                    df_out.to_csv(output_file, index=False)
+                    logging.info(f"{symbol}-{tf_name}: Saved full data ({len(df_out)} candles).")
                 
                 return True
-
             except Exception as e:
                 if "Too many requests" in str(e) or "429" in str(e):
                     sleep_time = RETRY_BACKOFF ** attempt
@@ -211,6 +237,7 @@ class SmartHalalFetcher:
         
         logging.error(f"{symbol}-{tf_name}: Failed after {MAX_RETRIES} attempts")
         return False
+
 
     def fetch_all(self):
         """Fetch data for all symbols and timeframes."""

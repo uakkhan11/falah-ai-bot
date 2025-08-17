@@ -38,10 +38,12 @@ class FalahTradingBot:
         self.config = Config()
         self.kite = self.config.kite
         self.running = False
+
         import threading as th
         if th.current_thread() is th.main_thread():
             signal.signal(signal.SIGINT, self.shutdown)
             signal.signal(signal.SIGTERM, self.shutdown)
+
         self.config.authenticate()
         self.data_manager = LiveDataManager(self.kite)
         self.order_manager = OrderManager(self.kite, self.config)
@@ -53,6 +55,7 @@ class FalahTradingBot:
         except Exception as e:
             logging.error(f"Google Sheet setup failed: {e}")
             self.gsheet = None
+
         self.trade_logger = TradeLogger(
             csv_path="trade_log.csv",
             gsheet_manager=self.gsheet,
@@ -73,6 +76,7 @@ class FalahTradingBot:
             self.trade_logger, self.notifier,
             state_file="exit_state.json"
         )
+
         self.last_status = {}
         self.last_summary_date = None
         self.daily_trade_count = 0
@@ -80,21 +84,27 @@ class FalahTradingBot:
         self.min_batch_size = 5
         self.max_batch_size = 25
 
-        # Load instruments and trading list, verify not None
+        # Fetch instruments safely
         self.data_manager.get_instruments()
-        if hasattr(self.data_manager, 'instruments') and self.data_manager.instruments:
+        if hasattr(self.data_manager, "instruments") and self.data_manager.instruments:
             self.instruments = self.data_manager.instruments
         else:
             logging.error("Error: Could not fetch instruments. Check API credentials, endpoints, and file paths.")
             self.instruments = {}
-            self.trading_symbols = self.load_trading_symbols()
+
+        # Load trading symbols once
+        self.trading_symbols = self.load_trading_symbols()
+
+        # Check and log missing instruments
         missing = [s for s in self.trading_symbols if s not in self.instruments]
         if missing:
             logging.error(f"Instrument token not found for: {', '.join(missing)}")
+
+        # Safely create instrument tokens list
         self.instrument_tokens = [self.instruments[s] for s in self.trading_symbols if s in self.instruments]
-        self.trading_symbols = self.load_trading_symbols()
-        self.instrument_tokens = [self.instruments[s] for s in self.trading_symbols if s in self.instruments]
+
         self.live_price_streamer = LivePriceStreamer(self.kite, self.instrument_tokens)
+
 
     def shutdown(self, signum, frame):
         print("\n🛑 Shutting down bot...")

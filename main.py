@@ -88,6 +88,12 @@ class FalahTradingBot:
         else:
             self.instruments = self.data_manager.instruments
 
+        # Before mapping tokens
+        missing = [s for s in self.trading_symbols if s not in self.instruments]
+        if missing:
+            logging.error(f"Instrument token not found for: {', '.join(missing)}")
+        self.instrument_tokens = [self.instruments[s] for s in self.trading_symbols if s in self.instruments]
+
         self.trading_symbols = self.load_trading_symbols()
         self.instrument_tokens = [self.instruments[s] for s in self.trading_symbols if s in self.instruments]
         self.live_price_streamer = LivePriceStreamer(self.kite, self.instrument_tokens)

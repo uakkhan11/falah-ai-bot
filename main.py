@@ -38,12 +38,10 @@ class FalahTradingBot:
         self.config = Config()
         self.kite = self.config.kite
         self.running = False
-
         import threading as th
         if th.current_thread() is th.main_thread():
             signal.signal(signal.SIGINT, self.shutdown)
             signal.signal(signal.SIGTERM, self.shutdown)
-
         self.config.authenticate()
         self.data_manager = LiveDataManager(self.kite)
         self.order_manager = OrderManager(self.kite, self.config)
@@ -55,7 +53,6 @@ class FalahTradingBot:
         except Exception as e:
             logging.error(f"Google Sheet setup failed: {e}")
             self.gsheet = None
-
         self.trade_logger = TradeLogger(
             csv_path="trade_log.csv",
             gsheet_manager=self.gsheet,
@@ -76,14 +73,12 @@ class FalahTradingBot:
             self.trade_logger, self.notifier,
             state_file="exit_state.json"
         )
-
         self.last_status = {}
         self.last_summary_date = None
         self.daily_trade_count = 0
         self.current_batch_size = 25
         self.min_batch_size = 5
         self.max_batch_size = 25
-
         # Fetch instruments safely
         self.data_manager.get_instruments()
         if hasattr(self.data_manager, "instruments") and self.data_manager.instruments:
@@ -91,20 +86,15 @@ class FalahTradingBot:
         else:
             logging.error("Error: Could not fetch instruments. Check API credentials, endpoints, and file paths.")
             self.instruments = {}
-
         # Load trading symbols once
         self.trading_symbols = self.load_trading_symbols()
-
         # Check and log missing instruments
         missing = [s for s in self.trading_symbols if s not in self.instruments]
         if missing:
             logging.error(f"Instrument token not found for: {', '.join(missing)}")
-
         # Safely create instrument tokens list
         self.instrument_tokens = [self.instruments[s] for s in self.trading_symbols if s in self.instruments]
-
         self.live_price_streamer = LivePriceStreamer(self.kite, self.instrument_tokens)
-
 
     def shutdown(self, signum, frame):
         print("\n🛑 Shutting down bot...")
@@ -153,13 +143,11 @@ class FalahTradingBot:
             self.order_tracker.update_order_statuses()
             positions = self.order_tracker.get_positions_with_pl()
             positions_with_age = self.holding_tracker.get_holdings_with_age(positions)
-
             # Use asyncio.run but guard against RuntimeError if event loop closed
             try:
                 asyncio.run(self.notifier.send_pnl_update(positions_with_age))
             except RuntimeError:
                 pass
-
             for pos in positions_with_age:
                 if self.last_status.get(pos['symbol']) != pos['holding_status']:
                     try:
@@ -167,7 +155,6 @@ class FalahTradingBot:
                     except RuntimeError:
                         pass
                     self.last_status[pos['symbol']] = pos['holding_status']
-
             today = date.today()
             if self.last_summary_date != today:
                 total_pnl = sum(p['pnl'] for p in positions_with_age)
@@ -192,7 +179,6 @@ class FalahTradingBot:
                     pass
                 self.last_summary_date = today
                 self.daily_trade_count = 0
-
             self.exit_manager.check_and_exit_positions(positions)
             time.sleep(60)
         self.live_price_streamer.stop()

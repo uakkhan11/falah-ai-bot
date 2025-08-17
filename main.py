@@ -8,7 +8,6 @@ from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import FastAPI
 import asyncio
-
 from config import Config
 from improved_fetcher import SmartHalalFetcher
 from live_data_manager import LiveDataManager
@@ -25,9 +24,7 @@ from live_price_streamer import LivePriceStreamer
 
 app = FastAPI()
 
-# --------------------
-# Step 1: Pre-bot data update
-# --------------------
+# --------------
 def update_analysis_data():
     try:
         logging.info("📊 Updating historical data & indicators before strategy execution...")
@@ -37,32 +34,26 @@ def update_analysis_data():
     except Exception as e:
         logging.error(f"❌ Data update failed: {e}")
 
-# --------------------
-# Step 2: Main bot class
-# --------------------
 class FalahTradingBot:
     def __init__(self):
-        # Config & shutdown signals
         self.config = Config()
         self.kite = self.config.kite
         self.running = False
-
-        # Only set signal handlers if running in the main thread
         import threading as th
         if th.current_thread() is th.main_thread():
             signal.signal(signal.SIGINT, self.shutdown)
             signal.signal(signal.SIGTERM, self.shutdown)
-
-        # Authenticate to Kite API
         self.config.authenticate()
-
-        # Core components
         self.data_manager = LiveDataManager(self.kite)
         self.order_manager = OrderManager(self.kite, self.config)
-        self.gsheet = GSheetManager(
-            credentials_file="falah-credentials.json",
-            sheet_key="1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
-        )
+        try:
+            self.gsheet = GSheetManager(
+                credentials_file="falah-credentials.json",
+                sheet_key="1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
+            )
+        except Exception as e:
+            logging.error(f"Google Sheet setup failed: {e}")
+            self.gsheet = None  # <-- ADDED ERROR HANDLING
         self.trade_logger = TradeLogger(
             csv_path="trade_log.csv",
             gsheet_manager=self.gsheet,
@@ -83,8 +74,6 @@ class FalahTradingBot:
             self.trade_logger, self.notifier,
             state_file="exit_state.json"
         )
-
-        # Internal state tracking
         self.last_status = {}
         self.last_summary_date = None
         self.daily_trade_count = 0
@@ -93,25 +82,30 @@ class FalahTradingBot:
         self.max_batch_size = 25
 
         # Load instruments and trading list
-        self.data_manager.get_instruments()  # populates self.data_manager.instruments
+        self.data_manager.get_instruments()
         self.trading_symbols = self.load_trading_symbols()
         self.instruments = self.data_manager.instruments
         self.instrument_tokens = [self.instruments[s] for s in self.trading_symbols if s in self.instruments]
         self.live_price_streamer = LivePriceStreamer(self.kite, self.instrument_tokens)
-
     def shutdown(self, signum, frame):
         print("\n🛑 Shutting down bot...")
         self.running = False
-
     def load_trading_symbols(self):
-        syms = self.gsheet.get_symbols_from_sheet(worksheet_name="HalalList")
+        if self.gsheet is None:
+            fallback = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"]
+            print("⚠️ Using fallback symbols:", fallback)
+            return fallback
+        try:
+            syms = self.gsheet.get_symbols_from_sheet(worksheet_name="HalalList")
+        except Exception as e:
+            print(f"Error fetching sheet symbols: {e}")
+            syms = None
         if not syms:
             fallback = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"]
             print("⚠️ Using fallback symbols:", fallback)
             return fallback
         print(f"📊 Trading {len(syms)} symbols")
         return syms
-
     def calculate_dynamic_position_size(self, symbol, price, atr):
         if atr is None or atr <= 0:
             return 0
@@ -124,7 +118,6 @@ class FalahTradingBot:
         if qty <= 0 or (qty * price) > account_value:
             return 0
         return qty
-
     def run(self):
         print("🚀 Bot started")
         self.running = True
@@ -132,22 +125,27 @@ class FalahTradingBot:
             self.live_price_streamer.start()
         else:
             print("Market closed; skipping live price streaming.")
-
         while self.running:
             self.capital_manager.update_funds()
             self.execute_strategy()
             self.order_tracker.update_order_statuses()
-
             positions = self.order_tracker.get_positions_with_pl()
             positions_with_age = self.holding_tracker.get_holdings_with_age(positions)
 
-            asyncio.create_task(self.notifier.send_pnl_update(positions_with_age))
+            # FIX: must use asyncio.run in thread context
+            try:
+                asyncio.run(self.notifier.send_pnl_update(positions_with_age))   # <-- FIXED
+            except RuntimeError:
+                # Already in an event loop, fallback to await or create_task if in async
+                pass
 
             for pos in positions_with_age:
                 if self.last_status.get(pos['symbol']) != pos['holding_status']:
-                    asyncio.create_task(self.notifier.send_t1_t2_change(pos['symbol'], pos['holding_status']))
+                    try:
+                        asyncio.run(self.notifier.send_t1_t2_change(pos['symbol'], pos['holding_status']))  # <-- FIXED
+                    except RuntimeError:
+                        pass
                     self.last_status[pos['symbol']] = pos['holding_status']
-
             today = date.today()
             if self.last_summary_date != today:
                 total_pnl = sum(p['pnl'] for p in positions_with_age)
@@ -157,7 +155,7 @@ class FalahTradingBot:
                     for p in positions_with_age
                 ]
                 summary_msg = (
-                    f"📅 <b>Daily Summary ({today.strftime('%d-%m-%Y')})</b>\n"
+                    f"📅 <b>Daily Summary ({today.strftime('%d-%m-%Y')})\n"
                     f"Total P&L: ₹{total_pnl:.2f}\n"
                     f"Trades Today: {self.daily_trade_count}\n\n"
                     f"<b>Capital:</b>\n"
@@ -166,15 +164,15 @@ class FalahTradingBot:
                     f"<b>Holdings:</b>\n" +
                     ("\n".join(hold_lines) if hold_lines else "No holdings")
                 )
-                asyncio.create_task(self.notifier.send_message(summary_msg))
+                try:
+                    asyncio.run(self.notifier.send_message(summary_msg))     # <-- FIXED
+                except RuntimeError:
+                    pass
                 self.last_summary_date = today
                 self.daily_trade_count = 0
-
             self.exit_manager.check_and_exit_positions(positions)
             time.sleep(60)
-
         self.live_price_streamer.stop()
-
     def execute_strategy(self):
         symbols = self.trading_symbols
         for i in range(0, len(symbols), self.current_batch_size):
@@ -183,7 +181,6 @@ class FalahTradingBot:
             hourly_data = self.data_manager.get_historical_data_parallel(batch, interval="60minute", days=60)
             fifteen_data = self.data_manager.get_historical_data_parallel(batch, interval="15minute", days=20)
             live_prices = self.data_manager.get_bulk_current_prices(batch)
-
             if self.data_manager.rate_limit_hit:
                 old_size = self.current_batch_size
                 self.current_batch_size = max(self.min_batch_size, self.current_batch_size - 5)
@@ -192,36 +189,28 @@ class FalahTradingBot:
                 if self.current_batch_size < self.max_batch_size:
                     self.current_batch_size += 2
                     print(f"✅ Batch size → {self.current_batch_size}")
-
             positions = self.order_tracker.get_positions_with_pl()
             pos_dict = {p['symbol']: p for p in positions}
-
             def process_symbol(symbol):
                 try:
                     df_daily = daily_data.get(symbol)
                     df_hourly = hourly_data.get(symbol)
                     df_fifteen = fifteen_data.get(symbol)
-
                     if (df_daily is None or df_daily.empty or df_fifteen is None or df_fifteen.empty):
                         return f"⚠️ Not enough data for {symbol}"
-
                     if symbol in pos_dict and pos_dict[symbol]['qty'] > 0:
                         return f"⏩ Already holding {symbol}"
-
                     df_daily = self.add_indicators(df_daily)
                     daily_up = df_daily.iloc[-1]['close'] > df_daily.iloc[-1]['ema200']
-
                     hourly_ok = True
                     if df_hourly is not None and not df_hourly.empty:
                         df_hourly = self.add_indicators(df_hourly)
                         hourly_ok = df_hourly.iloc[-1]['close'] > df_hourly.iloc[-1]['ema200']
-
                     df_fifteen = self.add_indicators(df_fifteen)
                     df_fifteen = self.breakout_signal(df_fifteen)
                     df_fifteen = self.bb_breakout_signal(df_fifteen)
                     df_fifteen = self.bb_pullback_signal(df_fifteen)
                     df_fifteen = self.combine_signals(df_fifteen)
-
                     latest = df_fifteen.iloc[-1]
                     if daily_up and hourly_ok and latest['entry_signal'] == 1:
                         price = self.live_price_streamer.get_price(symbol)
@@ -230,40 +219,50 @@ class FalahTradingBot:
                             desired_qty = self.calculate_dynamic_position_size(symbol, price, atr)
                             qty, cap_reason = self.capital_manager.adjust_quantity_for_capital(symbol, price, desired_qty)
                             allowed, risk_reason = self.risk_manager.allow_trade()
-
                             if qty > 0 and allowed:
                                 order_id = self.order_manager.place_buy_order(symbol, qty, price=price)
                                 if order_id:
                                     self.capital_manager.allocate_capital(qty * price)
                                     self.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_PLACED")
-                                    asyncio.create_task(self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_PLACED"))
-
+                                    try:
+                                        asyncio.run(self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_PLACED"))
+                                    except RuntimeError:
+                                        pass
                                     if cap_reason and desired_qty != qty:
-                                        asyncio.create_task(
-                                            self.notifier.send_message(
-                                                f"💰 {symbol} size adjusted: {desired_qty} → {qty} due to capital limits"
+                                        try:
+                                            asyncio.run(
+                                                self.notifier.send_message(
+                                                    f"💰 {symbol} size adjusted: {desired_qty} → {qty} due to capital limits"
+                                                )
                                             )
-                                        )
+                                        except RuntimeError:
+                                            pass
                                     self.daily_trade_count += 1
                                 else:
                                     self.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_FAILED")
-                                    asyncio.create_task(self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_FAILED"))
+                                    try:
+                                        asyncio.run(self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_FAILED"))
+                                    except RuntimeError:
+                                        pass
                                 return f"✅ Order placed for {symbol} qty={qty}"
                             elif not allowed:
-                                asyncio.create_task(self.notifier.send_message(f"⚠️ Trade blocked for {symbol}: {risk_reason}"))
+                                try:
+                                    asyncio.run(self.notifier.send_message(f"⚠️ Trade blocked for {symbol}: {risk_reason}"))
+                                except RuntimeError:
+                                    pass
                                 return f"⏩ Risk blocked {symbol}: {risk_reason}"
                             else:
-                                asyncio.create_task(self.notifier.send_message(f"💰 Trade blocked for {symbol}: {cap_reason}"))
+                                try:
+                                    asyncio.run(self.notifier.send_message(f"💰 Trade blocked for {symbol}: {cap_reason}"))
+                                except RuntimeError:
+                                    pass
                                 return f"⏩ Capital blocked {symbol}: insufficient funds"
-
                     return f"ℹ️ No trade for {symbol}"
                 except Exception as e:
                     return f"❌ Error processing {symbol}: {e}"
-
             with ThreadPoolExecutor(max_workers=10) as executor:
                 for future in as_completed({executor.submit(process_symbol, s): s for s in batch}):
                     print(future.result())
-
     # Wrappers for indicators
     def add_indicators(self, df): return add_indicators(df)
     def breakout_signal(self, df): return breakout_signal(df)
@@ -271,31 +270,23 @@ class FalahTradingBot:
     def bb_pullback_signal(self, df): return bb_pullback_signal(df)
     def combine_signals(self, df): return combine_signals(df)
 
-# Global bot object reference
 bot = None
-
 def run_bot():
     global bot
     bot = FalahTradingBot()
     bot.run()
-
-# FastAPI startup event: start the bot in the background
 @app.on_event("startup")
 def startup_event():
     threading.Thread(target=run_bot, daemon=True).start()
-
-# API endpoint example: get portfolio summary
 @app.get("/api/portfolio")
 def get_portfolio():
     if bot:
         return {
-            "portfolio_value": 25421,  # Placeholder or replace with real data
+            "portfolio_value": 25421,
             "todays_profit": "+7.2%",
             "open_trades": 12,
         }
     return {}
-
-# API endpoint example: get trades
 @app.get("/api/trades")
 def get_trades():
     if bot:
@@ -304,12 +295,7 @@ def get_trades():
             {"id": 2, "symbol": "TSLA", "quantity": 5, "price": 247.11, "status": "Closed"},
         ]
     return []
-
-# --------------------
-# Step 3: Entry point
-# --------------------
 if __name__ == "__main__":
     update_analysis_data()
-    # Do NOT call bot.run() here since FastAPI startup event starts the bot in a thread
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)

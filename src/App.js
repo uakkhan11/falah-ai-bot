@@ -25,7 +25,7 @@ function App() {
   useEffect(() => {
     async function fetchPortfolio() {
       try {
-        const response = await fetch("http://YOUR_SERVER_IP:8000/api/portfolio");
+        const response = await fetch("http://168.231.123.222:8000/api/portfolio");
         const data = await response.json();
         setPortfolio(data);
       } catch (error) {
@@ -34,7 +34,7 @@ function App() {
     }
     async function fetchTrades() {
       try {
-        const response = await fetch("http://YOUR_SERVER_IP:8000/api/trades");
+        const response = await fetch("http://168.231.123.222:8000/api/trades");
         const data = await response.json();
         setTrades(data);
       } catch (error) {

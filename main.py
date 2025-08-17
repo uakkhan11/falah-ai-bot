@@ -82,18 +82,16 @@ class FalahTradingBot:
 
         # Load instruments and trading list, verify not None
         self.data_manager.get_instruments()
-        if not hasattr(self.data_manager, 'instruments') or self.data_manager.instruments is None:
-            logging.error("Error: data_manager.instruments is None after get_instruments()")
-            self.instruments = {}
-        else:
+        if hasattr(self.data_manager, 'instruments') and self.data_manager.instruments:
             self.instruments = self.data_manager.instruments
-
-        # Before mapping tokens
+        else:
+            logging.error("Error: data_manager.instruments is None or empty after get_instruments()")
+            self.instruments = {}
+            self.trading_symbols = self.load_trading_symbols()
         missing = [s for s in self.trading_symbols if s not in self.instruments]
         if missing:
             logging.error(f"Instrument token not found for: {', '.join(missing)}")
         self.instrument_tokens = [self.instruments[s] for s in self.trading_symbols if s in self.instruments]
-
         self.trading_symbols = self.load_trading_symbols()
         self.instrument_tokens = [self.instruments[s] for s in self.trading_symbols if s in self.instruments]
         self.live_price_streamer = LivePriceStreamer(self.kite, self.instrument_tokens)

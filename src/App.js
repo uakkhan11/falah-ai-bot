@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useRef, useEffect, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
 import PriceChart from "./PriceChart";
 

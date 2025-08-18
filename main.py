@@ -246,38 +246,57 @@ class FalahTradingBot:
             pos_dict = {p['symbol']: p for p in positions}
 
             def process_symbol(symbol):
-                try:
-                    try:
-                        df_daily = pd.read_csv(f"swing_data/{symbol}.csv")
-                    except Exception:
-                        df_daily = None
-                    try:
-                        df_hourly = pd.read_csv(f"intraday_swing_data/{symbol}.csv")
-                    except Exception:
-                        df_hourly = None
-                    try:
-                        df_fifteen = pd.read_csv(f"scalping_data/{symbol}.csv")
-                    except Exception:
-                        df_fifteen = None
-                                     # now continue with your regular checks:
-                    if (df_daily is None or df_daily.empty or df_fifteen is None or df_fifteen.empty):
-                        return f"⚠️ Not enough data for {symbol}"
-                    # Inject live candle OHLCV into df_fifteen as latest candle if needed:
-                    if symbol in self.instruments:
-                        token = self.instruments[symbol]
-                        live_candle = live_candles.get(token)
-                        if live_candle:
-                            # Append or replace last row of df_fifteen with live_candle data
-                            # Example:
-                            live_candle_df = pd.DataFrame([{
-                                'date': live_candle['ts'],
-                                'open': live_candle['open'],
-                                'high': live_candle['high'],
-                                'low': live_candle['low'],
-                                'close': live_candle['close'],
-                                'volume': live_candle['volume'],
-                            }])
-                            df_fifteen = df_fifteen.iloc[:-1].append(live_candle_df, ignore_index=True)
+    try:
+        try:
+            df_daily = pd.read_csv(f"swing_data/{symbol}.csv")
+            df_daily['date'] = pd.to_datetime(df_daily['date'])
+            df_daily = df_daily.sort_values('date').reset_index(drop=True)
+        except Exception:
+            df_daily = None
+        try:
+            df_hourly = pd.read_csv(f"intraday_swing_data/{symbol}.csv")
+            df_hourly['date'] = pd.to_datetime(df_hourly['date'])
+            df_hourly = df_hourly.sort_values('date').reset_index(drop=True)
+        except Exception:
+            df_hourly = None
+        try:
+            df_fifteen = pd.read_csv(f"scalping_data/{symbol}.csv")
+            df_fifteen['date'] = pd.to_datetime(df_fifteen['date'])
+            df_fifteen = df_fifteen.sort_values('date').reset_index(drop=True)
+        except Exception:
+            df_fifteen = None
+
+        # Check columns and minimum length if needed
+        for df, min_rows, label in [
+            (df_daily, 50, 'daily'), (df_fifteen, 20, '15m')
+        ]:
+            if df is not None and (df.empty or len(df) < min_rows):
+                print(f"{symbol}: {label} data insufficient ({len(df) if df is not None else 0}) rows")
+                if label == 'daily':
+                    df_daily = None
+                if label == '15m':
+                    df_fifteen = None
+
+        if (df_daily is None or df_daily.empty or df_fifteen is None or df_fifteen.empty):
+            return f"⚠️ Not enough data for {symbol}"
+
+        # Inject live candle logic (as you wrote, now using pd.concat)
+        if symbol in self.instruments:
+            token = self.instruments[symbol]
+            live_candle = live_candles.get(token)
+            if live_candle:
+                live_candle_df = pd.DataFrame([{
+                    'date': live_candle['ts'],
+                    'open': live_candle['open'],
+                    'high': live_candle['high'],
+                    'low': live_candle['low'],
+                    'close': live_candle['close'],
+                    'volume': live_candle['volume'],
+                }])
+                if len(df_fifteen) > 0:
+                    df_fifteen = pd.concat([df_fifteen.iloc[:-1], live_candle_df], ignore_index=True)
+                else:
+                    df_fifteen = live_candle_df
 
                     if (df_daily is None or df_daily.empty or df_fifteen is None or df_fifteen.empty):
                         return f"⚠️ Not enough data for {symbol}"

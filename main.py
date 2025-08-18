@@ -247,11 +247,21 @@ class FalahTradingBot:
 
             def process_symbol(symbol):
                 try:
-                    # Replace these with your cached historical data loaded once or from CSV files
-                    df_daily = ...  # load historical daily data for symbol
-                    df_hourly = ...  # load historical hourly data for symbol
-                    df_fifteen = ...  # load historical 15 minute data for symbol
-
+                    try:
+                        df_daily = pd.read_csv(f"swing_data/{symbol}.csv")
+                    except Exception:
+                        df_daily = None
+                    try:
+                        df_hourly = pd.read_csv(f"intraday_swing_data/{symbol}.csv")
+                    except Exception:
+                        df_hourly = None
+                    try:
+                        df_fifteen = pd.read_csv(f"scalping_data/{symbol}.csv")
+                    except Exception:
+                        df_fifteen = None
+                                     # now continue with your regular checks:
+                    if (df_daily is None or df_daily.empty or df_fifteen is None or df_fifteen.empty):
+                        return f"⚠️ Not enough data for {symbol}"
                     # Inject live candle OHLCV into df_fifteen as latest candle if needed:
                     if symbol in self.instruments:
                         token = self.instruments[symbol]

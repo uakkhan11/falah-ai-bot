@@ -39,7 +39,7 @@ def update_analysis_data():
 class FalahTradingBot:
     def __init__(self, kite, config):
         self.kite = kite
-        self.config = Config
+        self.config = config
         self.running = False
         import threading as th
         if th.current_thread() is th.main_thread():

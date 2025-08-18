@@ -24,6 +24,17 @@ from live_price_streamer import LivePriceStreamer
 
 app = FastAPI()
 
+config = Config()
+try:
+    config.authenticate()
+except Exception as e:
+    print(f"Authentication error: {e}")
+    sys.exit(1)
+if config.kite is None:
+    print("Error: KiteConnect client not initialized. Exiting.")
+    sys.exit(1)
+live_manager = LiveDataManager(config.kite)
+
 def update_analysis_data():
     try:
         logging.info("📊 Updating historical data & indicators before strategy execution...")

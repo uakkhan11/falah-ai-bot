@@ -22,7 +22,7 @@ from exit_manager import ExitManager
 from capital_manager import CapitalManager
 from live_price_streamer import LivePriceStreamer
 from live_candle_aggregator import LiveCandleAggregator  # Import your new class
-from your_indicators_module import add_indicators, breakout_signal, bb_breakout_signal, bb_pullback_signal, combine_signals  # Import these properly
+from strategy_utils import add_indicators, breakout_signal, bb_breakout_signal, bb_pullback_signal, combine_signals
 
 app = FastAPI()
 

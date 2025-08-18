@@ -246,7 +246,7 @@ class FalahTradingBot:
             pos_dict = {p['symbol']: p for p in positions}
 
            def process_symbol(symbol):
-                try:
+               try:
                     try:
                         df_daily = pd.read_csv(f"swing_data/{symbol}.csv")
                         df_daily['date'] = pd.to_datetime(df_daily['date'])

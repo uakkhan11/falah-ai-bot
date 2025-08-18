@@ -24,16 +24,8 @@ from live_price_streamer import LivePriceStreamer
 
 app = FastAPI()
 
-config = Config()
-try:
-    config.authenticate()
-except Exception as e:
-    print(f"Authentication error: {e}")
-    sys.exit(1)
-if config.kite is None:
-    print("Error: KiteConnect client not initialized. Exiting.")
-    sys.exit(1)
-live_manager = LiveDataManager(config.kite)
+config = None
+bot = None
 
 def update_analysis_data():
     try:
@@ -46,8 +38,8 @@ def update_analysis_data():
 
 class FalahTradingBot:
     def __init__(self):
-        self.config = Config()
-        self.kite = self.config.kite
+        self.kite = kite
+        self.config = Config
         self.running = False
         import threading as th
         if th.current_thread() is th.main_thread():
@@ -296,11 +288,21 @@ bot = None
 
 def run_bot():
     global bot
-    bot = FalahTradingBot()
     bot.run()
 
 @app.on_event("startup")
 def startup_event():
+    global config, bot
+    config = Config()
+    try:
+        config.authenticate()
+    except Exception as e:
+        logging.error(f"Authentication error: {e}")
+        sys.exit(1)
+    if config.kite is None:
+        logging.error("Error: KiteConnect client not initialized. Exiting.")
+        sys.exit(1)
+    bot = FalahTradingBot(config.kite, config)
     threading.Thread(target=run_bot, daemon=True).start()
 
 @app.get("/api/portfolio")
@@ -326,3 +328,4 @@ if __name__ == "__main__":
     update_analysis_data()
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+

@@ -8,6 +8,7 @@ import time
 from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import FastAPI
+from fastapi import Body
 import asyncio
 
 from config import Config
@@ -352,14 +353,95 @@ class FalahTradingBot:
 # FastAPI endpoints
 @app.get("/api/portfolio")
 def get_portfolio():
+    return {
+        "portfolio_value": bot.capital_manager.get_portfolio_value() if bot else None,
+        "todays_profit": bot.capital_manager.get_today_profit() if bot else None,
+        "open_trades": len(bot.order_tracker.get_positions_with_pl()) if bot else 0,
+    }
+
+@app.get("/api/positions/open")
+def get_open_positions():
+    # Returns open positions with details
     if bot:
-        # You can replace with dynamic portfolio data from bot instance
-        return {
-            "portfolio_value": 25421,
-            "todays_profit": "+7.2%",
-            "open_trades": 12,
-        }
-    return {}
+        return bot.order_tracker.get_positions_with_pl()
+    return []
+
+@app.get("/api/positions/closed")
+def get_closed_positions():
+    if bot:
+        return bot.order_tracker.get_closed_positions()  # Implement in your class if not present
+    return []
+
+@app.get("/api/signals")
+def get_signals():
+    # Return most recent signals—adapt as per your implementation
+    if hasattr(bot, "latest_signals"):
+        return bot.latest_signals  # Set this in your strategy logic!
+    return []
+
+@app.get("/api/trades/history")
+def trade_history():
+    # Returns your entire trade log (replace path as necessary)
+    import csv
+    history = []
+    try:
+        with open('trade_log.csv', newline='') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                history.append(row)
+        return history
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/logs")
+def get_logs():
+    # Example: tail your main log file (replace 'bot.log' as needed)
+    try:
+        with open("bot.log", "r") as f:
+            lines = f.readlines()
+        return {"log": lines[-100:]}  # Last 100 lines
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/api/trade/buy")
+def place_buy(symbol: str = Body(...), qty: int = Body(...)):
+    if bot and symbol and qty > 0:
+        price = bot.live_price_streamer.get_price(symbol)
+        if price:
+            order_id = bot.order_manager.place_buy_order(symbol, qty, price=price)
+            if order_id:
+                bot.capital_manager.allocate_capital(qty * price)
+                bot.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_PLACED (manual)")
+                return {"status": "success", "order_id": order_id}
+            else:
+                return {"status": "error", "message": "Order placement failed"}
+    return {"status": "error", "message": "Invalid request or bot offline"}
+
+
+@app.post("/api/trade/sell")
+def place_sell(symbol: str = Body(...), qty: int = Body(...)):
+    # Manual sell order (market)
+    if bot and symbol and qty > 0:
+        price = bot.live_price_streamer.get_price(symbol)
+        if price:
+            order_id = bot.order_manager.place_sell_order(symbol, qty, price=price)
+            if order_id:
+                bot.trade_logger.log_trade(symbol, "SELL", qty, price, "ORDER_PLACED (manual)")
+                return {"status": "success", "order_id": order_id}
+            else:
+                return {"status": "error", "message": "Order placement failed"}
+    return {"status": "error", "message": "Invalid request or bot offline"}
+
+@app.post("/api/trade/exit")
+def manual_exit(symbol: str = Body(...)):
+    # Square off an open position manually
+    if bot:
+        success = bot.exit_manager.exit_position(symbol)
+        if success:
+            return {"status": "success", "message": f"Exited {symbol}"}
+        else:
+            return {"status": "error", "message": "Exit failed or not open"}
+    return {"status": "error", "message": "Bot offline"}
 
 @app.get("/api/trades")
 def get_trades():
@@ -389,6 +471,28 @@ def startup_event():
         sys.exit(1)
     bot = FalahTradingBot(config.kite, config)
     threading.Thread(target=run_bot, daemon=True).start()
+
+user_config = {"capital": 100000, "max_trades": 5}
+
+@app.get("/api/settings")
+def get_settings():
+    return user_config
+
+@app.post("/api/settings")
+def update_settings(
+    capital: int = Body(None), max_trades: int = Body(None)
+):
+    # Update only if values provided
+    if capital is not None:
+        user_config["capital"] = capital
+    if max_trades is not None:
+        user_config["max_trades"] = max_trades
+    # Update your bot’s live values!
+    if bot:
+        bot.capital_manager.set_user_capital(user_config["capital"])
+        bot.max_trades = user_config["max_trades"]
+    return user_config
+
 
 if __name__ == "__main__":
     update_analysis_data()

@@ -1,6 +1,5 @@
-import React, { useRef, useEffect, useState } from "react";
-import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
-
+import React, { useEffect, useState } from "react";
+import { BrowserRouter as Router, Routes, Route, NavLink } from "react-router-dom";
 import PriceChart from "./PriceChart";
 import OpenTrades from "./components/OpenTrades";
 import ManualTrade from "./components/ManualTrade";
@@ -9,12 +8,11 @@ import ManualExit from "./components/ManualExit";
 function Home() {
   return <div>Welcome to the Home page!</div>;
 }
-function Trades() {
-  return <div>Trades Page</div>;
-}
+
 function Live() {
   return <div>Live Status Page</div>;
 }
+
 function Settings() {
   return <div>Settings Page</div>;
 }
@@ -88,32 +86,72 @@ function App() {
             </button>
           </div>
           <nav className="flex-1 p-2 space-y-2">
-            <Link
+            <NavLink
               to="/"
-              className="block py-2 px-3 rounded hover:bg-gray-700 transition-colors"
+              className={({ isActive }) =>
+                `block py-2 px-3 rounded hover:bg-gray-700 transition-colors ${
+                  isActive ? "bg-blue-700 font-bold" : ""
+                }`
+              }
               title="Home"
             >
               🏠 {sidebarOpen && "Home"}
-            </Link>
-            <Link
+            </NavLink>
+            <NavLink
               to="/trades"
-              className="block py-2 px-3 rounded hover:bg-gray-700 transition-colors"
+              className={({ isActive }) =>
+                `block py-2 px-3 rounded hover:bg-gray-700 transition-colors ${
+                  isActive ? "bg-blue-700 font-bold" : ""
+                }`
+              }
               title="Trades"
             >
               📈 {sidebarOpen && "Trades"}
-            </Link>
-            <Link to="/manual-trade" className="block py-2 px-3 rounded hover:bg-gray-700 transition-colors" title="Manual Trade">
+            </NavLink>
+            <NavLink
+              to="/manual-trade"
+              className={({ isActive }) =>
+                `block py-2 px-3 rounded hover:bg-gray-700 transition-colors ${
+                  isActive ? "bg-blue-700 font-bold" : ""
+                }`
+              }
+              title="Manual Trade"
+            >
               💰 {sidebarOpen && "Manual Trade"}
-            </Link>
-            <Link to="/manual-exit" className="block py-2 px-3 rounded hover:bg-gray-700 transition-colors" title="Manual Exit">
+            </NavLink>
+            <NavLink
+              to="/manual-exit"
+              className={({ isActive }) =>
+                `block py-2 px-3 rounded hover:bg-gray-700 transition-colors ${
+                  isActive ? "bg-blue-700 font-bold" : ""
+                }`
+              }
+              title="Manual Exit"
+            >
               🛑 {sidebarOpen && "Manual Exit"}
-            </Link>
-            <Link to="/live" className="block py-2 px-3 rounded hover:bg-gray-700 transition-colors" title="Live">
+            </NavLink>
+            <NavLink
+              to="/live"
+              className={({ isActive }) =>
+                `block py-2 px-3 rounded hover:bg-gray-700 transition-colors ${
+                  isActive ? "bg-blue-700 font-bold" : ""
+                }`
+              }
+              title="Live"
+            >
               🔴 {sidebarOpen && "Live"}
-            </Link>
-            <Link to="/settings" className="block py-2 px-3 rounded hover:bg-gray-700 transition-colors" title="Settings">
+            </NavLink>
+            <NavLink
+              to="/settings"
+              className={({ isActive }) =>
+                `block py-2 px-3 rounded hover:bg-gray-700 transition-colors ${
+                  isActive ? "bg-blue-700 font-bold" : ""
+                }`
+              }
+              title="Settings"
+            >
               ⚙️ {sidebarOpen && "Settings"}
-            </Link>
+            </NavLink>
           </nav>
         </aside>
         {/* Main Content */}

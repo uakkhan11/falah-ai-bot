@@ -1,0 +1,39 @@
+.bg-dashboard {
+  min-height: 100vh;
+  background: url('/icon-512.jpeg') no-repeat center top, #fdf6e3;
+  background-size: 480px auto, cover;
+  position: relative;
+}
+.bg-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(255,255,255,0.7);
+  z-index: 1;
+}
+.main-content {
+  position: relative;
+  z-index: 2;
+}
+.logo {
+  margin: 3rem auto 2rem auto;
+  display: block;
+  max-width: 220px;
+}
+.glass-card {
+  background: rgba(255, 255, 255, 0.80);
+  border-radius: 18px;
+  box-shadow: 0 4px 32px rgba(0,0,0,0.10);
+  backdrop-filter: blur(8px);
+  padding: 2rem;
+  margin: 2rem auto;
+  max-width: 600px;
+  width: 100%;
+}
+@media (max-width: 640px) {
+  .bg-dashboard {
+    background-size: 80vw auto, cover;
+  }
+  .logo {
+    max-width: 120px;
+  }
+}

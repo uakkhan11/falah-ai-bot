@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { BrowserRouter as Router, Routes, Route, NavLink } from "react-router-dom";
 import PriceChart from "./PriceChart";
 import OpenTrades from "./components/OpenTrades";

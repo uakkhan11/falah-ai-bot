@@ -37,7 +37,7 @@ def update_analysis_data():
         logging.error(f"❌ Data update failed: {e}")
 
 class FalahTradingBot:
-    def __init__(self):
+    def __init__(self, kite, config):
         self.kite = kite
         self.config = Config
         self.running = False

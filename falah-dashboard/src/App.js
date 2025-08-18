@@ -4,6 +4,7 @@ import PriceChart from "./PriceChart";
 import OpenTrades from "./components/OpenTrades";
 import ManualTrade from "./components/ManualTrade";
 import ManualExit from "./components/ManualExit";
+import './App.css'
 
 function Home() {
   return <div>Welcome to the Home page!</div>;
@@ -158,6 +159,7 @@ function App() {
         <div className="flex-1 flex flex-col">
           {/* Header */}
           <header className="bg-white shadow flex items-center justify-between px-6 py-4">
+            <img src="/icon-512.jpeg" alt="Falah Logo" className="logo mx-auto max-w-[220px]" />
             <h1 className="text-2xl font-semibold">Falah AI Bot Dashboard</h1>
             <div>User</div>
           </header>

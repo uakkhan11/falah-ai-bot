@@ -247,7 +247,7 @@ class FalahTradingBot:
 
            def process_symbol(symbol):
                try:
-                    try:
+                   try:
                         df_daily = pd.read_csv(f"swing_data/{symbol}.csv")
                         df_daily['date'] = pd.to_datetime(df_daily['date'])
                         df_daily = df_daily.sort_values('date').reset_index(drop=True)

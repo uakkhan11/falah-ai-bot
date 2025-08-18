@@ -252,7 +252,7 @@ class FalahTradingBot:
                         df_daily['date'] = pd.to_datetime(df_daily['date'])
                         df_daily = df_daily.sort_values('date').reset_index(drop=True)
                         print(f"{symbol}: swing_data/{symbol}.csv loaded, shape={df_daily.shape}, min={df_daily['date'].min()}, max={df_daily['date'].max()}")
-                    except Exception:
+                    except Exception as e:
                         print(f"{symbol}: error loading swing_data/{symbol}.csv: {e}")
                         df_daily = None
             
@@ -261,7 +261,7 @@ class FalahTradingBot:
                         df_hourly['date'] = pd.to_datetime(df_hourly['date'])
                         df_hourly = df_hourly.sort_values('date').reset_index(drop=True)
                         print(f"{symbol}: intraday_swing_data/{symbol}.csv loaded, shape={df_hourly.shape}, min={df_hourly['date'].min()}, max={df_hourly['date'].max()}")
-                    except Exception:
+                    except Exception as e:
                         print(f"{symbol}: error loading intraday_swing_data/{symbol}.csv: {e}")
                         df_hourly = None
             
@@ -270,7 +270,7 @@ class FalahTradingBot:
                         df_fifteen['date'] = pd.to_datetime(df_fifteen['date'])
                         df_fifteen = df_fifteen.sort_values('date').reset_index(drop=True)
                         print(f"{symbol}: scalping_data/{symbol}.csv loaded, shape={df_fifteen.shape}, min={df_fifteen['date'].min()}, max={df_fifteen['date'].max()}")
-                    except Exception:
+                    except Exception as e:
                         print(f"{symbol}: error loading scalping_data/{symbol}.csv: {e}")
                         df_fifteen = None
             

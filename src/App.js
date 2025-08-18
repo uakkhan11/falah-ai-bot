@@ -1,6 +1,10 @@
 import React, { useRef, useEffect, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
+
 import PriceChart from "./PriceChart";
+import OpenTrades from "./components/OpenTrades";
+import ManualTrade from "./components/ManualTrade";
+import ManualExit from "./components/ManualExit";
 
 function Home() {
   return <div>Welcome to the Home page!</div>;
@@ -98,18 +102,16 @@ function App() {
             >
               📈 {sidebarOpen && "Trades"}
             </Link>
-            <Link
-              to="/live"
-              className="block py-2 px-3 rounded hover:bg-gray-700 transition-colors"
-              title="Live"
-            >
+            <Link to="/manual-trade" className="block py-2 px-3 rounded hover:bg-gray-700 transition-colors" title="Manual Trade">
+              💰 {sidebarOpen && "Manual Trade"}
+            </Link>
+            <Link to="/manual-exit" className="block py-2 px-3 rounded hover:bg-gray-700 transition-colors" title="Manual Exit">
+              🛑 {sidebarOpen && "Manual Exit"}
+            </Link>
+            <Link to="/live" className="block py-2 px-3 rounded hover:bg-gray-700 transition-colors" title="Live">
               🔴 {sidebarOpen && "Live"}
             </Link>
-            <Link
-              to="/settings"
-              className="block py-2 px-3 rounded hover:bg-gray-700 transition-colors"
-              title="Settings"
-            >
+            <Link to="/settings" className="block py-2 px-3 rounded hover:bg-gray-700 transition-colors" title="Settings">
               ⚙️ {sidebarOpen && "Settings"}
             </Link>
           </nav>
@@ -123,113 +125,10 @@ function App() {
           </header>
           <main className="flex-1 p-6 overflow-auto">
             <Routes>
-              <Route path="/" element={
-                <>
-                  {/* Dashboard Cards */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
-                    <div className="bg-white rounded-lg shadow-md p-6 text-center">
-                      <div className="text-gray-500 mb-2">Portfolio Value</div>
-                      <div className="text-3xl font-bold text-blue-600">
-                        {portfolio ? `$${portfolio.portfolio_value}` : "Loading..."}
-                      </div>
-                    </div>
-                    <div className="bg-white rounded-lg shadow-md p-6 text-center">
-                      <div className="text-gray-500 mb-2">Today's Profit</div>
-                      <div className="text-3xl font-bold text-green-600">
-                        {portfolio ? portfolio.todays_profit : "Loading..."}
-                      </div>
-                    </div>
-                    <div className="bg-white rounded-lg shadow-md p-6 text-center">
-                      <div className="text-gray-500 mb-2">Open Trades</div>
-                      <div className="text-3xl font-bold text-purple-600">
-                        {portfolio ? portfolio.open_trades : "Loading..."}
-                      </div>
-                    </div>
-                  </div>
-                  {/* Portfolio Chart */}
-                  <PriceChart />
-                  {/* Trades Table Section */}
-                  <div>
-                    <h2 className="text-2xl font-semibold mb-4">Trades Table</h2>
-                    {/* Filter and Sort Controls */}
-                    <div className="mb-4 flex flex-wrap items-center gap-4">
-                      <div>
-                        <label className="mr-2 font-semibold">Filter Status:</label>
-                        <select
-                          className="p-2 border rounded"
-                          value={filter}
-                          onChange={(e) => setFilter(e.target.value)}
-                        >
-                          <option value="All">All</option>
-                          <option value="Open">Open</option>
-                          <option value="Closed">Closed</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="mr-2 font-semibold">Sort Price:</label>
-                        <button
-                          className="bg-blue-600 text-white px-3 py-2 rounded mr-2"
-                          onClick={() => setSortOrder("asc")}
-                        >
-                          Low → High
-                        </button>
-                        <button
-                          className="bg-blue-600 text-white px-3 py-2 rounded"
-                          onClick={() => setSortOrder("desc")}
-                        >
-                          High → Low
-                        </button>
-                      </div>
-                    </div>
-                    {/* Trades Table */}
-                    <div className="overflow-x-auto bg-white rounded shadow p-4">
-                      <table className="min-w-full table-auto">
-                        <thead>
-                          <tr className="bg-gray-200 text-gray-600 uppercase text-sm leading-normal">
-                            <th className="py-3 px-6 text-left">Symbol</th>
-                            <th className="py-3 px-6 text-left">Quantity</th>
-                            <th className="py-3 px-6 text-left">Price</th>
-                            <th className="py-3 px-6 text-left">Status</th>
-                            <th className="py-3 px-6 text-left">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody className="text-gray-600 text-sm font-light">
-                          {sortedTrades.map((trade) => (
-                            <tr
-                              key={trade.id}
-                              className="border-b border-gray-200 hover:bg-gray-100"
-                            >
-                              <td className="py-3 px-6 font-medium">{trade.symbol}</td>
-                              <td className="py-3 px-6">{trade.quantity}</td>
-                              <td className="py-3 px-6">${trade.price.toFixed(2)}</td>
-                              <td
-                                className={`py-3 px-6 font-semibold ${
-                                  trade.status === "Open"
-                                    ? "text-green-600"
-                                    : "text-red-600"
-                                }`}
-                              >
-                                {trade.status}
-                              </td>
-                              <td className="py-3 px-6">
-                                {trade.status === "Open" && (
-                                  <button
-                                    className="bg-red-500 text-white px-3 py-1 rounded text-xs"
-                                    onClick={() => alert(`Closing trade for ${trade.symbol}`)}
-                                  >
-                                    Close
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </>
-              } />
-              <Route path="/trades" element={<Trades />} />
+              <Route path="/" element={<Home />} />
+              <Route path="/trades" element={<OpenTrades />} />
+              <Route path="/manual-trade" element={<ManualTrade />} />
+              <Route path="/manual-exit" element={<ManualExit />} />
               <Route path="/live" element={<Live />} />
               <Route path="/settings" element={<Settings />} />
             </Routes>

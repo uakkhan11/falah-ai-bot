@@ -9,6 +9,7 @@ from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import FastAPI
 import asyncio
+
 from config import Config
 from improved_fetcher import SmartHalalFetcher
 from live_data_manager import LiveDataManager
@@ -22,7 +23,7 @@ from telegram_notifier import TelegramNotifier
 from exit_manager import ExitManager
 from capital_manager import CapitalManager
 from live_price_streamer import LivePriceStreamer
-from live_candle_aggregator import LiveCandleAggregator  # Import your new class
+from live_candle_aggregator import LiveCandleAggregator
 from strategy_utils import add_indicators, breakout_signal, bb_breakout_signal, bb_pullback_signal, combine_signals
 
 app = FastAPI()
@@ -48,13 +49,11 @@ class FalahTradingBot:
         self.running = False
         import threading as th
         if th.current_thread() is th.main_thread():
-            # Remove signal handlers here; handle shutdown via FastAPI events instead to avoid threading issues
+            # Removed signal handlers handled in FastAPI lifecycle now
             pass
 
-        # You already authenticated in startup, no need to re-authenticate here
         self.data_manager = LiveDataManager(self.kite)
         self.order_manager = OrderManager(self.kite, self.config)
-
         try:
             self.gsheet = GSheetManager(
                 credentials_file="falah-credentials.json",
@@ -91,7 +90,6 @@ class FalahTradingBot:
         self.min_batch_size = 5
         self.max_batch_size = 25
 
-        # Fetch instruments safely
         self.data_manager.get_instruments()
         if hasattr(self.data_manager, "instruments") and self.data_manager.instruments:
             self.instruments = self.data_manager.instruments
@@ -99,26 +97,19 @@ class FalahTradingBot:
             logging.error("Error: Could not fetch instruments. Check API credentials, endpoints, and file paths.")
             self.instruments = {}
 
-        # Load trading symbols once
         self.trading_symbols = self.load_trading_symbols()
-
-        # Check and log missing instruments
         missing = [s for s in self.trading_symbols if s not in self.instruments]
         if missing:
             logging.error(f"Instrument token not found for: {', '.join(missing)}")
 
-        # Safely create instrument tokens list
         self.instrument_tokens = [self.instruments[s] for s in self.trading_symbols if s in self.instruments]
 
-        # Initialize live price streamer
         self.live_price_streamer = LivePriceStreamer(self.kite, self.instrument_tokens)
-
-        # Initialize Live Candle Aggregator to get ongoing candle data
         self.live_candle_aggregator = LiveCandleAggregator(
             api_key=self.config.API_KEY,
             access_token=self.config.ACCESS_TOKEN,
             tokens=self.instrument_tokens,
-            interval="15minute"  # Or "1hour", or customize as needed
+            interval="15minute"
         )
         self.live_candle_aggregator.start()
 
@@ -168,29 +159,15 @@ class FalahTradingBot:
 
         while self.running:
             self.capital_manager.update_funds()
-
-            # Use pre-fetched historical data loaded once at startup (avoid repeat API calls)
-            # Load from CSV or data_manager cache instead of calling get_historical_data_parallel every loop
-
-            # Example: read daily data from CSV only once at startup or on new candle close
-            # You must implement CSV reading logic according to your setup here if needed
-
-            # Use live candle aggregator for current 15min candle data:
             live_candles = self.live_candle_aggregator.get_all_live_candles()
-
-            # Modify your execute_strategy to use live_candles and cached historical data
-
             self.execute_strategy(live_candles)
-
             self.order_tracker.update_order_statuses()
             positions = self.order_tracker.get_positions_with_pl()
             positions_with_age = self.holding_tracker.get_holdings_with_age(positions)
-
             try:
                 asyncio.run(self.notifier.send_pnl_update(positions_with_age))
             except RuntimeError:
                 pass
-
             for pos in positions_with_age:
                 if self.last_status.get(pos['symbol']) != pos['holding_status']:
                     try:
@@ -198,7 +175,6 @@ class FalahTradingBot:
                     except RuntimeError:
                         pass
                     self.last_status[pos['symbol']] = pos['holding_status']
-
             today = date.today()
             if self.last_summary_date != today:
                 total_pnl = sum(p['pnl'] for p in positions_with_age)
@@ -223,26 +199,14 @@ class FalahTradingBot:
                     pass
                 self.last_summary_date = today
                 self.daily_trade_count = 0
-
             self.exit_manager.check_and_exit_positions(positions)
-
             time.sleep(60)
-
         self.live_price_streamer.stop()
 
     def execute_strategy(self, live_candles):
         symbols = self.trading_symbols
         for i in range(0, len(symbols), self.current_batch_size):
             batch = symbols[i:i + self.current_batch_size]
-
-            # IMPORTANT: Do NOT fetch historical data here every loop to avoid rate limits!
-            # Instead, load data once and cache it or read from CSV files.
-            # Example (pseudo code):
-            # daily_data = load_csv_data(batch, timeframe='day')
-            # hourly_data = load_csv_data(batch, timeframe='60minute')
-            # fifteen_data = load_csv_data(batch, timeframe='15minute')
-
-            # Use live_candles from websocket aggregator instead of fetching current candle from API
             positions = self.order_tracker.get_positions_with_pl()
             pos_dict = {p['symbol']: p for p in positions}
 
@@ -256,7 +220,7 @@ class FalahTradingBot:
                     except Exception as e:
                         print(f"{symbol}: error loading swing_data/{symbol}.csv: {e}")
                         df_daily = None
-            
+
                     try:
                         df_hourly = pd.read_csv(f"intraday_swing_data/{symbol}.csv")
                         df_hourly['date'] = pd.to_datetime(df_hourly['date'])
@@ -265,7 +229,7 @@ class FalahTradingBot:
                     except Exception as e:
                         print(f"{symbol}: error loading intraday_swing_data/{symbol}.csv: {e}")
                         df_hourly = None
-            
+
                     try:
                         df_fifteen = pd.read_csv(f"scalping_data/{symbol}.csv")
                         df_fifteen['date'] = pd.to_datetime(df_fifteen['date'])
@@ -274,8 +238,7 @@ class FalahTradingBot:
                     except Exception as e:
                         print(f"{symbol}: error loading scalping_data/{symbol}.csv: {e}")
                         df_fifteen = None
-            
-                    # Initial basic checks
+
                     for df, min_rows, label in [
                         (df_daily, 50, 'daily'), (df_fifteen, 20, '15m')
                     ]:
@@ -285,11 +248,10 @@ class FalahTradingBot:
                                 df_daily = None
                             if label == '15m':
                                 df_fifteen = None
-            
+
                     if df_daily is None or df_fifteen is None:
                         return f"⚠️ Not enough data for {symbol} (initial check)"
-            
-                    # Inject live candle into df_fifteen
+
                     if symbol in self.instruments:
                         token = self.instruments[symbol]
                         live_candle = live_candles.get(token)
@@ -306,25 +268,18 @@ class FalahTradingBot:
                                 df_fifteen = pd.concat([df_fifteen.iloc[:-1], live_candle_df], ignore_index=True)
                             else:
                                 df_fifteen = live_candle_df
-            
-                    # Debug prints to check final DataFrame status
+
                     print(f"{symbol} df_daily shape: {df_daily.shape if df_daily is not None else 'None'}")
                     print(f"{symbol} df_fifteen shape after live candle injection: {df_fifteen.shape if df_fifteen is not None else 'None'}")
-            
-                    # Final check after live candle injection
+
                     if df_daily.empty or df_fifteen.empty:
                         return f"⚠️ Not enough data for {symbol} (after live candle injection)"
-            
-                    # Proceed with your other trading logic...
-            
-                    # Example early position check
+
                     if symbol in pos_dict and pos_dict[symbol]['qty'] > 0:
                         return f"⏩ Already holding {symbol}"
 
-                    # Use your properly imported indicator functions here
                     df_daily = add_indicators(df_daily)
                     daily_up = df_daily.iloc[-1]['close'] > df_daily.iloc[-1]['ema200']
-
                     hourly_ok = True
                     if df_hourly is not None and not df_hourly.empty:
                         df_hourly = add_indicators(df_hourly)
@@ -335,8 +290,8 @@ class FalahTradingBot:
                     df_fifteen = bb_breakout_signal(df_fifteen)
                     df_fifteen = bb_pullback_signal(df_fifteen)
                     df_fifteen = combine_signals(df_fifteen)
-
                     latest = df_fifteen.iloc[-1]
+
                     if daily_up and hourly_ok and latest['entry_signal'] == 1:
                         price = self.live_price_streamer.get_price(symbol)
                         if price is not None and price > 0:
@@ -350,10 +305,12 @@ class FalahTradingBot:
                                 if order_id:
                                     self.capital_manager.allocate_capital(qty * price)
                                     self.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_PLACED")
+
                                     try:
                                         asyncio.run(self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_PLACED"))
                                     except RuntimeError:
                                         pass
+
                                     if cap_reason and desired_qty != qty:
                                         try:
                                             asyncio.run(
@@ -363,6 +320,7 @@ class FalahTradingBot:
                                             )
                                         except RuntimeError:
                                             pass
+
                                     self.daily_trade_count += 1
                                 else:
                                     self.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_FAILED")
@@ -391,7 +349,27 @@ class FalahTradingBot:
                 for future in as_completed({executor.submit(process_symbol, s): s for s in batch}):
                     print(future.result())
 
-bot = None
+# FastAPI endpoints
+@app.get("/api/portfolio")
+def get_portfolio():
+    if bot:
+        # You can replace with dynamic portfolio data from bot instance
+        return {
+            "portfolio_value": 25421,
+            "todays_profit": "+7.2%",
+            "open_trades": 12,
+        }
+    return {}
+
+@app.get("/api/trades")
+def get_trades():
+    if bot:
+        # Replace with live trade data from bot instance
+        return [
+            {"id": 1, "symbol": "AAPL", "quantity": 10, "price": 192.38, "status": "Open"},
+            {"id": 2, "symbol": "TSLA", "quantity": 5, "price": 247.11, "status": "Closed"},
+        ]
+    return []
 
 def run_bot():
     global bot
@@ -411,25 +389,6 @@ def startup_event():
         sys.exit(1)
     bot = FalahTradingBot(config.kite, config)
     threading.Thread(target=run_bot, daemon=True).start()
-
-@app.get("/api/portfolio")
-def get_portfolio():
-    if bot:
-        return {
-            "portfolio_value": 25421,
-            "todays_profit": "+7.2%",
-            "open_trades": 12,
-        }
-    return {}
-
-@app.get("/api/trades")
-def get_trades():
-    if bot:
-        return [
-            {"id": 1, "symbol": "AAPL", "quantity": 10, "price": 192.38, "status": "Open"},
-            {"id": 2, "symbol": "TSLA", "quantity": 5, "price": 247.11, "status": "Closed"},
-        ]
-    return []
 
 if __name__ == "__main__":
     update_analysis_data()

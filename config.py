@@ -32,6 +32,11 @@ class Config:
         self.ACCESS_TOKEN = None
         self.kite = None
 
+        # Telegram (optional)
+        self.TELEGRAM_BOT_TOKEN = "7763450358:AAH32bWYyu_hXR6l-UaVMaarFGZ4YFOv6q8"
+        self.TELEGRAM_CHAT_ID = "6784139148"
+        self.ACCESS_TOKEN = None
+        self.kite = None
         logging.basicConfig(level=logging.INFO)
         print(f"📍 Token file path set to: {os.path.abspath(TOKENS_FILE)}")
 

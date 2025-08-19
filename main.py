@@ -9,6 +9,7 @@ from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import FastAPI
 from fastapi import Body
+from falah_bot import FalahTradingBot
 import asyncio
 
 from config import Config

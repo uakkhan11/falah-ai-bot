@@ -9,7 +9,6 @@ from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import FastAPI
 from fastapi import Body
-from falah_bot import FalahTradingBot
 import asyncio
 
 from config import Config
@@ -31,7 +30,7 @@ from strategy_utils import add_indicators, breakout_signal, bb_breakout_signal, 
 app = FastAPI()
 
 config = None
-bot = FalahTradingBot(config.kite, config)
+bot = None
 
 def update_analysis_data():
     try:

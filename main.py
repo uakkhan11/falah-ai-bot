@@ -30,7 +30,7 @@ from strategy_utils import add_indicators, breakout_signal, bb_breakout_signal, 
 app = FastAPI()
 
 config = None
-bot = FalahTradingBot(config.kite, config)
+bot = falah-ai-bot(config.kite, config)
 
 
 def update_analysis_data():

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, NavLink } from "react-router-dom";
+import icon512 from './assets/icon-512.jpeg';
 import PriceChart from "./PriceChart";
 import OpenTrades from "./components/OpenTrades";
 import ManualTrade from "./components/ManualTrade";
@@ -161,7 +162,7 @@ function App() {
           <div className="flex-1 flex flex-col">
             {/* Header */}
             <header className="bg-white shadow flex items-center justify-between px-6 py-4">
-              <img src="/icon-512.jpeg" alt="Falah Logo" className="logo mx-auto max-w-[220px]" />
+              <img src={icon512} alt="Falah Logo" className="logo mx-auto max-w-[220px]" />
               <h1 className="text-2xl font-semibold">Falah AI Bot Dashboard</h1>
               <div>User</div>
             </header>

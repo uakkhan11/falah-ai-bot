@@ -106,7 +106,7 @@ class FalahTradingBot:
 
         self.live_price_streamer = LivePriceStreamer(self.kite, self.instrument_tokens)
         self.live_candle_aggregator = LiveCandleAggregator(
-            tokens=your_tokens_list,
+            tokens=self.instrument_tokens,
             interval="15minute"
         )
         self.live_candle_aggregator.start()

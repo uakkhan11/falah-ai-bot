@@ -1,7 +1,7 @@
 .bg-dashboard {
   min-height: 100vh;
   background: url('/icon-512.jpeg') no-repeat center top, #fdf6e3;
-  background-size: 480px auto, cover;
+  background-size: cover;
   position: relative;
 }
 .bg-overlay {

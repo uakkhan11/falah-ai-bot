@@ -108,9 +108,12 @@ class Config:
                 logging.warning("🚫 Saved ACCESS_TOKEN invalid, need fresh login.")
 
         # No valid token - start fresh login
-        login_url = self.kite.login_url(redirect_uri="http://localhost:8080")
-        request_token = self._get_request_token_from_browser(login_url)
-
+        login_url = self.kite.login_url()
+        print(f"\n🔗 LOGIN URL:\n{login_url}\n")
+        print("1️⃣ Open in browser & login with 2FA.")
+        print("2️⃣ Copy the request_token from the redirected URL.")
+        request_token = input("Paste request_token here: ").strip()
+        
         try:
             print("Exchanging request_token for access_token ...")
             session_data = self.kite.generate_session(request_token, api_secret=self.API_SECRET)

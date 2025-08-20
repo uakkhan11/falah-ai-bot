@@ -12,12 +12,17 @@ INTERVAL_TO_MINUTES = {
 
 class LiveCandleAggregator:
     def __init__(self, tokens, interval="15minute"):
-        self.interval = interval
-        self.tokens = tokens  # List of instrument tokens as int
+        try:
+            self.interval = interval
+            self.tokens = tokens  # List of instrument tokens as int
         
-        # Load Config and authenticate automatically
-        self.config = Config()
-        self.config.authenticate()  # This loads or obtains access token
+            # Load Config and authenticate automatically
+            self.config = Config()
+            self.config.authenticate()  # This loads or obtains access token
+            print("[INFO] LiveCandleAggregator initialized.")
+        except Exception as e:
+            print(f"[ERROR] Exception during initialization: {e}")
+            raise
         
         if not self.config.ACCESS_TOKEN:
             raise Exception("Failed to obtain access token. Cannot start websocket.")
@@ -45,12 +50,14 @@ class LiveCandleAggregator:
         return ts.replace(minute=rounded_minute, second=0, microsecond=0)
     
     def on_ticks(self, ws, ticks):
+        print(f"[DEBUG] Received {len(ticks)} tick(s) at {datetime.now()}")
         now = datetime.now()
         with self._mutex:
             for tick in ticks:
                 token = tick['instrument_token']
                 price = tick.get('last_price') or tick.get('average_price')
                 if price is None:
+                    print(f"[WARNING] Tick for token {token} has no price - skipping")
                     continue
                 volume = tick.get('volume', 0)
                 ts = pd.Timestamp.now()
@@ -70,6 +77,7 @@ class LiveCandleAggregator:
                     c["volume"] = volume 
         
     def on_connect(self, ws, response):
+        print(f"[DEBUG] Connected to WebSocket, subscribing to tokens: {self.tokens}")
         ws.subscribe(self.tokens)
         ws.set_mode(ws.MODE_FULL, self.tokens)
         print(f"Subscribed to tokens: {self.tokens}")
@@ -79,11 +87,19 @@ class LiveCandleAggregator:
         print(f"Websocket closed - Code: {code}, Reason: {reason}")
     
     def start(self):
+        try:
+        print("[INFO] Starting KiteTicker connection...")
         self.kws.connect(threaded=True)
+    except Exception as e:
+        print(f"[ERROR] Error starting KiteTicker websocket: {e}")
     
     def stop(self):
-        self.kws.close()
-        self._stopped = True
+        try:
+            self.kws.close()
+            self._stopped = True
+            print("[INFO] Websocket closed successfully.")
+        except Exception as e:
+            print(f"[ERROR] Error closing KiteTicker websocket: {e}")
     
     def get_live_candle(self, token):
         with self._mutex:

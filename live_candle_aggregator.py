@@ -86,7 +86,7 @@ class LiveCandleAggregator:
         self._stopped = True
         print(f"Websocket closed - Code: {code}, Reason: {reason}")
     
-   def start(self):
+    def start(self):
         import time
         attempt = 0
         max_delay = 300  # 5 minutes max
@@ -101,6 +101,7 @@ class LiveCandleAggregator:
                 print(f"[ERROR] WebSocket connection failed: {e}. Retrying in {wait} seconds...")
                 time.sleep(wait)
                 attempt += 1
+
     
     def stop(self):
         try:

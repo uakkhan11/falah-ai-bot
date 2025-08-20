@@ -87,20 +87,20 @@ class LiveCandleAggregator:
         print(f"Websocket closed - Code: {code}, Reason: {reason}")
     
    def start(self):
-    import time
-    attempt = 0
-    max_delay = 300  # 5 minutes max
-
-    while True:
-        try:
-            print("[INFO] Attempting to start WebSocket connection...")
-            self.kws.connect(threaded=True)
-            break  # Success
-        except Exception as e:
-            wait = min(2 ** attempt, max_delay)
-            print(f"[ERROR] WebSocket connection failed: {e}. Retrying in {wait} seconds...")
-            time.sleep(wait)
-            attempt += 1
+        import time
+        attempt = 0
+        max_delay = 300  # 5 minutes max
+    
+        while True:
+            try:
+                print("[INFO] Attempting to start WebSocket connection...")
+                self.kws.connect(threaded=True)
+                break  # Success
+            except Exception as e:
+                wait = min(2 ** attempt, max_delay)
+                print(f"[ERROR] WebSocket connection failed: {e}. Retrying in {wait} seconds...")
+                time.sleep(wait)
+                attempt += 1
     
     def stop(self):
         try:

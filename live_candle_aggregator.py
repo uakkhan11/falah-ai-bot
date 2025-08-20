@@ -88,10 +88,10 @@ class LiveCandleAggregator:
     
     def start(self):
         try:
-        print("[INFO] Starting KiteTicker connection...")
-        self.kws.connect(threaded=True)
-    except Exception as e:
-        print(f"[ERROR] Error starting KiteTicker websocket: {e}")
+            print("[INFO] Starting KiteTicker connection...")
+            self.kws.connect(threaded=True)
+        except Exception as e:
+            print(f"[ERROR] Error starting KiteTicker websocket: {e}")
     
     def stop(self):
         try:

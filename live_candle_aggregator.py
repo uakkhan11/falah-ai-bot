@@ -86,12 +86,21 @@ class LiveCandleAggregator:
         self._stopped = True
         print(f"Websocket closed - Code: {code}, Reason: {reason}")
     
-    def start(self):
+   def start(self):
+    import time
+    attempt = 0
+    max_delay = 300  # 5 minutes max
+
+    while True:
         try:
-            print("[INFO] Starting KiteTicker connection...")
+            print("[INFO] Attempting to start WebSocket connection...")
             self.kws.connect(threaded=True)
+            break  # Success
         except Exception as e:
-            print(f"[ERROR] Error starting KiteTicker websocket: {e}")
+            wait = min(2 ** attempt, max_delay)
+            print(f"[ERROR] WebSocket connection failed: {e}. Retrying in {wait} seconds...")
+            time.sleep(wait)
+            attempt += 1
     
     def stop(self):
         try:

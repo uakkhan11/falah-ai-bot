@@ -274,9 +274,9 @@ class FalahTradingBot:
                     print(future.result())  
                   
 
-    def create_bot_instance():
-        config = Config()
-        config.authenticate()
-        if config.kite is None:
-            raise RuntimeError("KiteConnect client not initialized.")
-        return FalahTradingBot(config.kite, config)
+def create_bot_instance():
+    config = Config()
+    config.authenticate()
+    if config.kite is None:
+        raise RuntimeError("KiteConnect client not initialized.")
+    return FalahTradingBot(config.kite, config)

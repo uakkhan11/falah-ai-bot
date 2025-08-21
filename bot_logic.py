@@ -99,12 +99,33 @@ class FalahTradingBot:
             return fallback
         return syms
 
+    def get_portfolio_summary(self):
+          try:
+              return {
+                  "portfolio_value": self.capital_manager.get_portfolio_value(),
+                  "todays_profit": self.capital_manager.get_today_profit(),
+                  "open_trades": len(self.order_tracker.get_positions_with_pl())
+              }
+          except Exception as e:
+              return {f"Error getting portfolio summary: {e}"}
+
+    def get_positions(self):
+        try:
+            return self.order_tracker.get_positions_with_pl()
+        except Exception as e:
+            return [{"error": str(e)}]
+
     def run_cycle(self):
-        """Run one iteration of update and strategy logic."""
-        self.capital_manager.update_funds()
-        live_candles = self.live_candle_aggregator.get_all_live_candles()
-        self.execute_strategy(live_candles)
-        self.order_tracker.update_order_statuses()
+        try:
+          """Run one iteration of update and strategy logic."""
+          self.capital_manager.update_funds()
+          live_candles = self.live_candle_aggregator.get_all_live_candles()
+          self.execute_strategy(live_candles)
+          self.order_tracker.update_order_statuses()
+          return "Bot cycle executed successfully."
+        except Exception as e:
+          return f"Error running bot cycle: {e}"
+
 
     def execute_strategy(self, live_candles):
         symbols = self.trading_symbols
@@ -251,27 +272,11 @@ class FalahTradingBot:
             with ThreadPoolExecutor(max_workers=10) as executor:
                 for future in as_completed({executor.submit(process_symbol, s): s for s in batch}):
                     print(future.result())  
-        # Add any additional periodic actions here
+                  
 
-        def get_portfolio_summary(self):
-          try:
-              return {
-                  "portfolio_value": self.capital_manager.get_portfolio_value(),
-                  "todays_profit": self.capital_manager.get_today_profit(),
-                  "open_trades": len(self.order_tracker.get_positions_with_pl())
-              }
-          except Exception as e:
-              return {"error": str(e)}
-
-    def get_positions(self):
-        try:
-            return self.order_tracker.get_positions_with_pl()
-        except Exception as e:
-            return [{"error": str(e)}]
-
-def create_bot_instance():
-    config = Config()
-    config.authenticate()
-    if config.kite is None:
-        raise RuntimeError("KiteConnect client not initialized.")
-    return FalahTradingBot(config.kite, config)
+    def create_bot_instance():
+        config = Config()
+        config.authenticate()
+        if config.kite is None:
+            raise RuntimeError("KiteConnect client not initialized.")
+        return FalahTradingBot(config.kite, config)

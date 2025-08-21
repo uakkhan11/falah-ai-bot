@@ -4,6 +4,7 @@ from bot_logic import create_bot_instance
 
 # Create a single global bot instance on start
 bot = create_bot_instance()
+print(bot)
 
 def generate_access_code(request_code):
     # Example simple hash-based access code; customize as needed

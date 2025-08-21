@@ -254,14 +254,14 @@ class FalahTradingBot:
         # Add any additional periodic actions here
 
         def get_portfolio_summary(self):
-        try:
-            return {
-                "portfolio_value": self.capital_manager.get_portfolio_value(),
-                "todays_profit": self.capital_manager.get_today_profit(),
-                "open_trades": len(self.order_tracker.get_positions_with_pl())
-            }
-        except Exception as e:
-            return {"error": str(e)}
+          try:
+              return {
+                  "portfolio_value": self.capital_manager.get_portfolio_value(),
+                  "todays_profit": self.capital_manager.get_today_profit(),
+                  "open_trades": len(self.order_tracker.get_positions_with_pl())
+              }
+          except Exception as e:
+              return {"error": str(e)}
 
     def get_positions(self):
         try:

@@ -81,4 +81,4 @@ with gr.Blocks() as demo:
         positions_output = gr.Dataframe()
         positions_btn.click(get_positions, outputs=positions_output)
 
-demo.launch()
+demo.launch(share=True)

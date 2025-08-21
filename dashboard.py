@@ -14,20 +14,19 @@ def generate_access_code(request_code):
 
 def update_config(capital, max_trades):
     try:
-        if capital is None or capital <= 0:
-            return "Invalid capital value."
-        if max_trades is None or max_trades <= 0:
-            return "Invalid max trades value."
-        bot.capital_manager.set_user_capital(capital)
-        bot.max_trades = int(max_trades)
-        return f"Configuration updated: Capital = ₹{capital}, Max Trades = {max_trades}"
+        if capital is not None and capital > 0:
+            bot.config.INITIAL_CAPITAL = capital
+            bot.capital_manager.update_funds()  # refresh available funds after update
+        if max_trades is not None and max_trades > 0:
+            bot.max_trades = int(max_trades)
+        return f"Updated capital: {capital}, max trades: {max_trades}"
     except Exception as e:
         return f"Error updating config: {e}"
 
 def run_bot_cycle():
     try:
-        bot.run_cycle()
-        return "Bot cycle executed successfully."
+        result = bot.run_cycle()
+        return result if isinstance(result, str) else "Bot cycle executed successfully."
     except Exception as e:
         return f"Error running bot cycle: {e}"
 

@@ -31,12 +31,11 @@ class Config:
         self.API_SECRET = "yy1wd2wn8r0wx4mus00vxllgss03nuqx"
         self.ACCESS_TOKEN = None
         self.kite = None
-
+        
         # Telegram (optional)
         self.TELEGRAM_BOT_TOKEN = "7763450358:AAH32bWYyu_hXR6l-UaVMaarFGZ4YFOv6q8"
         self.TELEGRAM_CHAT_ID = "6784139148"
-        self.ACCESS_TOKEN = None
-        self.kite = None
+
         logging.basicConfig(level=logging.INFO)
         print(f"📍 Token file path set to: {os.path.abspath(TOKENS_FILE)}")
 
@@ -65,60 +64,29 @@ class Config:
         except Exception as e:
             logging.warning(f"Could not save token: {e}")
 
-    # HTTP server to capture request_token redirect automatically
-    class _RequestHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            parsed_path = urllib.parse.urlparse(self.path)
-            query_components = urllib.parse.parse_qs(parsed_path.query)
-            if "request_token" in query_components:
-                self.server.request_token = query_components["request_token"][0]
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b"Received request_token, you can close this tab.")
-            else:
-                self.send_response(400)
-                self.end_headers()
-                self.wfile.write(b"No request_token found in URL.")
-
-        def log_message(self, format, *args):
-            return  # Suppress logging output
-
-    def _get_request_token_from_browser(self, login_url):
-        # Open login URL in the default web browser
-        print(f"Opening browser for login: {login_url}")
-        webbrowser.open(login_url)
-
-        # Run local HTTP server to catch the request_token redirect from Zerodha
-        server_address = ('', 8080)
-        httpd = HTTPServer(server_address, self._RequestHandler)
-        print("Waiting for request_token on http://localhost:8080 ...")
-        httpd.handle_request()  # only handle one request, then exit
-        print(f"Got request_token: {httpd.request_token}")
-        return httpd.request_token
-
-    def authenticate(self):
-        """Authenticate by loading saved token or automatic interactive login."""
+    def authenticate(self, request_token=None):
+        """Authenticate either by saved token or by using request_token."""
         self._load_saved_token()
         self.kite = KiteConnect(api_key=self.API_KEY)
 
-        if self.ACCESS_TOKEN:
-            print("🔑 Trying saved ACCESS_TOKEN...")
-            self.kite.set_access_token(self.ACCESS_TOKEN)
-            try:
-                profile = self.kite.profile()
-                logging.info(f"Authenticated using saved ACCESS_TOKEN. User: {profile['user_name']}")
-                print(f"✅ Authenticated as {profile['user_name']}")
-                return
-            except Exception:
-                logging.warning("🚫 Saved ACCESS_TOKEN invalid, need fresh login.")
+        if request_token is None:
+            if self.ACCESS_TOKEN:
+                print("🔑 Trying saved ACCESS_TOKEN...")
+                self.kite.set_access_token(self.ACCESS_TOKEN)
+                try:
+                    profile = self.kite.profile()
+                    logging.info(f"Authenticated using saved ACCESS_TOKEN. User: {profile['user_name']}")
+                    print(f"✅ Authenticated as {profile['user_name']}")
+                    return
+                except Exception:
+                    logging.warning("🚫 Saved ACCESS_TOKEN invalid, need fresh login.")
+            # No valid token - require manual login
+            login_url = self.kite.login_url()
+            print(f"\n🔗 LOGIN URL:\n{login_url}\n")
+            print("1️⃣ Open in browser & login with 2FA.")
+            print("2️⃣ Copy the request_token from the redirected URL.")
+            request_token = input("Paste request_token here: ").strip()
 
-        # No valid token - start fresh login
-        login_url = self.kite.login_url()
-        print(f"\n🔗 LOGIN URL:\n{login_url}\n")
-        print("1️⃣ Open in browser & login with 2FA.")
-        print("2️⃣ Copy the request_token from the redirected URL.")
-        request_token = input("Paste request_token here: ").strip()
-        
         try:
             print("Exchanging request_token for access_token ...")
             session_data = self.kite.generate_session(request_token, api_secret=self.API_SECRET)

@@ -18,20 +18,47 @@ from exit_manager import ExitManager
 from capital_manager import CapitalManager
 from live_price_streamer import LivePriceStreamer
 from live_candle_aggregator import LiveCandleAggregator
-from strategy_utils import (add_indicators, breakout_signal, bb_breakout_signal,
-                            bb_pullback_signal, combine_signals)
-
+from strategy_utils import (
+    add_indicators, breakout_signal, bb_breakout_signal,
+    bb_pullback_signal, combine_signals
+)
 
 class FalahTradingBot:
-    def __init__(self, kite, config):
-        self.kite = kite
-        self.config = config
+    def __init__(self):
+        self.kite = None
+        self.config = Config()
         self.running = False
         self.current_batch_size = 25
+        # The following will be set after authentication!
+        self.data_manager = None
+        self.order_manager = None
+        self.gsheet = None
+        self.trade_logger = None
+        self.order_tracker = None
+        self.holding_tracker = None
+        self.risk_manager = None
+        self.notifier = None
+        self.capital_manager = None
+        self.exit_manager = None
+        self.instruments = {}
+        self.trading_symbols = []
+        self.instrument_tokens = []
+        self.live_price_streamer = None
+        self.live_candle_aggregator = None
+        # Other initializations
+        self.last_status = {}
+        self.last_summary_date = None
+        self.daily_trade_count = 0
+        self.authenticated = False
+
+    def authenticate_with_token(self, request_token):
+        """Authenticate with Kite using a request_token provided via UI."""
+        self.config.authenticate(request_token=request_token)
+        self.kite = self.config.kite
+        self.running = False
 
         self.data_manager = LiveDataManager(self.kite)
         self.order_manager = OrderManager(self.kite, self.config)
-
         try:
             self.gsheet = GSheetManager(
                 credentials_file="falah-credentials.json",
@@ -40,7 +67,6 @@ class FalahTradingBot:
         except Exception as e:
             logging.error(f"Google Sheet setup failed: {e}")
             self.gsheet = None
-
         self.trade_logger = TradeLogger(
             csv_path="trade_log.csv",
             gsheet_manager=self.gsheet,
@@ -49,7 +75,6 @@ class FalahTradingBot:
         self.order_tracker = OrderTracker(self.kite, self.trade_logger)
         self.holding_tracker = HoldingTracker("trade_log.csv")
         self.risk_manager = RiskManager(self.config, self.order_tracker)
-
         self.notifier = TelegramNotifier(
             bot_token=self.config.TELEGRAM_BOT_TOKEN,
             chat_id=self.config.TELEGRAM_CHAT_ID
@@ -62,7 +87,6 @@ class FalahTradingBot:
             self.trade_logger, self.notifier,
             state_file="exit_state.json"
         )
-
         # Instruments and symbols loading
         self.data_manager.get_instruments()
         self.instruments = getattr(self.data_manager, 'instruments', {}) or {}
@@ -71,18 +95,13 @@ class FalahTradingBot:
         if missing:
             logging.error(f"Instrument token not found for: {', '.join(missing)}")
         self.instrument_tokens = [self.instruments[s] for s in self.trading_symbols if s in self.instruments]
-
         self.live_price_streamer = LivePriceStreamer(self.kite, self.instrument_tokens)
         self.live_candle_aggregator = LiveCandleAggregator(
             tokens=self.instrument_tokens,
             interval="15minute"
         )
         self.live_candle_aggregator.start()
-
-        # Other initializations
-        self.last_status = {}
-        self.last_summary_date = None
-        self.daily_trade_count = 0
+        self.authenticated = True
 
     def load_trading_symbols(self):
         if self.gsheet is None:
@@ -101,31 +120,36 @@ class FalahTradingBot:
         return syms
 
     def get_portfolio_summary(self):
-          try:
-              return {
-                  "portfolio_value": self.capital_manager.get_portfolio_value(),
-                  "todays_profit": self.capital_manager.get_today_profit(),
-                  "open_trades": len(self.order_tracker.get_positions_with_pl())
-              }
-          except Exception as e:
-              return {f"Error getting portfolio summary: {e}"}
+        try:
+            if not self.authenticated:
+                return {"error": "Bot not authenticated yet."}
+            return {
+                "portfolio_value": self.capital_manager.get_portfolio_value(),
+                "todays_profit": self.capital_manager.get_today_profit(),
+                "open_trades": len(self.order_tracker.get_positions_with_pl())
+            }
+        except Exception as e:
+            return {f"Error getting portfolio summary: {e}"}
 
     def get_positions(self):
         try:
+            if not self.authenticated:
+                return [{"error": "Bot not authenticated yet."}]
             return self.order_tracker.get_positions_with_pl()
         except Exception as e:
             return [{"error": str(e)}]
 
     def run_cycle(self):
         try:
-          """Run one iteration of update and strategy logic."""
-          self.capital_manager.update_funds()
-          live_candles = self.live_candle_aggregator.get_all_live_candles()
-          self.execute_strategy(live_candles)
-          self.order_tracker.update_order_statuses()
-          return "Bot cycle executed successfully."
+            if not self.authenticated:
+                return "Bot not authenticated yet."
+            self.capital_manager.update_funds()
+            live_candles = self.live_candle_aggregator.get_all_live_candles()
+            self.execute_strategy(live_candles)
+            self.order_tracker.update_order_statuses()
+            return "Bot cycle executed successfully."
         except Exception as e:
-          return f"Error running bot cycle: {e}"
+            return f"Error running bot cycle: {e}"
 
 
     def execute_strategy(self, live_candles):
@@ -276,8 +300,5 @@ class FalahTradingBot:
                   
 
 def create_bot_instance():
-    config = Config()
-    config.authenticate()
-    if config.kite is None:
-        raise RuntimeError("KiteConnect client not initialized.")
-    return FalahTradingBot(config.kite, config)
+    # Create the bot but DO NOT authenticate yet
+    return FalahTradingBot()

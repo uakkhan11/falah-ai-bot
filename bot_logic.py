@@ -27,6 +27,7 @@ class FalahTradingBot:
         self.kite = kite
         self.config = config
         self.running = False
+        self.current_batch_size = 25
 
         self.data_manager = LiveDataManager(self.kite)
         self.order_manager = OrderManager(self.kite, self.config)

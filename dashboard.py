@@ -1,13 +1,19 @@
 # dashboard.py - Mobile & Trade-Friendly Falāh Bot Dashboard
 import gradio as gr
-from bot_logic import create_bot_instance
+from botlogic import create_bot_instance
 
-# Create a single global bot instance on start
 bot = create_bot_instance()
-print(bot)
+
+kite_login_url = "https://kite.zerodha.com/connect/login?api_key=YOUR_API_KEY&v=3"
+
+def authenticate_token(request_token):
+    try:
+        bot.authenticate_with_token(request_token)
+        return "✅ Authenticated successfully! You can now use the trading features."
+    except Exception as e:
+        return f"❌ Authentication error: {e}"
 
 def generate_access_code(request_code):
-    # Example simple hash-based access code; customize as needed
     if not request_code:
         return "Please enter a request code."
     access_code = hash(request_code) % 1000000
@@ -25,33 +31,29 @@ def update_config(capital, max_trades):
         return f"Error updating config: {e}"
 
 def run_bot_cycle():
-    try:
-        result = bot.run_cycle()
-        return result if isinstance(result, str) else "Bot cycle executed successfully."
-    except Exception as e:
-        return f"Error running bot cycle: {e}"
+    return bot.run_cycle()
 
 def get_portfolio_summary():
-    try:
-        summary = bot.get_portfolio_summary()
-        return summary
-    except Exception as e:
-        return {"error": str(e)}
+    return bot.get_portfolio_summary()
 
 def get_positions():
-    try:
-        positions = bot.get_positions()
-        # Convert list of dicts to DataFrame for nice display in Gradio
-        import pandas as pd
-        if positions and len(positions) > 0:
-            return pd.DataFrame(positions)
-        else:
-            return "No open positions"
-    except Exception as e:
-        return f"Error fetching positions: {e}"
+    import pandas as pd
+    positions = bot.get_positions()
+    if positions and len(positions) > 0 and isinstance(positions, list):
+        return pd.DataFrame(positions)
+    else:
+        return "No open positions"
+
 
 with gr.Blocks() as demo:
     gr.Markdown("# Falah Trading Bot Dashboard")
+
+    # Kite login and authentication section
+    gr.Markdown(f"## Zerodha Kite Authentication\n[Login here]({kite_login_url})")
+    request_token_input = gr.Textbox(label="Paste request_token here", placeholder="Paste the request_token value from redirect URL")
+    auth_status = gr.Textbox(label="Authentication Status")
+    auth_btn = gr.Button("Authenticate")
+    auth_btn.click(authenticate_token, inputs=request_token_input, outputs=auth_status)
 
     with gr.Row():
         request_code_input = gr.Textbox(label="Enter Request Code", placeholder="Enter your request code here")

@@ -4,7 +4,7 @@ from bot_logic import create_bot_instance
 
 bot = create_bot_instance()
 
-kite_login_url = "https://kite.zerodha.com/connect/login?api_key=YOUR_API_KEY&v=3"
+kite_login_url = "https://kite.trade/connect/login?v=3&api_key=ijzeuwuylr3g0kug"
 
 def authenticate_token(request_token):
     try:

@@ -1,6 +1,6 @@
 # dashboard.py - Mobile & Trade-Friendly Falāh Bot Dashboard
 import gradio as gr
-from botlogic import create_bot_instance
+from bot_logic import create_bot_instance
 
 bot = create_bot_instance()
 

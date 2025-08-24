@@ -8,7 +8,7 @@ from strategy_utils import (
 )
 
 # Path to your bot's fetched swing data
-SWING_DATA_DIR = "swing_data"
+SWING_DATA_DIR = "SmartHalalFetcher"
 
 def load_data_for_symbol(symbol, years=2):
     path = os.path.join(SWING_DATA_DIR, f"{symbol}.csv")

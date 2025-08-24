@@ -199,38 +199,38 @@ def backtest_symbol(df, symbol):
 # Reporting Module
 # ============================================================
 
-def trade_report(trades, equity_curve, initial_capital, symbol):
-    df_trades = pd.DataFrame(trades)
-    if df_trades.empty:
-        print(f"\n{symbol} - No trades executed")
+def overall_report(all_trades, overall_equity):
+    df = pd.DataFrame(all_trades)
+    if df.empty:
+        print("\nNo trades executed in backtest!")
         return
 
-    total_trades = len(df_trades)
-    wins = df_trades[df_trades['pnl'] > 0]
-    losses = df_trades[df_trades['pnl'] <= 0]
+    total_trades = len(df)
+    wins = df[df['pnl'] > 0]
+    losses = df[df['pnl'] <= 0]
 
     win_rate = 100 * len(wins) / total_trades if total_trades else 0
     profit_factor = wins['pnl'].sum() / abs(losses['pnl'].sum()) if len(losses) else np.inf
-    expectancy = df_trades['pnl'].mean() if total_trades else 0
+    expectancy = df['pnl'].mean()
 
-    best_trade = df_trades['pnl'].max()
-    worst_trade = df_trades['pnl'].min()
+    best_trade = df['pnl'].max()
+    worst_trade = df['pnl'].min()
 
-    durations = (df_trades['exit_date'] - df_trades['entry_date']).dt.days
+    durations = (df['exit_date'] - df['entry_date']).dt.days
     avg_duration = durations.mean() if len(durations) else 0
-    exit_counts = df_trades['exit_reason'].value_counts().to_dict()
+    exit_counts = df['exit_reason'].value_counts().to_dict()
 
-    equity_array = np.array(equity_curve)
-    total_return = (equity_array[-1] - initial_capital) / initial_capital * 100
+    equity_array = np.array(overall_equity)
+    total_return = (equity_array[-1] - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
     running_max = np.maximum.accumulate(equity_array)
     dd = (running_max - equity_array) / running_max
     max_dd = dd.max() * 100 if dd.size else 0
     n_years = len(equity_array) / 252
-    CAGR = ((equity_array[-1] / initial_capital) ** (1/n_years) - 1) * 100 if n_years > 0 else 0
+    CAGR = ((equity_array[-1] / INITIAL_CAPITAL) ** (1/n_years) - 1) * 100 if n_years > 0 else 0
     daily_returns = pd.Series(equity_array).pct_change().dropna()
     sharpe = (daily_returns.mean() / daily_returns.std()) * np.sqrt(252) if not daily_returns.empty else 0
 
-    print(f"\n====== Detailed Backtest Report: {symbol} ======")
+    print("\n========= OVERALL BACKTEST SUMMARY =========")
     print(f"Total Trades Taken     : {total_trades}")
     print(f"Winning Trades         : {len(wins)}")
     print(f"Losing Trades          : {len(losses)}")
@@ -246,7 +246,7 @@ def trade_report(trades, equity_curve, initial_capital, symbol):
     print(f"CAGR                   : {CAGR:.2f}%")
     print(f"Max Drawdown           : {max_dd:.2f}%")
     print(f"Sharpe Ratio           : {sharpe:.2f}")
-    print("=====================================\n")
+    print("============================================\n")
 
 # ============================================================
 # Main
@@ -255,12 +255,20 @@ def trade_report(trades, equity_curve, initial_capital, symbol):
 def main():
     symbols = get_symbols_from_gsheet(GOOGLE_SHEET_ID)
 
+    all_trades = []
+    overall_equity = [INITIAL_CAPITAL]  # to simulate portfolio growth
+
     for symbol in symbols:
         df = load_data(symbol)
         if df is None or len(df) < 50:
             continue
         df = compute_indicators(df)
-        trades, eq = backtest_symbol(df, symbol)
+        trades, equity_curve = backtest_symbol(df, symbol)
+        all_trades.extend(trades)
 
-if __name__ == "__main__":
-    main()
+        # merge into overall portfolio equity
+        if equity_curve:
+            overall_equity.extend(equity_curve)
+
+    # Final Combined Report:
+    overall_report(all_trades, overall_equity)

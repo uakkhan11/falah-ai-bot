@@ -5,12 +5,25 @@ import pandas_ta as ta
 from datetime import datetime, timedelta
 from strategy_utils import add_indicators, combine_signals
 
+# Configure your data directories as per your improved_fetcher.py setup
 DATA_DIR_DAILY = "/root/falah-ai-bot/swing_data"
 DATA_DIR_1H = "/root/falah-ai-bot/intraday_swing_data"
 DATA_DIR_15M = "/root/falah-ai-bot/scalping_data"
 
 SYMBOLS = ["RELIANCE", "SUNPHARMA"]
 YEARS_BACK = 2
+
+def add_weekly_ema(df):
+    df = df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df_weekly = df.set_index('date').resample('W-MON')['close'].last().dropna().to_frame()
+    df_weekly['ema50'] = ta.ema(df_weekly['close'], length=50)
+    df_weekly['ema50_slope'] = df_weekly['ema50'].diff()
+    df = df.set_index('date')
+    df['weekly_ema50'] = df_weekly['ema50'].reindex(df.index, method='ffill')
+    df['weekly_ema50_slope'] = df_weekly['ema50_slope'].reindex(df.index, method='ffill')
+    df = df.reset_index()
+    return df
 
 def load_candle_data(symbol, timeframe, years=YEARS_BACK):
     folder_map = {
@@ -55,18 +68,19 @@ def prepare_multitimeframe_data(symbol):
     df_daily = pd.merge(df_daily, daily_15m_agg, on='date', how='left')
     df_daily = pd.merge(df_daily, daily_1h_agg, on='date', how='left')
 
-    df_daily['rsi_15m'].fillna(method='ffill', inplace=True)
-    df_daily['ema20_15m_slope'].fillna(0, inplace=True)
-    df_daily['rsi_1h'].fillna(method='ffill', inplace=True)
-    df_daily['ema50_1h_slope'].fillna(0, inplace=True)
+    # Proper fillna avoiding pandas chained assignment warning
+    df_daily['rsi_15m'] = df_daily['rsi_15m'].ffill()
+    df_daily['ema20_15m_slope'] = df_daily['ema20_15m_slope'].fillna(0)
+    df_daily['rsi_1h'] = df_daily['rsi_1h'].ffill()
+    df_daily['ema50_1h_slope'] = df_daily['ema50_1h_slope'].fillna(0)
 
     df_daily = add_indicators(df_daily)
-    df_daily = add_weekly_ema(df_daily)  # ensure you have this function in your utils
+    df_daily = add_weekly_ema(df_daily)
 
     return df_daily
 
 def modify_combine_signals_with_mtf(df):
-    df = combine_signals(df)  # daily signals
+    df = combine_signals(df)
     long_cond = (
         (df['entry_signal'] == 1) &
         (df['rsi_15m'] > 50) &
@@ -105,6 +119,7 @@ def backtest_mtf(df, symbol):
     trades = []
     trade_count = 0
     regime_fail_count = {}
+
     rolling_atr_mean = df['atr'].rolling(window=20, min_periods=1).mean()
 
     for i in range(1, len(df)):
@@ -124,6 +139,7 @@ def backtest_mtf(df, symbol):
             stop_loss_distance = ATR_SL_MULT * (df['atr'].mean() if not df['atr'].isna().all() else 1)
 
         position_size = min(cash, RISK_PER_TRADE / stop_loss_distance * price)
+
         to_close = []
         for pid, pos in list(positions.items()):
             direction = pos.get('direction', 1)
@@ -150,9 +166,31 @@ def backtest_mtf(df, symbol):
             reason = None
             pnl = 0
 
-            # Implement exit logic, partial scaling, etc. here
+            # Implement your partial scaling and exit logic here
+            # Example for partial with placeholders, extend as per your rules
 
-            # Placeholder for exits, add your partial profit, stop loss, chandelier, regime exit logic here
+            if ret >= PROFIT_TARGET1 and not pos.get('scale1', False):
+                # Partial profit taking logic here
+                pass
+            elif ret >= PROFIT_TARGET2 and not pos.get('scale2', False):
+                # Second partial profit taking / exit
+                pass
+            elif (direction == 1 and price <= adaptive_stop_loss) or (direction == -1 and price >= adaptive_stop_loss):
+                reason = 'ATR Stop Loss'
+            elif pos.get('trail_active', False) and (
+                (direction == 1 and price <= pos.get('trail_stop', 0)) or (direction == -1 and price >= pos.get('trail_stop', 0))
+            ):
+                reason = 'Trailing Stop'
+            elif (direction == 1 and price <= pos.get('chandelier_exit', 0)) or (direction == -1 and price >= pos.get('chandelier_exit', 0)):
+                reason = 'Chandelier Exit'
+            else:
+                pid_key = f"{symbol}_{pid}"
+                if not regime_ok:
+                    regime_fail_count[pid_key] = regime_fail_count.get(pid_key, 0) + 1
+                else:
+                    regime_fail_count[pid_key] = 0
+                if regime_fail_count.get(pid_key, 0) >= 2:
+                    reason = 'Regime Exit'
 
             if reason:
                 buy_val = pos['shares'] * pos['entry_price']

@@ -64,7 +64,7 @@ def bullish_entry_filter(row):
     return (
         row['macd_line'] > 0 and
         row['macd_signal'] > 0 and
-        50 <= row['rsi_14'] <= 70 and
+        35 <= row['rsi_14'] <= 70 and
         row['close'] >= row['bb_lower']
     )
 

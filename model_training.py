@@ -85,7 +85,7 @@ def generate_training_csv(symbols):
     aggregated_df = pd.DataFrame()
     for sym in symbols:
         print(f"Processing symbol: {sym}")
-        df = load_data(sym)
+        df = load_data(sym, "daily")
         if df is None:
             continue
         df = compute_features(df)

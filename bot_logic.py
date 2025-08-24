@@ -152,14 +152,40 @@ class FalahTradingBot:
                 return "Bot not authenticated yet."
             self.capital_manager.update_funds()
             live_candles = self.live_candle_aggregator.get_all_live_candles()
-            self.execute_strategy(live_candles)
-            self.order_tracker.update_order_statuses()
-            return "Bot cycle executed successfully."
+            
+            total_symbols = len(self.trading_symbols)
+            executed = 0
+            failed = 0
+            blocked_risk = 0
+            blocked_capital = 0
+            
+            results = []
+            for symbol in self.trading_symbols:
+                result = self.execute_strategy_for_symbol(live_candles, symbol)
+                results.append(f"{symbol}: {result}")
+                if "Order placed" in result:
+                    executed += 1
+                elif "ORDER_FAILED" in result:
+                    failed += 1
+                elif "Risk blocked" in result:
+                    blocked_risk += 1
+                elif "Capital blocked" in result:
+                    blocked_capital += 1
+            
+            summary = (
+                f"Total symbols processed: {total_symbols}\n"
+                f"Orders executed: {executed}\n"
+                f"Orders failed: {failed}\n"
+                f"Blocked by risk: {blocked_risk}\n"
+                f"Blocked by capital: {blocked_capital}\n"
+                "Details:\n" + "\n".join(results)
+            )
+            return summary
         except Exception as e:
             return f"Error running bot cycle: {e}"
 
 
-    def execute_strategy(self, live_candles):
+    def execute_strategy(self, live_candles, symbol):
         symbols = self.trading_symbols
         for i in range(0, len(symbols), self.current_batch_size):
             batch = symbols[i:i + self.current_batch_size]

@@ -41,7 +41,7 @@ def backtest(df, symbol):
         date, price = row['date'], row['close']
         sig, sigtype = row.get('entry_signal', 0), row.get('entry_type', '')
 
-        regime_ok = (price > row['ema200']) and (row['adx'] > 15) and (row['ema200'].diff().iloc[i] > 0)
+        df['ema200_slope'] = df['ema200'].diff()
 
         # EXIT LOGIC
         to_close = []

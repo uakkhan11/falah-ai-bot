@@ -21,8 +21,7 @@ MAX_POSITIONS = 5
 MAX_TRADES = 2000
 
 def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
-    scope = ['https://spreadsheets.google.com/feeds',
-             'https://www.googleapis.com/auth/drive']
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDS_JSON, scope)
     client = gspread.authorize(creds)
     sheet = client.open_by_key(sheet_id)
@@ -65,8 +64,19 @@ def compute_indicators(df):
     df['high_1d_ago'] = df['high'].shift(1)
     df['low_1d_ago'] = df['low'].shift(1)
     df['volume_1d_ago'] = df['volume'].shift(1)
+    df = calculate_fib_retracement(df)
     df.dropna(inplace=True)
     df.reset_index(drop=True, inplace=True)
+    return df
+
+def calculate_fib_retracement(df):
+    # Calculate daily Fibonacci retracement levels using rolling window
+    # Using last 14 days high and low for calculation
+    period = 14
+    df['fib_high'] = df['high'].rolling(period).max()
+    df['fib_low'] = df['low'].rolling(period).min()
+    df['fib_382'] = df['fib_high'] - 0.382 * (df['fib_high'] - df['fib_low'])
+    df['fib_618'] = df['fib_high'] - 0.618 * (df['fib_high'] - df['fib_low'])
     return df
 
 def bullish_entry_filter(row):
@@ -80,35 +90,42 @@ def bullish_entry_filter(row):
         row['close'] >= row['bb_lower']
     )
 
-# Exit: Chandelier exit combined with ATR-based stop loss (stop loss handled in backtest)
-def exit_logic_chandelier(row):
+# Exit Case 1: Chandelier exit only (stop loss handled in backtest)
+def exit_case_1(row):
     return row['close'] < row['chandelier_exit']
 
+# Exit Case 2: Multi-timeframe not needed in exit logic, same as case 1 (chandelier)
+# But data includes intraday merged features applied before backtest
+
+# Exit Case 3: Fibonacci retracement exit with ATR stop loss
+def exit_case_3(row):
+    # Exit if price falls below 61.8% fib retracement level
+    below_fib_618 = row['close'] < row['fib_618']
+    return below_fib_618
+
 def merge_multitimeframe(daily_df, df_1h, df_15m):
-    # Simple merging: Add intraday volatility or momentum features on daily date index
-    # Resample 1h and 15m to daily max/min for feature merging
+    # Merge 1h and 15m aggregated features as daily max/min/close/volume
+    df = daily_df.copy()
     if df_1h is not None:
+        df_1h = df_1h.copy()
         df_1h['date_daily'] = df_1h['date'].dt.floor('D')
         agg_1h = df_1h.groupby('date_daily').agg({
-            'high': 'max',
-            'low': 'min',
-            'close': 'last',
-            'volume': 'sum'
+            'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
         }).rename(columns=lambda x: x + '_1h')
-        daily_df = daily_df.merge(agg_1h, how='left', left_on='date', right_on='date_daily')
-        daily_df.drop(columns=['date_daily'], inplace=True)
+        df = df.merge(agg_1h, how='left', left_on='date', right_on='date_daily')
+        if 'date_daily' in df.columns:
+            df.drop(columns=['date_daily'], inplace=True)
     if df_15m is not None:
+        df_15m = df_15m.copy()
         df_15m['date_daily'] = df_15m['date'].dt.floor('D')
         agg_15m = df_15m.groupby('date_daily').agg({
-            'high': 'max',
-            'low': 'min',
-            'close': 'last',
-            'volume': 'sum'
+            'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
         }).rename(columns=lambda x: x + '_15m')
-        daily_df = daily_df.merge(agg_15m, how='left', left_on='date', right_on='date_daily')
-        daily_df.drop(columns=['date_daily'], inplace=True)
-    daily_df.fillna(method='ffill', inplace=True)
-    return daily_df
+        df = df.merge(agg_15m, how='left', left_on='date', right_on='date_daily')
+        if 'date_daily' in df.columns:
+            df.drop(columns=['date_daily'], inplace=True)
+    df.fillna(method='ffill', inplace=True)
+    return df
 
 def backtest_symbol(df, symbol, exit_logic, label):
     cash = INITIAL_CAPITAL
@@ -117,7 +134,7 @@ def backtest_symbol(df, symbol, exit_logic, label):
     trade_count = 0
     entry_signal_count = 0
     exit_signal_count = 0
-
+    
     for i in range(1, len(df)):
         row = df.iloc[i]
         date = row['date']
@@ -210,7 +227,7 @@ def backtest_symbol(df, symbol, exit_logic, label):
 def main():
     symbols = get_symbols_from_gsheet(GOOGLE_SHEET_ID)
 
-    # Case 1: Daily data only with chandelier + ATR stop loss
+    # Case 1: Daily only
     print("=== Running Case 1: Daily Data with Chandelier Exit + ATR SL ===")
     summary_case_1 = {'trades': [], 'entries': 0, 'exits': 0}
     for symbol in symbols:
@@ -218,12 +235,12 @@ def main():
         if daily_df is None or len(daily_df) < 20:
             continue
         daily_df = compute_indicators(daily_df)
-        trades, entries, exits = backtest_symbol(daily_df, symbol, exit_logic_chandelier, "Case 1")
+        trades, entries, exits = backtest_symbol(daily_df, symbol, exit_case_1, "Case 1")
         summary_case_1['trades'].extend(trades)
         summary_case_1['entries'] += entries
         summary_case_1['exits'] += exits
 
-    print("\nCase 1 Summary:")
+    print("\nCase 1 Overall Summary:")
     print(f"Total trades: {len(summary_case_1['trades'])}")
     print(f"Total entries signaled: {summary_case_1['entries']}")
     print(f"Total exit logic triggered (excl. stop loss): {summary_case_1['exits']}")
@@ -232,7 +249,7 @@ def main():
     win_rate = (wins / len(summary_case_1['trades']) * 100) if summary_case_1['trades'] else 0
     print(f"Win rate: {win_rate:.2f}%")
 
-    # Case 2: Multi-timeframe merge (daily + 1h + 15m) with chandelier + ATR stop loss
+    # Case 2: Multi-timeframe (daily + 1h + 15m)
     print("\n=== Running Case 2: Multi-timeframe (Daily + 1h + 15m) with Chandelier Exit + ATR SL ===")
     summary_case_2 = {'trades': [], 'entries': 0, 'exits': 0}
     for symbol in symbols:
@@ -243,12 +260,12 @@ def main():
             continue
         df_merged = merge_multitimeframe(daily_df, df_1h, df_15m)
         df_merged = compute_indicators(df_merged)
-        trades, entries, exits = backtest_symbol(df_merged, symbol, exit_logic_chandelier, "Case 2")
+        trades, entries, exits = backtest_symbol(df_merged, symbol, exit_case_1, "Case 2")
         summary_case_2['trades'].extend(trades)
         summary_case_2['entries'] += entries
         summary_case_2['exits'] += exits
 
-    print("\nCase 2 Summary:")
+    print("\nCase 2 Overall Summary:")
     print(f"Total trades: {len(summary_case_2['trades'])}")
     print(f"Total entries signaled: {summary_case_2['entries']}")
     print(f"Total exit logic triggered (excl. stop loss): {summary_case_2['exits']}")

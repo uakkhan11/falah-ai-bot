@@ -54,6 +54,28 @@ class FalahTradingBot:
             logging.error(f"Authentication failed on init: {e}")
             self.authenticated = False
 
+    def get_positions(self):
+        try:
+            positions = self.order_tracker.get_positions_with_pl()
+            if positions and isinstance(positions, list) and len(positions) > 0:
+                return pd.DataFrame(positions)
+            else:
+                return pd.DataFrame()
+        except Exception as e:
+            return pd.DataFrame([{"error": str(e)}])
+
+    def get_portfolio_summary(self):
+        try:
+            if not self.authenticated:
+                return {"error": "Bot not authenticated yet."}
+            return {
+                "portfolio_value": self.capital_manager.get_portfolio_value(),
+                "todays_profit": self.capital_manager.get_today_profit(),
+                "open_trades": len(self.order_tracker.get_positions_with_pl())
+            }
+        except Exception as e:
+            return {"error": f"Error getting portfolio summary: {e}"}
+
     def _post_auth_setup(self):
         self.data_manager = LiveDataManager(self.kite)
         self.order_manager = OrderManager(self.kite, self.config)

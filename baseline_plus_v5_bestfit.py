@@ -18,8 +18,10 @@ SLIPPAGE = 0.0005
 MAX_POSITIONS = 5
 MAX_TRADES = 2000
 
-# Regime volatility threshold for stop loss sensitivity
-VOLATILITY_THRESHOLD = 1.0
+VOLATILITY_THRESHOLD = 1.0  # ATR threshold for regime switching
+SL_ATR_MULT_LOW_VOL = 2.0   # Stop loss multiplier for low vol regime
+SL_ATR_MULT_HIGH_VOL = 3.0  # Stop loss multiplier for high vol regime
+CHANDLER_MULT = 3.0         # Multiplier for chandelier trailing stop
 
 def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -50,31 +52,38 @@ def compute_indicators(df):
     df['bb_lower'] = bbands['BBL_20_2.0']
     df['bb_upper'] = bbands['BBU_20_2.0']
     df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
-    df['supertrend_direction'] = ta.supertrend(df['high'], df['low'], df['close'], length=10, multiplier=3.0)['SUPERTd_10_3.0']
+    chandelier_exit = df['close'] - CHANDLER_MULT * df['atr']
+    df['chandelier_exit'] = chandelier_exit
+    supertrend_df = ta.supertrend(df['high'], df['low'], df['close'], length=10, multiplier=3.0)
+    df['supertrend_direction'] = supertrend_df['SUPERTd_10_3.0']
     df.dropna(inplace=True)
     df.reset_index(drop=True, inplace=True)
     return df
 
 def bullish_entry_filter(row):
-    return (
-        row['macd_line'] > 0 and
-        row['macd_signal'] > 0 and
-        40 <= row['rsi_14'] <= 70 and
-        row['close'] >= row['bb_lower']
-    )
+    return (row['macd_line'] > 0 and row['macd_signal'] > 0 and
+            40 <= row['rsi_14'] <= 70 and row['close'] >= row['bb_lower'])
 
 def momentum_trend_exit(row):
-    # Exit if momentum fading or trend reversing
-    rsi_exit = (row['rsi_14'] < 70) and (row['close'] < row['bb_upper'])
-    trend_exit = row['supertrend_direction'] < 0
-    return rsi_exit or trend_exit
+    # Exit if RSI < 70 and close < upper BB OR supertrend bearish
+    return ((row['rsi_14'] < 70 and row['close'] < row['bb_upper']) or (row['supertrend_direction'] < 0))
 
-def adaptive_sl_atr_multiplier(atr):
-    # Tighter stop loss in calm markets, looser in volatile markets
-    if atr > VOLATILITY_THRESHOLD:
-        return 3.0
+def regime_sl_atr_multiplier(atr):
+    return SL_ATR_MULT_HIGH_VOL if atr > VOLATILITY_THRESHOLD else SL_ATR_MULT_LOW_VOL
+
+def regime_switching_exit(row, pos):
+    sl_atr_mult = regime_sl_atr_multiplier(pos['atr'])
+    entry_price = pos['entry_price']
+    stop_loss_price = entry_price - sl_atr_mult * pos['atr']
+    chandelier_sl = row['chandelier_exit']
+    # Use chandelier stop only in high volatility regime
+    if pos['atr'] > VOLATILITY_THRESHOLD:
+        effective_sl = max(stop_loss_price, chandelier_sl)
     else:
-        return 2.0
+        effective_sl = stop_loss_price
+    stop_loss_hit = (row['low'] <= effective_sl)
+    momentum_exit = momentum_trend_exit(row)
+    return stop_loss_hit, momentum_exit, effective_sl
 
 def backtest_symbol(df, symbol):
     cash = INITIAL_CAPITAL
@@ -93,27 +102,15 @@ def backtest_symbol(df, symbol):
 
         positions_to_close = []
         for pos in positions:
-            sl_atr_mult = adaptive_sl_atr_multiplier(pos['atr'])
-
-            entry_price = pos['entry_price']
-            stop_loss_price = entry_price - sl_atr_mult * pos['atr']
-            stop_loss_hit = df.iloc[i]['low'] <= stop_loss_price
-
-            exit_signal = momentum_trend_exit(row)
-            if stop_loss_hit or exit_signal:
-                exit_price = stop_loss_price if stop_loss_hit else price
-                pnl = (exit_price - entry_price) * pos['shares']
+            stop_loss_hit, momentum_exit, effective_sl = regime_switching_exit(row, pos)
+            if stop_loss_hit or momentum_exit:
+                exit_price = effective_sl if stop_loss_hit else price
+                pnl = (exit_price - pos['entry_price']) * pos['shares']
                 pnl -= abs(pnl) * (TRANSACTION_COST + SLIPPAGE) * 2
                 cash += exit_price * pos['shares'] * (1 - TRANSACTION_COST - SLIPPAGE)
-                trades.append({
-                    'symbol': symbol,
-                    'entry_date': pos['entry_date'],
-                    'exit_date': date,
-                    'pnl': pnl,
-                    'entry_price': entry_price,
-                    'exit_price': exit_price,
-                    'exit_reason': 'Stop Loss' if stop_loss_hit else 'Momentum/Trend Exit'
-                })
+                trades.append({'symbol': symbol, 'entry_date': pos['entry_date'], 'exit_date': date,
+                               'pnl': pnl, 'entry_price': pos['entry_price'], 'exit_price': exit_price,
+                               'exit_reason': 'Stop Loss' if stop_loss_hit else 'Momentum/Trend Exit'})
                 exit_signal_count += 1
                 positions_to_close.append(pos)
                 trade_count += 1
@@ -126,7 +123,8 @@ def backtest_symbol(df, symbol):
 
         if len(positions) < MAX_POSITIONS and cash > 0:
             if bullish_entry_filter(row):
-                position_size = RISK_PER_TRADE / (adaptive_sl_atr_multiplier(row['atr']) * row['atr'])
+                sl_atr_mult = regime_sl_atr_multiplier(row['atr'])
+                position_size = RISK_PER_TRADE / (sl_atr_mult * row['atr'])
                 shares = min(cash / price, position_size)
                 if shares < 1:
                     continue
@@ -144,25 +142,21 @@ def backtest_symbol(df, symbol):
         pnl = (final_close - pos['entry_price']) * pos['shares']
         pnl -= abs(pnl) * (TRANSACTION_COST + SLIPPAGE) * 2
         cash += final_close * pos['shares'] * (1 - TRANSACTION_COST - SLIPPAGE)
-        trades.append({
-            'symbol': symbol,
-            'entry_date': pos['entry_date'],
-            'exit_date': final_date,
-            'pnl': pnl,
-            'entry_price': pos['entry_price'],
-            'exit_price': final_close,
-            'exit_reason': 'EOD Exit'
-        })
+        trades.append({'symbol': symbol, 'entry_date': pos['entry_date'], 'exit_date': final_date,
+                       'pnl': pnl, 'entry_price': pos['entry_price'], 'exit_price': final_close,
+                       'exit_reason': 'EOD Exit'})
         equity_curve.append(cash)
 
     total_pnl = sum(t['pnl'] for t in trades)
     wins = sum(1 for t in trades if t['pnl'] > 0)
     total_trades = len(trades)
     win_rate = (wins / total_trades * 100) if total_trades else 0
+
     equity_array = np.array(equity_curve)
     running_max = np.maximum.accumulate(equity_array)
     drawdowns = (running_max - equity_array) / running_max
-    max_drawdown = np.max(drawdowns) * 100 if drawdowns.size else 0
+    max_drawdown = np.max(drawdowns) * 100 if drawdowns.size > 0 else 0
+
     durations = [(t['exit_date'] - t['entry_date']).days for t in trades if (t['exit_date'] - t['entry_date']).days >= 0]
     avg_duration = np.mean(durations) if durations else 0
 
@@ -170,18 +164,15 @@ def backtest_symbol(df, symbol):
     print(f"Total Trades: {total_trades}, Win Rate: {win_rate:.2f}%")
     print(f"Total PnL: {total_pnl:.2f}")
     print(f"Max Drawdown: {max_drawdown:.2f}%")
-    print(f"Avg Trade Duration: {avg_duration:.2f} days")
+    print(f"Average Trade Duration: {avg_duration:.2f} days")
 
     return total_pnl, win_rate, max_drawdown, avg_duration
 
 def main():
     symbols = get_symbols_from_gsheet(GOOGLE_SHEET_ID)
     total_pnl = 0
-    total_trades = 0
-    total_wins = 0
-    total_drawdowns = []
-    total_durations = []
-
+    max_drawdowns = []
+    durations = []
     for symbol in symbols:
         df = load_data(symbol)
         if df is None or len(df) < 20:
@@ -189,12 +180,13 @@ def main():
         df = compute_indicators(df)
         pnl, win_rate, max_dd, avg_dur = backtest_symbol(df, symbol)
         total_pnl += pnl
-        total_drawdowns.append(max_dd)
-        total_durations.append(avg_dur)
+        max_drawdowns.append(max_dd)
+        durations.append(avg_dur)
 
-    avg_drawdown = np.mean(total_drawdowns) if total_drawdowns else 0
-    avg_duration = np.mean(total_durations) if total_durations else 0
-    print("\n=== Aggregate Strategy Performance ===")
+    avg_drawdown = np.mean(max_drawdowns) if max_drawdowns else 0
+    avg_duration = np.mean(durations) if durations else 0
+
+    print("\n=== Aggregate Performance ===")
     print(f"Total PnL: {total_pnl:.2f}")
     print(f"Average Max Drawdown: {avg_drawdown:.2f}%")
     print(f"Average Trade Duration: {avg_duration:.2f} days")

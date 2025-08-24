@@ -56,12 +56,6 @@ with gr.Blocks() as demo:
     auth_btn.click(authenticate_token, inputs=request_token_input, outputs=auth_status)
 
     with gr.Row():
-        request_code_input = gr.Textbox(label="Enter Request Code", placeholder="Enter your request code here")
-        access_code_output = gr.Textbox(label="Generated Access Code")
-        gen_code_btn = gr.Button("Generate Access Code")
-        gen_code_btn.click(generate_access_code, inputs=request_code_input, outputs=access_code_output)
-
-    with gr.Row():
         capital_input = gr.Number(label="Capital (₹)", value=100000)
         max_trades_input = gr.Number(label="Max Trades", value=5, precision=0)
         update_config_output = gr.Textbox(label="Config Update Status")

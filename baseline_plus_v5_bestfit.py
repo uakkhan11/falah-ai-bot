@@ -256,5 +256,21 @@ def main():
     print(f"Total PnL: {total_pnl:.2f}")
     print(f"Win rate: {win_rate:.2f}%")
 
+    # Now print all results together
+    print("\n\n=== DETAILED SUMMARY OF ALL EXIT CASES ===")
+    for case_label, data in summary_data.items():
+        total_trades = len(data['trades'])
+        total_entries = data['entries']
+        total_exits = data['exits']
+        total_pnl = sum(t['pnl'] for t in data['trades'])
+        wins = sum(1 for t in data['trades'] if t['pnl'] > 0)
+        win_rate = (wins / total_trades * 100) if total_trades else 0
+        print(f"\n{case_label} Overall:")
+        print(f"Total entries signaled: {total_entries}")
+        print(f"Total exit logic triggered (excl. stop loss): {total_exits}")
+        print(f"Total trades executed: {total_trades}")
+        print(f"Total PnL: {total_pnl:.2f}")
+        print(f"Win rate: {win_rate:.2f}%")
+
 if __name__ == "__main__":
     main()

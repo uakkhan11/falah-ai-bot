@@ -92,16 +92,13 @@ def backtest_symbol(df, symbol, exit_logic, label):
     positions = []
     trades = []
     trade_count = 0
-
     # For accumulating indicator counts to report usage
     entry_signal_count = 0
     exit_signal_count = 0
-
     for i in range(1, len(df)):
         row = df.iloc[i]
         date = row['date']
         price = row['close']
-
         positions_to_close = []
         for pos in positions:
             direction = pos['direction']
@@ -110,9 +107,7 @@ def backtest_symbol(df, symbol, exit_logic, label):
             stop_loss_price = entry_price - direction * SL_ATR_MULT * atr
             stop_loss_hit = (direction == 1 and df.iloc[i]['low'] <= stop_loss_price) or \
                             (direction == -1 and df.iloc[i]['high'] >= stop_loss_price)
-
             momentum_exit = exit_logic(row)
-
             if stop_loss_hit or momentum_exit:
                 exit_price = stop_loss_price if stop_loss_hit else price
                 pnl = direction * (exit_price - entry_price) * pos['shares']
@@ -135,7 +130,6 @@ def backtest_symbol(df, symbol, exit_logic, label):
             positions.remove(pos)
         if trade_count >= MAX_TRADES:
             break
-
         # Entry logic
         if len(positions) < MAX_POSITIONS and cash > 0:
             if bullish_entry_filter(row):
@@ -150,10 +144,8 @@ def backtest_symbol(df, symbol, exit_logic, label):
                        'direction': 1, 'atr': atr}
                 positions.append(pos)
                 entry_signal_count +=1
-
         if trade_count >= MAX_TRADES:
             break
-
     # Close remaining open positions at last day close
     final_date = df.iloc[-1]['date']
     final_close = df.iloc[-1]['close']
@@ -172,99 +164,97 @@ def backtest_symbol(df, symbol, exit_logic, label):
                        'exit_price': final_close,
                        'direction': 'Long' if direction == 1 else 'Short',
                        'exit_reason': 'EOD Exit'})
-
-    # Summary metrics for this symbol & case
+    # Summary per symbol
     total_pnl = sum(t['pnl'] for t in trades)
     wins = sum(1 for t in trades if t['pnl'] > 0)
     total_trades = len(trades)
     win_rate = (wins / total_trades * 100) if total_trades else 0
-
     print(f"\n{label} - {symbol} Summary:")
     print(f"Entry signals taken: {entry_signal_count}")
     print(f"Total trades executed: {total_trades}")
     print(f"Total PnL: {total_pnl:.2f}")
     print(f"Win Rate: {win_rate:.2f}%")
     print(f"Exit signals triggered (excluding stop loss): {exit_signal_count}")
-
     return trades, entry_signal_count, exit_signal_count
-
 
 def main():
     symbols = get_symbols_from_gsheet(GOOGLE_SHEET_ID)
-    
-    summaries = []
-
-    # Case 1: Chandelier exit + ATR Stop Loss
+    summary_data = {
+        'Case 1': {'trades': [], 'entries': 0, 'exits': 0},
+        'Case 2': {'trades': [], 'entries': 0, 'exits': 0},
+        'Case 3': {'trades': [], 'entries': 0, 'exits': 0},
+    }
+    # Run Case 1
     print("=== Running Exit Case 1: Chandelier Exit + ATR Stop Loss ===")
-    all_trades_case_1 = []
-    total_entries_1 = 0
-    total_exits_1 = 0
     for symbol in symbols:
         df = load_data(symbol)
         if df is None or len(df) < 20:
             continue
         df = compute_indicators(df)
         trades, entries, exits = backtest_symbol(df, symbol, exit_case_1, "Exit Case 1")
-        all_trades_case_1.extend(trades)
-        total_entries_1 += entries
-        total_exits_1 += exits
+        summary_data['Case 1']['trades'].extend(trades)
+        summary_data['Case 1']['entries'] += entries
+        summary_data['Case 1']['exits'] += exits
+    print("\nExit Case 1 Overall:")
+    total_trades = len(summary_data['Case 1']['trades'])
+    total_entries = summary_data['Case 1']['entries']
+    total_exits = summary_data['Case 1']['exits']
+    total_pnl = sum(t['pnl'] for t in summary_data['Case 1']['trades'])
+    wins = sum(1 for t in summary_data['Case 1']['trades'] if t['pnl'] > 0)
+    win_rate = (wins / total_trades * 100) if total_trades else 0
+    print(f"Total entries signaled: {total_entries}")
+    print(f"Total exit logic triggered (excl. stop loss): {total_exits}")
+    print(f"Total trades executed: {total_trades}")
+    print(f"Total PnL: {total_pnl:.2f}")
+    print(f"Win rate: {win_rate:.2f}%")
 
-    print(f"\nExit Case 1 Overall:")
-    print(f"Total trades: {len(all_trades_case_1)}")
-    print(f"Total entries signaled: {total_entries_1}")
-    print(f"Total exit logic triggered (excl. stop loss): {total_exits_1}")
-    print(f"Total PnL: {sum(t['pnl'] for t in all_trades_case_1):.2f}")
-    wins_1 = sum(1 for t in all_trades_case_1 if t['pnl'] > 0)
-    win_rate_1 = (wins_1 / len(all_trades_case_1) * 100) if all_trades_case_1 else 0
-    print(f"Win rate: {win_rate_1:.2f}%")
-
-    # Case 2: RSI < 70 and close < upper BB
+    # Run Case 2
     print("\n=== Running Exit Case 2: RSI < 70 and Close < Upper Bollinger Band ===")
-    all_trades_case_2 = []
-    total_entries_2 = 0
-    total_exits_2 = 0
     for symbol in symbols:
         df = load_data(symbol)
         if df is None or len(df) < 20:
             continue
         df = compute_indicators(df)
         trades, entries, exits = backtest_symbol(df, symbol, exit_case_2, "Exit Case 2")
-        all_trades_case_2.extend(trades)
-        total_entries_2 += entries
-        total_exits_2 += exits
+        summary_data['Case 2']['trades'].extend(trades)
+        summary_data['Case 2']['entries'] += entries
+        summary_data['Case 2']['exits'] += exits
+    print("\nExit Case 2 Overall:")
+    total_trades = len(summary_data['Case 2']['trades'])
+    total_entries = summary_data['Case 2']['entries']
+    total_exits = summary_data['Case 2']['exits']
+    total_pnl = sum(t['pnl'] for t in summary_data['Case 2']['trades'])
+    wins = sum(1 for t in summary_data['Case 2']['trades'] if t['pnl'] > 0)
+    win_rate = (wins / total_trades * 100) if total_trades else 0
+    print(f"Total entries signaled: {total_entries}")
+    print(f"Total exit logic triggered (excl. stop loss): {total_exits}")
+    print(f"Total trades executed: {total_trades}")
+    print(f"Total PnL: {total_pnl:.2f}")
+    print(f"Win rate: {win_rate:.2f}%")
 
-    print(f"\nExit Case 2 Overall:")
-    print(f"Total trades: {len(all_trades_case_2)}")
-    print(f"Total entries signaled: {total_entries_2}")
-    print(f"Total exit logic triggered (excl. stop loss): {total_exits_2}")
-    print(f"Total PnL: {sum(t['pnl'] for t in all_trades_case_2):.2f}")
-    wins_2 = sum(1 for t in all_trades_case_2 if t['pnl'] > 0)
-    win_rate_2 = (wins_2 / len(all_trades_case_2) * 100) if all_trades_case_2 else 0
-    print(f"Win rate: {win_rate_2:.2f}%")
-
-    # Case 3: SuperTrend based exit
+    # Run Case 3
     print("\n=== Running Exit Case 3: SuperTrend Exit ===")
-    all_trades_case_3 = []
-    total_entries_3 = 0
-    total_exits_3 = 0
     for symbol in symbols:
         df = load_data(symbol)
         if df is None or len(df) < 20:
             continue
         df = compute_indicators(df)
         trades, entries, exits = backtest_symbol(df, symbol, exit_case_3, "Exit Case 3")
-        all_trades_case_3.extend(trades)
-        total_entries_3 += entries
-        total_exits_3 += exits
-
-    print(f"\nExit Case 3 Overall:")
-    print(f"Total trades: {len(all_trades_case_3)}")
-    print(f"Total entries signaled: {total_entries_3}")
-    print(f"Total exit logic triggered (excl. stop loss): {total_exits_3}")
-    print(f"Total PnL: {sum(t['pnl'] for t in all_trades_case_3):.2f}")
-    wins_3 = sum(1 for t in all_trades_case_3 if t['pnl'] > 0)
-    win_rate_3 = (wins_3 / len(all_trades_case_3) * 100) if all_trades_case_3 else 0
-    print(f"Win rate: {win_rate_3:.2f}%")
+        summary_data['Case 3']['trades'].extend(trades)
+        summary_data['Case 3']['entries'] += entries
+        summary_data['Case 3']['exits'] += exits
+    print("\nExit Case 3 Overall:")
+    total_trades = len(summary_data['Case 3']['trades'])
+    total_entries = summary_data['Case 3']['entries']
+    total_exits = summary_data['Case 3']['exits']
+    total_pnl = sum(t['pnl'] for t in summary_data['Case 3']['trades'])
+    wins = sum(1 for t in summary_data['Case 3']['trades'] if t['pnl'] > 0)
+    win_rate = (wins / total_trades * 100) if total_trades else 0
+    print(f"Total entries signaled: {total_entries}")
+    print(f"Total exit logic triggered (excl. stop loss): {total_exits}")
+    print(f"Total trades executed: {total_trades}")
+    print(f"Total PnL: {total_pnl:.2f}")
+    print(f"Win rate: {win_rate:.2f}%")
 
 if __name__ == "__main__":
     main()

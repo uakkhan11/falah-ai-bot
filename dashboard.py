@@ -34,7 +34,8 @@ def update_config(capital, max_trades):
         return f"Error updating config: {e}"
 
 def run_bot_cycle():
-    return bot.run_cycle()
+    result = bot.run_cycle()
+    return result
 
 def get_portfolio_summary():
     return bot.get_portfolio_summary()
@@ -74,7 +75,7 @@ with gr.Blocks() as demo:
 
     with gr.Row():
         run_bot_btn = gr.Button("Run Bot Cycle")
-        run_bot_output = gr.Textbox(label="Bot Run Status")
+        run_bot_output = gr.Textbox(label="Bot Run Status", lines=15)
         run_bot_btn.click(run_bot_cycle, outputs=run_bot_output)
 
     with gr.Row():

@@ -399,7 +399,7 @@ def main():
     generate_training_csv(symbols)
     ml_model = train_and_save_model()
 
-        for symbol in symbols:
+    for symbol in symbols:
         print(f"\nBacktesting {symbol} multi-timeframe with ML filtering...")
         df = prepare_multitimeframe_data(symbol)  # Multi-timeframe data with intraday indicators merged
         if df is None:

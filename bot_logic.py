@@ -1,4 +1,5 @@
 import logging
+import numpy as np
 import pandas as pd
 from config import Config
 from improved_fetcher import SmartHalalFetcher
@@ -16,14 +17,13 @@ from live_price_streamer import LivePriceStreamer
 from live_candle_aggregator import LiveCandleAggregator
 from strategy_utils import add_indicators  # Extend as needed
 
+ATR_MULT = 2.0
 
 class FalahTradingBot:
     def __init__(self):
         self.kite = None
         self.config = Config()
         self.authenticated = False
-
-        # Core modules set after auth
         self.data_manager = None
         self.order_manager = None
         self.gsheet = None
@@ -36,12 +36,15 @@ class FalahTradingBot:
         self.exit_manager = None
         self.live_price_streamer = None
         self.live_candle_aggregator = None
-
         self.trading_symbols = []
         self.instruments = {}
         self.instrument_tokens = []
 
-        # Try auto auth on init if possible
+        # Cooling mode vars
+        self.cooling_mode = False
+        self.max_drawdown_threshold = 10.0  # % drawdown to start cooling
+        self.min_capital_to_trade = 10000   # minimal capital to allow trade
+
         try:
             self.config.authenticate()
             if self.config.kite and self.config.ACCESS_TOKEN:
@@ -53,7 +56,6 @@ class FalahTradingBot:
             self.authenticated = False
 
     def _post_auth_setup(self):
-        # Initialize modules after successful auth
         self.data_manager = LiveDataManager(self.kite)
         self.order_manager = OrderManager(self.kite, self.config)
         try:
@@ -64,7 +66,6 @@ class FalahTradingBot:
         except Exception as e:
             logging.error(f"Failed to setup GSheetManager: {e}")
             self.gsheet = None
-
         self.trade_logger = TradeLogger(
             csv_path="trade_log.csv",
             gsheet_manager=self.gsheet,
@@ -92,7 +93,6 @@ class FalahTradingBot:
         if missing:
             logging.error(f"Tokens not found for symbols: {', '.join(missing)}")
         self.instrument_tokens = [self.instruments[s] for s in self.trading_symbols if s in self.instruments]
-
         self.live_price_streamer = LivePriceStreamer(self.kite, self.instrument_tokens)
         self.live_candle_aggregator = LiveCandleAggregator(
             tokens=self.instrument_tokens,
@@ -125,227 +125,193 @@ class FalahTradingBot:
             return fallback
         return syms
 
-    def get_portfolio_summary(self):
-        try:
-            if not self.authenticated:
-                return {"error": "Bot not authenticated yet."}
-            return {
-                "portfolio_value": self.capital_manager.get_portfolio_value(),
-                "todays_profit": self.capital_manager.get_today_profit(),
-                "open_trades": len(self.order_tracker.get_positions_with_pl())
-            }
-        except Exception as e:
-            return {"error": f"Error getting portfolio summary: {e}"}
+    def check_exit_conditions(self, position, live_row):
+        entry_price = position['entry_price']
+        shares = position['qty']
+        chand_sl = live_row.get('chandelier_exit', 0)
+        atr_sl = entry_price - ATR_MULT * live_row.get('atr', 0)
+        dynamic_sl = max(chand_sl, atr_sl)
+        stop_loss_hit = live_row['low'] <= dynamic_sl if 'low' in live_row else False
+        momentum_exit = (live_row.get('rsi_14', 100) < 70 and live_row['close'] < live_row.get('bb_upper', 0)) or (live_row.get('supertrend_direction', 1) < 0)
+        return stop_loss_hit, momentum_exit, dynamic_sl
 
-    def get_positions(self):
-        try:
-            if not self.authenticated:
-                import pandas as pd
-                return pd.DataFrame([{"error": "Bot not authenticated yet."}])
-            positions = self.order_tracker.get_positions_with_pl()
-            import pandas as pd
-            if positions and isinstance(positions, list) and len(positions) > 0:
-                return pd.DataFrame(positions)
-            else:
-                return pd.DataFrame()
-        except Exception as e:
-            import pandas as pd
-            return pd.DataFrame([{"error": str(e)}])
+    def check_and_apply_cooling(self):
+        equity_curve = self.capital_manager.get_equity_curve()  # You must implement this method returning list of floats
+        if not equity_curve or len(equity_curve) < 2:
+            self.cooling_mode = False
+            self.config.RISK_PER_TRADE = 0.01 * self.capital_manager.get_portfolio_value()
+            return
+        eq_arr = np.array(equity_curve)
+        running_max = np.maximum.accumulate(eq_arr)
+        drawdowns = (running_max - eq_arr) / running_max * 100
+        current_drawdown = np.max(drawdowns)
+        if current_drawdown >= self.max_drawdown_threshold:
+            if not self.cooling_mode:
+                self.cooling_mode = True
+                self.config.RISK_PER_TRADE = max(0.005 * self.capital_manager.get_portfolio_value(), 1000)
+                try:
+                    import asyncio
+                    asyncio.run(self.notifier.send_message(f"⚠️ Cooling Mode Activated! Drawdown reached {current_drawdown:.2f}%"))
+                except RuntimeError:
+                    pass
+        else:
+            if self.cooling_mode and current_drawdown < self.max_drawdown_threshold * 0.8:
+                self.cooling_mode = False
+                self.config.RISK_PER_TRADE = 0.01 * self.capital_manager.get_portfolio_value()
+                try:
+                    import asyncio
+                    asyncio.run(self.notifier.send_message("✅ Cooling Mode Deactivated! Drawdown recovered"))
+                except RuntimeError:
+                    pass
 
     def run_cycle(self):
-    if not self.authenticated:
-        return "Bot not authenticated yet."
+        if not self.authenticated:
+            return "Bot not authenticated yet."
+        self.capital_manager.update_funds()
+        self.check_and_apply_cooling()
 
-    self.capital_manager.update_funds()
-    live_candles = self.live_candle_aggregator.get_all_live_candles()
-    executed = 0
-    failed = 0
-    blocked_risk = 0
-    blocked_capital = 0
-    results = []
+        if self.capital_manager.get_available_capital() < self.min_capital_to_trade:
+            return "⏩ Insufficient capital to place new trades."
 
-    positions = self.order_tracker.get_positions_with_pl()
-    pos_dict = {p['symbol']: p for p in positions} if positions else {}
+        if self.cooling_mode:
+            return "⏩ Trading paused due to cooling mode."
 
-    for symbol in self.trading_symbols:
-        try:
-            # Load daily and 15m historical data CSVs
-            import pandas as pd
+        live_candles = self.live_candle_aggregator.get_all_live_candles()
+        executed = 0
+        failed = 0
+        blocked_risk = 0
+        blocked_capital = 0
+        results = []
 
-            # Load daily data
+        positions = self.order_tracker.get_positions_with_pl()
+        pos_dict = {p['symbol']: p for p in positions} if positions else {}
+
+        for symbol in self.trading_symbols:
             try:
-                df_daily = pd.read_csv(f"swing_data/{symbol}.csv", parse_dates=['date'])
-                df_daily = df_daily.sort_values('date').reset_index(drop=True)
-            except Exception as e:
-                results.append(f"{symbol}: Error loading daily CSV - {e}")
-                continue
-
-            # Load 15-minute scalping data
-            try:
-                df_15m = pd.read_csv(f"scalping_data/{symbol}.csv", parse_dates=['date'])
-                df_15m = df_15m.sort_values('date').reset_index(drop=True)
-            except Exception as e:
-                results.append(f"{symbol}: Error loading 15m CSV - {e}")
-                continue
-
-            if df_daily.empty or df_15m.empty or len(df_daily) < 50 or len(df_15m) < 20:
-                results.append(f"{symbol}: Not enough data")
-                continue
-
-            # Inject latest live candle into 15m dataframe
-            if symbol in self.instruments:
-                token = self.instruments[symbol]
-                live_candle = live_candles.get(token)
-                if live_candle:
-                    live_candle_df = pd.DataFrame([{
-                        'date': live_candle['ts'],
-                        'open': live_candle['open'],
-                        'high': live_candle['high'],
-                        'low': live_candle['low'],
-                        'close': live_candle['close'],
-                        'volume': live_candle['volume'],
-                    }])
-                    df_15m = pd.concat([df_15m.iloc[:-1], live_candle_df], ignore_index=True)
-
-            # Add indicators to daily and 15m data
-            df_daily = add_indicators(df_daily)
-            df_15m = add_indicators(df_15m)
-
-            # Check if holding position
-            if symbol in pos_dict and pos_dict[symbol]['qty'] > 0:
-                # Exit signal check using latest 15m candle
-                latest_row = df_15m.iloc[-1]
-
-                # Implement your exit logic here (stop loss and momentum exit)
-                stop_loss_hit, momentum_exit, dynamic_sl = self.check_exit_conditions(
-                    pos_dict[symbol], latest_row
-                )
-                if stop_loss_hit or momentum_exit:
-                    order_id = self.order_manager.place_sell_order(
-                        symbol, pos_dict[symbol]['qty'], price=latest_row['close']
-                    )
-                    if order_id:
-                        self.capital_manager.free_capital(pos_dict[symbol]['qty'] * latest_row['close'])
-                        self.trade_logger.log_trade(symbol, "SELL", pos_dict[symbol]['qty'],
-                                                  latest_row['close'], "ORDER_PLACED")
-                        try:
-                            import asyncio
-                            asyncio.run(
-                                self.notifier.send_trade_alert(symbol, "SELL",
-                                                              pos_dict[symbol]['qty'],
-                                                              latest_row['close'], "ORDER_PLACED")
-                            )
-                        except RuntimeError:
-                            pass
-                        results.append(f"{symbol} Sell order placed qty={pos_dict[symbol]['qty']}")
-                        executed += 1
-                    else:
-                        self.trade_logger.log_trade(symbol, "SELL", pos_dict[symbol]['qty'],
-                                                  latest_row['close'], "ORDER_FAILED")
-                        results.append(f"{symbol} Sell order failed")
-                        failed += 1
-                else:
-                    results.append(f"{symbol} Holding position, no exit signal")
-                continue  # skip entry check if holding
-
-            # Not holding position, check entry signal on 15m
-            latest_row = df_15m.iloc[-1]
-            daily_up = df_daily.iloc[-1]['close'] > df_daily.iloc[-1]['ema200']
-            hourly_ok = True  # Could add hourly timeframe check if available
-
-            if daily_up and latest_row.get('entry_signal', 0) == 1:
-                price = self.live_price_streamer.get_price(symbol)
-                if price is None or price <= 0:
-                    results.append(f"{symbol}: Invalid live price")
+                import pandas as pd
+                try:
+                    df_daily = pd.read_csv(f"swing_data/{symbol}.csv", parse_dates=['date'])
+                    df_daily = df_daily.sort_values('date').reset_index(drop=True)
+                except Exception as e:
+                    results.append(f"{symbol}: Error loading daily CSV - {e}")
+                    continue
+                try:
+                    df_15m = pd.read_csv(f"scalping_data/{symbol}.csv", parse_dates=['date'])
+                    df_15m = df_15m.sort_values('date').reset_index(drop=True)
+                except Exception as e:
+                    results.append(f"{symbol}: Error loading 15m CSV - {e}")
+                    continue
+                if df_daily.empty or df_15m.empty or len(df_daily) < 50 or len(df_15m) < 20:
+                    results.append(f"{symbol}: Not enough data")
                     continue
 
-                atr = latest_row.get('atr', None)
-                if atr is None or atr <= 0:
-                    results.append(f"{symbol}: Invalid ATR")
-                    continue
+                if symbol in self.instruments:
+                    token = self.instruments[symbol]
+                    live_candle = live_candles.get(token)
+                    if live_candle:
+                        live_candle_df = pd.DataFrame([{
+                            'date': live_candle['ts'],
+                            'open': live_candle['open'],
+                            'high': live_candle['high'],
+                            'low': live_candle['low'],
+                            'close': live_candle['close'],
+                            'volume': live_candle['volume'],
+                        }])
+                        df_15m = pd.concat([df_15m.iloc[:-1], live_candle_df], ignore_index=True)
+                df_daily = add_indicators(df_daily)
+                df_15m = add_indicators(df_15m)
 
-                # Calculate desired quantity based on ATR and risk
-                risk_per_share = ATR_MULT * atr
-                desired_qty = int(self.config.RISK_PER_TRADE / risk_per_share)
-
-                # Check available capital and adjust quantity
-                qty, cap_reason = self.capital_manager.adjust_quantity_for_capital(symbol, price, desired_qty)
-
-                # Risk manager approval
-                allowed, risk_reason = self.risk_manager.allow_trade()
-
-                if qty > 0 and allowed:
-                    order_id = self.order_manager.place_buy_order(symbol, qty, price=price)
-                    if order_id:
-                        self.capital_manager.allocate_capital(qty * price)
-                        self.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_PLACED")
-                        try:
-                            import asyncio
-                            asyncio.run(self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_PLACED"))
-                        except RuntimeError:
-                            pass
-
-                        if cap_reason and desired_qty != qty:
+                if symbol in pos_dict and pos_dict[symbol]['qty'] > 0:
+                    latest_row = df_15m.iloc[-1]
+                    stop_loss_hit, momentum_exit, dynamic_sl = self.check_exit_conditions(pos_dict[symbol], latest_row)
+                    if stop_loss_hit or momentum_exit:
+                        order_id = self.order_manager.place_sell_order(symbol, pos_dict[symbol]['qty'], price=latest_row['close'])
+                        if order_id:
+                            self.capital_manager.free_capital(pos_dict[symbol]['qty'] * latest_row['close'])
+                            self.trade_logger.log_trade(symbol, "SELL", pos_dict[symbol]['qty'], latest_row['close'], "ORDER_PLACED")
                             try:
-                                asyncio.run(self.notifier.send_message(
-                                    f"💰 {symbol} size adjusted: {desired_qty} -> {qty} due to capital limits"))
+                                import asyncio
+                                asyncio.run(self.notifier.send_trade_alert(symbol, "SELL", pos_dict[symbol]['qty'], latest_row['close'], "ORDER_PLACED"))
                             except RuntimeError:
                                 pass
-
-                        executed += 1
-                        results.append(f"{symbol}: Order placed qty={qty}")
+                            results.append(f"{symbol} Sell order placed qty={pos_dict[symbol]['qty']}")
+                            executed += 1
+                        else:
+                            self.trade_logger.log_trade(symbol, "SELL", pos_dict[symbol]['qty'], latest_row['close'], "ORDER_FAILED")
+                            results.append(f"{symbol} Sell order failed")
+                            failed += 1
                     else:
-                        self.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_FAILED")
-                        failed += 1
-                        results.append(f"{symbol}: Order failed")
-                elif not allowed:
-                    blocked_risk += 1
-                    try:
-                        import asyncio
-                        asyncio.run(self.notifier.send_message(f"⚠️ Trade blocked for {symbol}: {risk_reason}"))
-                    except RuntimeError:
-                        pass
-                    results.append(f"⏩ Risk blocked {symbol}: {risk_reason}")
+                        results.append(f"{symbol} Holding position, no exit signal")
+                    continue
+
+                latest_row = df_15m.iloc[-1]
+                daily_up = df_daily.iloc[-1]['close'] > df_daily.iloc[-1].get('ema200', 0)
+                if daily_up and latest_row.get('entry_signal', 0) == 1:
+                    price = self.live_price_streamer.get_price(symbol)
+                    if price is None or price <= 0:
+                        results.append(f"{symbol}: Invalid live price")
+                        continue
+                    atr = latest_row.get('atr', None)
+                    if atr is None or atr <= 0:
+                        results.append(f"{symbol}: Invalid ATR")
+                        continue
+                    risk_per_share = ATR_MULT * atr
+                    desired_qty = int(self.config.RISK_PER_TRADE / risk_per_share)
+                    qty, cap_reason = self.capital_manager.adjust_quantity_for_capital(symbol, price, desired_qty)
+                    allowed, risk_reason = self.risk_manager.allow_trade()
+                    if qty > 0 and allowed:
+                        order_id = self.order_manager.place_buy_order(symbol, qty, price=price)
+                        if order_id:
+                            self.capital_manager.allocate_capital(qty * price)
+                            self.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_PLACED")
+                            try:
+                                import asyncio
+                                asyncio.run(self.notifier.send_trade_alert(symbol, "BUY", qty, price, "ORDER_PLACED"))
+                            except RuntimeError:
+                                pass
+                            if cap_reason and desired_qty != qty:
+                                try:
+                                    asyncio.run(self.notifier.send_message(f"💰 {symbol} size adjusted: {desired_qty} -> {qty} due to capital limits"))
+                                except RuntimeError:
+                                    pass
+                            executed += 1
+                            results.append(f"{symbol}: Order placed qty={qty}")
+                        else:
+                            self.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_FAILED")
+                            failed += 1
+                            results.append(f"{symbol}: Order failed")
+                    elif not allowed:
+                        blocked_risk += 1
+                        try:
+                            import asyncio
+                            asyncio.run(self.notifier.send_message(f"⚠️ Trade blocked for {symbol}: {risk_reason}"))
+                        except RuntimeError:
+                            pass
+                        results.append(f"⏩ Risk blocked {symbol}: {risk_reason}")
+                    else:
+                        blocked_capital += 1
+                        try:
+                            import asyncio
+                            asyncio.run(self.notifier.send_message(f"💰 Trade blocked for {symbol}: {cap_reason}"))
+                        except RuntimeError:
+                            pass
+                        results.append(f"⏩ Capital blocked {symbol}: insufficient funds")
                 else:
-                    blocked_capital += 1
-                    try:
-                        import asyncio
-                        asyncio.run(self.notifier.send_message(f"💰 Trade blocked for {symbol}: {cap_reason}"))
-                    except RuntimeError:
-                        pass
-                    results.append(f"⏩ Capital blocked {symbol}: insufficient funds")
-            else:
-                results.append(f"{symbol}: Entry conditions not met or daily trend down")
+                    results.append(f"{symbol}: Entry conditions not met or daily trend down")
 
-        except Exception as e:
-            results.append(f"❌ Error processing {symbol}: {e}")
+            except Exception as e:
+                results.append(f"❌ Error processing {symbol}: {e}")
 
-    summary = (
-        f"Total symbols processed: {len(self.trading_symbols)}\n"
-        f"Orders executed: {executed}\n"
-        f"Orders failed: {failed}\n"
-        f"Blocked by risk: {blocked_risk}\n"
-        f"Blocked by capital: {blocked_capital}\n"
-        "Details:\n" + "\n".join(results)
-    )
-    return summary
+        summary = (
+            f"Total symbols processed: {len(self.trading_symbols)}\n"
+            f"Orders executed: {executed}\n"
+            f"Orders failed: {failed}\n"
+            f"Blocked by risk: {blocked_risk}\n"
+            f"Blocked by capital: {blocked_capital}\n"
+            "Details:\n" + "\n".join(results)
+        )
+        return summary
 
 
-# Add your exit condition check function (example)
-def check_exit_conditions(self, position, live_row):
-    entry_price = position['entry_price']
-    shares = position['qty']
-    chand_sl = live_row.get('chandelier_exit', 0)
-    atr_sl = entry_price - ATR_MULT * live_row.get('atr', 0)
-    dynamic_sl = max(chand_sl, atr_sl)
-
-    stop_loss_hit = live_row['low'] <= dynamic_sl if 'low' in live_row else False
-    momentum_exit = (live_row.get('rsi_14', 100) < 70 and live_row['close'] < live_row.get('bb_upper', 0)) or (live_row.get('supertrend_direction', 1) < 0)
-
-    return stop_loss_hit, momentum_exit, dynamic_sl
-
-
-
-# Factory function to create bot instance (used by dashboard.py)
 def create_bot_instance():
     return FalahTradingBot()

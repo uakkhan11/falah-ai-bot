@@ -1,9 +1,11 @@
 # dashboard.py - Mobile & Trade-Friendly Falāh Bot Dashboard
 import gradio as gr
+import pandas as pd
 from bot_logic import create_bot_instance
 from improved_fetcher import SmartHalalFetcher
 
 bot = create_bot_instance()
+fetcher = SmartHalalFetcher()
 
 kite_login_url = "https://kite.trade/connect/login?v=3&api_key=ijzeuwuylr3g0kug"
 
@@ -43,14 +45,14 @@ def get_positions():
     if positions and len(positions) > 0 and isinstance(positions, list):
         return pd.DataFrame(positions)
     else:
-        return "No open positions"
+        return pd.DataFrame()
 
 def run_historical_fetch():
     try:
         fetcher.fetch_all()
         return "✅ Historical data fetch completed successfully."
     except Exception as e:
-        return f"❌ Error during fetch: {e}
+        return f"❌ Error during fetch: {e}"
 
 
 with gr.Blocks() as demo:

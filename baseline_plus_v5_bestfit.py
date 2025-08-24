@@ -2,6 +2,8 @@ import os
 import numpy as np
 import pandas as pd
 import pandas_ta as ta
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 
 # --- Config ---

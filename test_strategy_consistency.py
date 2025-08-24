@@ -3,8 +3,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 from strategy_utils import (
     add_indicators, breakout_signal,
-    bb_breakout_signal, bb_pullback_signal,
-    combine_signals
+    refined_bb_breakout_signal, refined_bb_pullback_signal,
+    enhanced_regime_filter, combine_signals
 )
 
 DATA_DIR = "swing_data"
@@ -128,10 +128,11 @@ def main():
         df = load_candle_data(symbol)
         if df is None:
             continue
+
+        # Compute indicators and refined signals
         df = add_indicators(df)
-        df = breakout_signal(df)
-        df = bb_breakout_signal(df)
-        df = bb_pullback_signal(df)
+
+        # Use combine_signals to compute all refined/combined signals
         df = combine_signals(df)
 
         trades = backtest(df, symbol)

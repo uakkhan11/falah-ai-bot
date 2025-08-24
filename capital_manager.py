@@ -1,5 +1,4 @@
 # capital_manager.py
-
 import logging
 
 class CapitalManager:
@@ -15,10 +14,12 @@ class CapitalManager:
         self.available_funds = 0
         self.allocated_capital = 0
         self.margin_buffer = 0.05  # Keep 5% buffer
+        self.equity_history = []   # To track portfolio value history for drawdowns
 
     def update_funds(self):
         """
         Fetch available margin/funds from broker API and calculate allocated capital.
+        Also update equity history.
         """
         try:
             # Fetch margin info from Zerodha
@@ -32,7 +33,12 @@ class CapitalManager:
             self.logger.warning(f"Could not fetch margin info: {e}")
             # Use config as fallback
             self.available_funds = self.config.INITIAL_CAPITAL
+        
         self._update_allocated_capital()
+        # Update equity history
+        portfolio_value = self.get_portfolio_value()
+        if portfolio_value is not None:
+            self.equity_history.append(portfolio_value)
 
     def _update_allocated_capital(self):
         """
@@ -42,7 +48,6 @@ class CapitalManager:
         total_allocated = 0
         for pos in positions:
             if pos['qty'] > 0:
-                # Capital = avg_price * quantity
                 total_allocated += pos['avg_price'] * pos['qty']
         self.allocated_capital = total_allocated
 
@@ -56,7 +61,7 @@ class CapitalManager:
 
     def can_allocate(self, required_capital):
         """
-        Check if we can allocate the required capital for a trade.
+        Check if required capital can be allocated for a trade.
         Returns:
             tuple: (can_allocate: bool, available_capital: float, max_possible: float)
         """
@@ -74,7 +79,6 @@ class CapitalManager:
         can_trade, available, _ = self.can_allocate(required_capital)
         if can_trade:
             return desired_qty, None
-        # Calculate max possible quantity
         max_qty = int(available / price) if price > 0 else 0
         if max_qty <= 0:
             return 0, f"Insufficient capital: need ₹{required_capital:,.0f}, available ₹{available:,.0f}"
@@ -87,24 +91,31 @@ class CapitalManager:
         """
         self.allocated_capital += capital_amount
 
+    def free_capital(self, capital_amount):
+        """
+        Free allocated capital after closing positions.
+        """
+        self.allocated_capital = max(0, self.allocated_capital - capital_amount)
+
     def get_capital_summary(self):
         """
         Returns capital allocation summary for monitoring.
         """
+        utilization_pct = (self.allocated_capital / self.available_funds * 100) if self.available_funds > 0 else 0
         return {
             'total_funds': self.available_funds,
             'allocated': self.allocated_capital,
             'available': self.get_available_capital(),
-            'utilization_pct': (self.allocated_capital / self.available_funds * 100) if self.available_funds > 0 else 0
+            'utilization_pct': utilization_pct
         }
 
-    # --- Additions to fix dashboard errors ---
+    # --- Additions for dashboard and bot integrations ---
+
     def get_portfolio_value(self):
         """
         Returns the total portfolio value.
-        You can customize this to calculate real portfolio value.
+        Customize as needed to calculate real portfolio value.
         """
-        # Example: sum valued positions + available funds
         try:
             positions = self.order_tracker.get_positions_with_pl()
             total_value = self.available_funds
@@ -118,7 +129,7 @@ class CapitalManager:
     def get_today_profit(self):
         """
         Returns today's profit (PnL).
-        Customize this with your real calculation.
+        Customize with your actual calculation.
         """
         try:
             positions = self.order_tracker.get_positions_with_pl()
@@ -127,3 +138,9 @@ class CapitalManager:
         except Exception as e:
             self.logger.error(f"Error in get_today_profit: {e}")
             return 0
+
+    def get_equity_curve(self):
+        """
+        Returns equity history list required for cooling mode drawdown calculations.
+        """
+        return self.equity_history

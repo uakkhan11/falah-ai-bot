@@ -23,8 +23,9 @@ ATR_LENGTH = 14
 CHAND_LENGTH = 22
 ATR_MULT = 2.0   # starting stop loss multiple
 
+
 # ============================================================
-# Data & Indicator Processing
+# Google Sheet Integration
 # ============================================================
 
 def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
@@ -35,6 +36,11 @@ def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
     worksheet = sheet.worksheet(worksheet_name)
     symbols = worksheet.col_values(1)
     return [s.strip() for s in symbols if s.strip()]
+
+
+# ============================================================
+# Data & Indicator Processing
+# ============================================================
 
 def load_data(symbol):
     path = os.path.join(DATA_DIR_DAILY, f"{symbol}.csv")
@@ -70,6 +76,7 @@ def compute_indicators(df):
     df.reset_index(drop=True, inplace=True)
     return df
 
+
 # ============================================================
 # Entry & Exit Filters
 # ============================================================
@@ -86,6 +93,7 @@ def exit_signal(row):
     rsi_exit = (row['rsi_14'] < 70) and (row['close'] < row['bb_upper'])
     trend_exit = row['supertrend_direction'] < 0
     return rsi_exit or trend_exit
+
 
 # ============================================================
 # Backtest Engine
@@ -190,13 +198,11 @@ def backtest_symbol(df, symbol):
             })
             equity_curve.append(cash)
 
-    # Detailed Report
-    trade_report(trades, equity_curve, INITIAL_CAPITAL, symbol)
-
     return trades, equity_curve
 
+
 # ============================================================
-# Reporting Module
+# Reporting
 # ============================================================
 
 def overall_report(all_trades, overall_equity):
@@ -212,7 +218,6 @@ def overall_report(all_trades, overall_equity):
     win_rate = 100 * len(wins) / total_trades if total_trades else 0
     profit_factor = wins['pnl'].sum() / abs(losses['pnl'].sum()) if len(losses) else np.inf
     expectancy = df['pnl'].mean()
-
     best_trade = df['pnl'].max()
     worst_trade = df['pnl'].min()
 
@@ -225,12 +230,14 @@ def overall_report(all_trades, overall_equity):
     running_max = np.maximum.accumulate(equity_array)
     dd = (running_max - equity_array) / running_max
     max_dd = dd.max() * 100 if dd.size else 0
+
     n_years = len(equity_array) / 252
     CAGR = ((equity_array[-1] / INITIAL_CAPITAL) ** (1/n_years) - 1) * 100 if n_years > 0 else 0
+
     daily_returns = pd.Series(equity_array).pct_change().dropna()
     sharpe = (daily_returns.mean() / daily_returns.std()) * np.sqrt(252) if not daily_returns.empty else 0
 
-    print("\n========= OVERALL BACKTEST SUMMARY =========")
+    print("\n=== OVERALL BACKTEST SUMMARY ===")
     print(f"Total Trades Taken     : {total_trades}")
     print(f"Winning Trades         : {len(wins)}")
     print(f"Losing Trades          : {len(losses)}")
@@ -246,17 +253,18 @@ def overall_report(all_trades, overall_equity):
     print(f"CAGR                   : {CAGR:.2f}%")
     print(f"Max Drawdown           : {max_dd:.2f}%")
     print(f"Sharpe Ratio           : {sharpe:.2f}")
-    print("============================================\n")
+    print("=================================\n")
+
 
 # ============================================================
-# Main
+# Main Execution
 # ============================================================
 
 def main():
     symbols = get_symbols_from_gsheet(GOOGLE_SHEET_ID)
 
     all_trades = []
-    overall_equity = [INITIAL_CAPITAL]  # to simulate portfolio growth
+    overall_equity = [INITIAL_CAPITAL]
 
     for symbol in symbols:
         df = load_data(symbol)
@@ -266,12 +274,12 @@ def main():
         trades, equity_curve = backtest_symbol(df, symbol)
         all_trades.extend(trades)
 
-        # merge into overall portfolio equity
         if equity_curve:
             overall_equity.extend(equity_curve)
 
-    # Final Combined Report:
+    # Final Summary
     overall_report(all_trades, overall_equity)
-    
+
+
 if __name__ == "__main__":
     main()

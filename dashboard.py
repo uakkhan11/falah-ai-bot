@@ -9,6 +9,16 @@ fetcher = SmartHalalFetcher()
 
 kite_login_url = "https://kite.trade/connect/login?v=3&api_key=ijzeuwuylr3g0kug"
 
+def get_auth_status():
+    if bot.is_authenticated():
+        try:
+            profile = bot.kite.profile()
+            return f"✅ Authenticated as {profile['user_name']}"
+        except Exception:
+            return "✅ Authenticated (profile fetch failed)"
+    else:
+        return "❌ Not authenticated"
+
 def authenticate_token(request_token):
     try:
         bot.authenticate_with_token(request_token)
@@ -64,7 +74,9 @@ with gr.Blocks() as demo:
     request_token_input = gr.Textbox(label="Paste request_token here", placeholder="Paste the request_token value from redirect URL")
     auth_status = gr.Textbox(label="Authentication Status")
     auth_btn = gr.Button("Authenticate")
+    auth_status.value = get_auth_status()
     auth_btn.click(authenticate_token, inputs=request_token_input, outputs=auth_status)
+    auth_btn.click(lambda: get_auth_status(), outputs=auth_status)
 
     with gr.Row():
         capital_input = gr.Number(label="Capital (₹)", value=100000)

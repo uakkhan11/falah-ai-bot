@@ -2,9 +2,8 @@ import os
 import pandas as pd
 from datetime import datetime, timedelta
 from strategy_utils import (
-    add_indicators, breakout_signal,
-    refined_bb_breakout_signal, refined_bb_pullback_signal,
-    enhanced_regime_filter, combine_signals
+    add_indicators,
+    combine_signals
 )
 
 DATA_DIR = "swing_data"
@@ -42,7 +41,7 @@ def backtest(df, symbol):
         date, price = row['date'], row['close']
         sig, sigtype = row.get('entry_signal', 0), row.get('entry_type', '')
 
-        regime_ok = (price > row['ema200']) and (row['adx'] > 15)
+        regime_ok = (price > row['ema200']) and (row['adx'] > 15) and (row['ema200'].diff().iloc[i] > 0)
 
         # EXIT LOGIC
         to_close = []
@@ -129,10 +128,7 @@ def main():
         if df is None:
             continue
 
-        # Compute indicators and refined signals
         df = add_indicators(df)
-
-        # Use combine_signals to compute all refined/combined signals
         df = combine_signals(df)
 
         trades = backtest(df, symbol)

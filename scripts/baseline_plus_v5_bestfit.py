@@ -9,8 +9,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 
 # --- Config ---
-GOOGLE_SHEET_ID = "your_google_sheet_id_here"
-GOOGLE_CREDS_JSON = "path_to_credentials.json"
+GOOGLE_SHEET_ID = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebf"
+GOOGLE_CREDS_JSON = "falah-credentia"
 DATA_DIR_DAILY = "/root/falah-ai-bot/swing_data"
 YEARS_BACK = 2
 SL_ATR_MULT = 2.8  # Stop loss multiplier from ATR

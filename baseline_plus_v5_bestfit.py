@@ -25,7 +25,7 @@ ATR_MULT = 2.0   # starting stop loss multiple
 
 
 # ============================================================
-# Google Sheet Integration
+# Google Sheet Symbols
 # ============================================================
 
 def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
@@ -39,7 +39,7 @@ def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
 
 
 # ============================================================
-# Data & Indicator Processing
+# Data & Indicators
 # ============================================================
 
 def load_data(symbol):
@@ -96,25 +96,46 @@ def exit_signal(row):
 
 
 # ============================================================
-# Backtest Engine
+# True Portfolio-Level Backtester
 # ============================================================
 
-def backtest_symbol(df, symbol):
+def backtest_portfolio(symbols):
+    # Load all data once
+    data = {}
+    for sym in symbols:
+        df = load_data(sym)
+        if df is None or len(df) < 50:
+            continue
+        data[sym] = compute_indicators(df)
 
+    # Get common timeline (intersection of trading days)
+    all_dates = sorted(set().union(*[set(df['date']) for df in data.values()]))
+    if not all_dates:
+        print("No data available for backtest")
+        return
+
+    # Portfolio state
     cash = INITIAL_CAPITAL
-    positions = []
+    positions = {}   # {symbol: {entry_date, entry_price, shares}}
     trades = []
-    trade_count = 0
     equity_curve = []
+    trade_count = 0
 
-    for i in range(1, len(df)):
-        row = df.iloc[i]
-        price = row['close']
-        date = row['date']
-        positions_to_close = []
+    # Walk day by day across all symbols
+    for date in all_dates:
+        # Filter each symbol for current day row
+        daily_rows = {}
+        for sym, df in data.items():
+            row = df[df['date'] == date]
+            if not row.empty:
+                daily_rows[sym] = row.iloc[0]
 
-        # === Check Exits ===
-        for pos in positions:
+        # === Check exits first ===
+        positions_to_remove = []
+        for sym, pos in positions.items():
+            if sym not in daily_rows:  # no data for today
+                continue
+            row = daily_rows[sym]
             entry_price = pos['entry_price']
             shares = pos['shares']
 
@@ -126,17 +147,15 @@ def backtest_symbol(df, symbol):
             forced_exit = exit_signal(row)
 
             if stop_loss_hit or forced_exit:
-                exit_price = dynamic_sl if stop_loss_hit else price
+                exit_price = dynamic_sl if stop_loss_hit else row['close']
                 pnl = (exit_price - entry_price) * shares
 
-                # Deduct costs once per entry + once per exit
                 pnl -= abs(entry_price * shares) * (TRANSACTION_COST + SLIPPAGE)
                 pnl -= abs(exit_price * shares) * (TRANSACTION_COST + SLIPPAGE)
-
                 cash += exit_price * shares * (1 - TRANSACTION_COST - SLIPPAGE)
 
                 trades.append({
-                    'symbol': symbol,
+                    'symbol': sym,
                     'entry_date': pos['entry_date'],
                     'exit_date': date,
                     'pnl': pnl,
@@ -144,51 +163,60 @@ def backtest_symbol(df, symbol):
                     'exit_price': exit_price,
                     'exit_reason': 'StopLoss' if stop_loss_hit else 'SignalExit'
                 })
-                positions_to_close.append(pos)
+                positions_to_remove.append(sym)
                 trade_count += 1
                 if trade_count >= MAX_TRADES:
                     break
 
-        for pos in positions_to_close:
-            positions.remove(pos)
+        for sym in positions_to_remove:
+            del positions[sym]
 
         if trade_count >= MAX_TRADES:
             break
 
-        # === Check Entries ===
-        if len(positions) < MAX_POSITIONS and cash > 0:
-            if bullish_entry_filter(row):
+        # === New entries ===
+        for sym, row in daily_rows.items():
+            if len(positions) >= MAX_POSITIONS:
+                break
+            if sym in positions:
+                continue
+            if bullish_entry_filter(row) and cash > 0:
                 risk_per_share = ATR_MULT * row['atr']
                 position_size = RISK_PER_TRADE / risk_per_share
-                shares = int(min(cash // price, position_size))
-
+                shares = int(min(cash // row['close'], position_size))
                 if shares >= 1:
-                    cost = shares * price * (1 + TRANSACTION_COST + SLIPPAGE)
+                    cost = shares * row['close'] * (1 + TRANSACTION_COST + SLIPPAGE)
                     cash -= cost
-                    positions.append({
+                    positions[sym] = {
                         'entry_date': date,
-                        'entry_price': price,
+                        'entry_price': row['close'],
                         'shares': shares
-                    })
+                    }
 
-        # Daily Equity Update
-        position_value = sum((row['close'] - p['entry_price']) * p['shares'] for p in positions)
-        equity_curve.append(cash + position_value)
+        # === Update equity ===
+        pos_value = 0
+        for sym, pos in positions.items():
+            if sym in daily_rows:
+                row = daily_rows[sym]
+                pos_value += (row['close'] - pos['entry_price']) * pos['shares'] + pos['shares'] * pos['entry_price']
+        equity_curve.append(cash + pos_value)
 
-    # === Close Remaining at End ===
+    # === Liquidate end-of-period ===
     if positions:
-        final_row = df.iloc[-1]
-        final_close = final_row['close']
-        final_date = final_row['date']
-
-        for pos in positions:
+        final_date = all_dates[-1]
+        for sym, pos in positions.items():
+            df = data[sym]
+            final_row = df[df['date'] == final_date]
+            if final_row.empty:
+                continue
+            final_row = final_row.iloc[0]
+            final_close = final_row['close']
             pnl = (final_close - pos['entry_price']) * pos['shares']
             pnl -= abs(pos['entry_price'] * pos['shares']) * (TRANSACTION_COST + SLIPPAGE)
             pnl -= abs(final_close * pos['shares']) * (TRANSACTION_COST + SLIPPAGE)
             cash += final_close * pos['shares'] * (1 - TRANSACTION_COST - SLIPPAGE)
-
             trades.append({
-                'symbol': symbol,
+                'symbol': sym,
                 'entry_date': pos['entry_date'],
                 'exit_date': final_date,
                 'pnl': pnl,
@@ -196,7 +224,7 @@ def backtest_symbol(df, symbol):
                 'exit_price': final_close,
                 'exit_reason': 'EOD Exit'
             })
-            equity_curve.append(cash)
+        equity_curve.append(cash)
 
     return trades, equity_curve
 
@@ -205,10 +233,10 @@ def backtest_symbol(df, symbol):
 # Reporting
 # ============================================================
 
-def overall_report(all_trades, overall_equity):
+def overall_report(all_trades, equity_curve):
     df = pd.DataFrame(all_trades)
     if df.empty:
-        print("\nNo trades executed in backtest!")
+        print("No trades executed!")
         return
 
     total_trades = len(df)
@@ -225,7 +253,7 @@ def overall_report(all_trades, overall_equity):
     avg_duration = durations.mean() if len(durations) else 0
     exit_counts = df['exit_reason'].value_counts().to_dict()
 
-    equity_array = np.array(overall_equity)
+    equity_array = np.array(equity_curve)
     total_return = (equity_array[-1] - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
     running_max = np.maximum.accumulate(equity_array)
     dd = (running_max - equity_array) / running_max
@@ -237,7 +265,7 @@ def overall_report(all_trades, overall_equity):
     daily_returns = pd.Series(equity_array).pct_change().dropna()
     sharpe = (daily_returns.mean() / daily_returns.std()) * np.sqrt(252) if not daily_returns.empty else 0
 
-    print("\n=== OVERALL BACKTEST SUMMARY ===")
+    print("\n=== OVERALL PORTFOLIO BACKTEST SUMMARY ===")
     print(f"Total Trades Taken     : {total_trades}")
     print(f"Winning Trades         : {len(wins)}")
     print(f"Losing Trades          : {len(losses)}")
@@ -253,32 +281,17 @@ def overall_report(all_trades, overall_equity):
     print(f"CAGR                   : {CAGR:.2f}%")
     print(f"Max Drawdown           : {max_dd:.2f}%")
     print(f"Sharpe Ratio           : {sharpe:.2f}")
-    print("=================================\n")
+    print("===========================================\n")
 
 
 # ============================================================
-# Main Execution
+# Main
 # ============================================================
 
 def main():
     symbols = get_symbols_from_gsheet(GOOGLE_SHEET_ID)
-
-    all_trades = []
-    overall_equity = [INITIAL_CAPITAL]
-
-    for symbol in symbols:
-        df = load_data(symbol)
-        if df is None or len(df) < 50:
-            continue
-        df = compute_indicators(df)
-        trades, equity_curve = backtest_symbol(df, symbol)
-        all_trades.extend(trades)
-
-        if equity_curve:
-            overall_equity.extend(equity_curve)
-
-    # Final Summary
-    overall_report(all_trades, overall_equity)
+    trades, equity_curve = backtest_portfolio(symbols)
+    overall_report(trades, equity_curve)
 
 
 if __name__ == "__main__":

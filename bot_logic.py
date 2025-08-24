@@ -50,12 +50,22 @@ class FalahTradingBot:
         self.last_summary_date = None
         self.daily_trade_count = 0
         self.authenticated = False
+        try:
+            self.config.authenticate()
+            if self.config.kite and self.config.ACCESS_TOKEN:
+                self.kite = self.config.kite
+                self.authenticated = True
+        except Exception:
+            self.authenticated = False
+
+    def is_authenticated(self):
+        return self.authenticated
 
     def authenticate_with_token(self, request_token):
         """Authenticate with Kite using a request_token provided via UI."""
         self.config.authenticate(request_token=request_token)
         self.kite = self.config.kite
-        self.running = False
+        self.authenticated = True
 
         self.data_manager = LiveDataManager(self.kite)
         self.order_manager = OrderManager(self.kite, self.config)

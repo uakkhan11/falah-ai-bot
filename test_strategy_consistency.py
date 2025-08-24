@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 from datetime import datetime, timedelta
+from improved_fetcher import SmartHalalFetcher
 from strategy_utils import (
     add_indicators, breakout_signal,
     bb_breakout_signal, bb_pullback_signal,

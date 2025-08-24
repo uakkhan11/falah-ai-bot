@@ -5,6 +5,8 @@ import pandas_ta as ta
 from datetime import datetime
 
 # --- Config ---
+GOOGLE_SHEET_ID = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
+GOOGLE_CREDS_JSON = "falah-credentials.json"
 DATA_DIR_DAILY = "/root/falah-ai-bot/swing_data"
 YEARS_BACK = 2
 INITIAL_CAPITAL = 200_000
@@ -22,6 +24,15 @@ ATR_MULT = 2.0   # starting stop loss multiple
 # ============================================================
 # Data & Indicator Processing
 # ============================================================
+
+def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDS_JSON, scope)
+    client = gspread.authorize(creds)
+    sheet = client.open_by_key(sheet_id)
+    worksheet = sheet.worksheet(worksheet_name)
+    symbols = worksheet.col_values(1)
+    return [s.strip() for s in symbols if s.strip()]
 
 def load_data(symbol):
     path = os.path.join(DATA_DIR_DAILY, f"{symbol}.csv")
@@ -240,7 +251,7 @@ def trade_report(trades, equity_curve, initial_capital, symbol):
 # ============================================================
 
 def main():
-    symbols = ["AAPL", "TSLA", "MSFT"]  # <<-- replace with your symbols or loader logic
+    symbols = get_symbols_from_gsheet(GOOGLE_SHEET_ID)
 
     for symbol in symbols:
         df = load_data(symbol)

@@ -3,12 +3,12 @@ import pandas as pd
 import numpy as np
 import pandas_ta as ta
 from datetime import datetime, timedelta
-from improved_fetcher import SmartHalalFetcher
 from strategy_utils import add_indicators, combine_signals
 
-DATA_DIR_DAILY = "swing_data/daily"
-DATA_DIR_1H = "swing_data/1hour"
-DATA_DIR_15M = "swing_data/15minute"
+DATA_DIR_DAILY = "/root/falah-ai-bot/swing_data"
+DATA_DIR_1H = "/root/falah-ai-bot/intraday_swing_data"
+DATA_DIR_15M = "/root/falah-ai-bot/scalping_data"
+
 SYMBOLS = ["RELIANCE", "SUNPHARMA"]
 YEARS_BACK = 2
 
@@ -34,7 +34,6 @@ def prepare_multitimeframe_data(symbol):
     if df_daily is None or df_1h is None or df_15m is None:
         return None
 
-    # Calculate intraday indicators
     df_15m['rsi_15m'] = ta.rsi(df_15m['close'], length=14)
     df_15m['ema20_15m'] = ta.ema(df_15m['close'], length=20)
     df_15m['ema20_15m_slope'] = df_15m['ema20_15m'].diff()
@@ -43,7 +42,6 @@ def prepare_multitimeframe_data(symbol):
     df_1h['ema50_1h'] = ta.ema(df_1h['close'], length=50)
     df_1h['ema50_1h_slope'] = df_1h['ema50_1h'].diff()
 
-    # Aggregate intraday data to daily level
     daily_15m_agg = df_15m.groupby(df_15m['date'].dt.floor('D')).agg({
         'rsi_15m': 'last',
         'ema20_15m_slope': 'last'
@@ -54,27 +52,21 @@ def prepare_multitimeframe_data(symbol):
         'ema50_1h_slope': 'last'
     }).rename_axis('date').reset_index()
 
-    # Merge into daily df
     df_daily = pd.merge(df_daily, daily_15m_agg, on='date', how='left')
     df_daily = pd.merge(df_daily, daily_1h_agg, on='date', how='left')
 
-    # Fill missing values
     df_daily['rsi_15m'].fillna(method='ffill', inplace=True)
     df_daily['ema20_15m_slope'].fillna(0, inplace=True)
     df_daily['rsi_1h'].fillna(method='ffill', inplace=True)
     df_daily['ema50_1h_slope'].fillna(0, inplace=True)
 
-    # Add daily indicators
     df_daily = add_indicators(df_daily)
-    df_daily = add_weekly_ema(df_daily)
+    df_daily = add_weekly_ema(df_daily)  # ensure you have this function in your utils
 
     return df_daily
 
 def modify_combine_signals_with_mtf(df):
-    # Base daily signals
-    df = combine_signals(df)
-
-    # Multi-timeframe confirmations
+    df = combine_signals(df)  # daily signals
     long_cond = (
         (df['entry_signal'] == 1) &
         (df['rsi_15m'] > 50) &
@@ -91,11 +83,9 @@ def modify_combine_signals_with_mtf(df):
     )
     df['entry_signal_long'] = long_cond
     df['entry_signal_short'] = short_cond
-
     df['entry_signal_final'] = 0
     df.loc[long_cond, 'entry_signal_final'] = 1
     df.loc[short_cond, 'entry_signal_final'] = -1
-
     return df
 
 def backtest_mtf(df, symbol):
@@ -108,16 +98,13 @@ def backtest_mtf(df, symbol):
     MAX_POSITIONS = 5
     MAX_TRADES = 2000
     TRANSACTION_COST = 0.001
-
     RSI_THRESHOLD = 55
     EMA_SLOPE_THRESHOLD = 0.0
-
     cash = INITIAL_CAPITAL
     positions = {}
     trades = []
     trade_count = 0
     regime_fail_count = {}
-
     rolling_atr_mean = df['atr'].rolling(window=20, min_periods=1).mean()
 
     for i in range(1, len(df)):
@@ -126,7 +113,6 @@ def backtest_mtf(df, symbol):
         sig = row.get('entry_signal_final', 0)
         sigtype = 'Long' if sig == 1 else ('Short' if sig == -1 else '')
 
-        # Regime check based on trend and thresholds
         regime_ok = (
             (df.at[i, 'ema200_slope'] > EMA_SLOPE_THRESHOLD) and
             (row['rsi'] > RSI_THRESHOLD)
@@ -138,18 +124,19 @@ def backtest_mtf(df, symbol):
             stop_loss_distance = ATR_SL_MULT * (df['atr'].mean() if not df['atr'].isna().all() else 1)
 
         position_size = min(cash, RISK_PER_TRADE / stop_loss_distance * price)
-
-        # EXIT & ENTRY logic extended for both long and short trades
         to_close = []
         for pid, pos in list(positions.items()):
-            direction = pos.get('direction', 1)  # 1 for long, -1 for short
+            direction = pos.get('direction', 1)
             ret = direction * (price - pos['entry_price']) / pos['entry_price']
 
             adaptive_atr_mult = ATR_SL_MULT * (rolling_atr_mean.iloc[i] / rolling_atr_mean.mean())
             adaptive_stop_loss = pos['entry_price'] - direction * adaptive_atr_mult * pos.get('entry_atr', 0)
 
             if (direction == 1 and price > pos['high']) or (direction == -1 and price < pos['low']):
-                pos['high' if direction == 1 else 'low'] = price
+                if direction == 1:
+                    pos['high'] = price
+                else:
+                    pos['low'] = price
 
             if not pos.get('trail_active', False) and ret >= TRAIL_TRIGGER:
                 pos['trail_active'] = True
@@ -163,14 +150,32 @@ def backtest_mtf(df, symbol):
             reason = None
             pnl = 0
 
-            # Partial scaling logic same as before with consideration for direction
-            # Profit targets and stop losses adjusted for direction
+            # Implement exit logic, partial scaling, etc. here
 
-            # ... implement exits, partial scaling, and regime exits ...
+            # Placeholder for exits, add your partial profit, stop loss, chandelier, regime exit logic here
 
-            # For brevity, please extend as per long-only version with sign adjustments
+            if reason:
+                buy_val = pos['shares'] * pos['entry_price']
+                sell_val = pos['shares'] * price
+                charges = (buy_val + sell_val) * TRANSACTION_COST
+                pnl = direction * (sell_val * (1 - TRANSACTION_COST) - buy_val) - charges
 
-        # Cleanup closed positions
+                trades.append({
+                    'symbol': symbol,
+                    'entry_date': pos['entry_date'],
+                    'exit_date': date,
+                    'pnl': pnl,
+                    'entry_type': pos['entry_type'],
+                    'exit_reason': reason
+                })
+
+                cash += sell_val
+                to_close.append(pid)
+                trade_count += 1
+
+                if trade_count >= MAX_TRADES:
+                    break
+
         for pid in to_close:
             if pid in positions:
                 del positions[pid]
@@ -178,7 +183,6 @@ def backtest_mtf(df, symbol):
         if trade_count >= MAX_TRADES:
             break
 
-        # ENTRY - support long and short trade entries
         if sig != 0 and len(positions) < MAX_POSITIONS and cash >= position_size:
             shares = position_size / price
             direction = 1 if sig == 1 else -1
@@ -187,12 +191,11 @@ def backtest_mtf(df, symbol):
                 'entry_price': price,
                 'shares': shares,
                 'high': price,
-                'low': price,  # For shorts track low instead of high
+                'low': price,
                 'trail_active': False,
                 'trail_stop': 0,
                 'entry_atr': row.get('atr', 0),
                 'entry_type': sigtype,
-                'scaled_out': False,
                 'scale1': False,
                 'scale2': False,
                 'direction': direction,
@@ -204,27 +207,26 @@ def backtest_mtf(df, symbol):
 def main():
     all_trades = []
     for symbol in SYMBOLS:
-        print(f"\nBacktesting {symbol} with multi-timeframe for last {YEARS_BACK} years...")
+        print(f"\nBacktesting {symbol} multi-timeframe for last {YEARS_BACK} years...")
         df = prepare_multitimeframe_data(symbol)
         if df is None:
+            print(f"Skipping {symbol} due to missing data.")
             continue
         df = modify_combine_signals_with_mtf(df)
         trades = backtest_mtf(df, symbol)
         all_trades.extend(trades)
+
     if all_trades:
         trades_df = pd.DataFrame(all_trades)
-        total_trades = len(trades_df)
-        total_pnl = trades_df['pnl'].sum()
-        win_rate = (trades_df['pnl'] > 0).mean() * 100
-        print(f"\nTotal trades executed: {total_trades}")
-        print(f"Total PnL: {total_pnl:.2f}")
-        print(f"Win rate: {win_rate:.2f}%")
+        print(f"\nTotal trades executed: {len(trades_df)}")
+        print(f"Total PnL: {trades_df['pnl'].sum():.2f}")
+        print(f"Win rate: {(trades_df['pnl'] > 0).mean() * 100:.2f}%")
         print("\nPnL by Entry Type:")
         print(trades_df.groupby('entry_type')['pnl'].agg(['count','sum','mean']))
         print("\nExit Reason Performance:")
         print(trades_df.groupby('exit_reason')['pnl'].agg(['count','sum','mean']))
     else:
-        print("No trades executed during backtest period.")
+        print("No trades executed.")
 
 if __name__ == "__main__":
     main()

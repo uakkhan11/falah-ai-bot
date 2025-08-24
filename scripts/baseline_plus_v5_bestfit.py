@@ -10,7 +10,7 @@ from datetime import datetime
 
 # --- Config ---
 GOOGLE_SHEET_ID = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebf"
-GOOGLE_CREDS_JSON = "falah-credentia"
+GOOGLE_CREDS_JSON = "falah-credentials.json"
 DATA_DIR_DAILY = "/root/falah-ai-bot/swing_data"
 YEARS_BACK = 2
 SL_ATR_MULT = 2.8  # Stop loss multiplier from ATR

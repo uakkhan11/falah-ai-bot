@@ -1,6 +1,7 @@
 # dashboard.py - Mobile & Trade-Friendly Falāh Bot Dashboard
 import gradio as gr
 from bot_logic import create_bot_instance
+from improved_fetcher import SmartHalalFetcher
 
 bot = create_bot_instance()
 
@@ -44,6 +45,13 @@ def get_positions():
     else:
         return "No open positions"
 
+def run_historical_fetch():
+    try:
+        fetcher.fetch_all()
+        return "✅ Historical data fetch completed successfully."
+    except Exception as e:
+        return f"❌ Error during fetch: {e}
+
 
 with gr.Blocks() as demo:
     gr.Markdown("# Falah Trading Bot Dashboard")
@@ -76,5 +84,10 @@ with gr.Blocks() as demo:
         positions_btn = gr.Button("Show Open Positions")
         positions_output = gr.Dataframe()
         positions_btn.click(get_positions, outputs=positions_output)
+
+    with gr.Row():
+        fetch_data_btn = gr.Button("Fetch Historical Data")
+        fetch_data_output = gr.Textbox(label="Fetch Status")
+        fetch_data_btn.click(run_historical_fetch, outputs=fetch_data_output)
 
 demo.launch(share=True)

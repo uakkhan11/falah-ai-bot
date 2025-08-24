@@ -45,15 +45,14 @@ def compute_indicators(df):
     df['macd_signal'] = macd['MACDs_12_26_9']
     df['rsi_14'] = ta.rsi(df['close'], length=14)
     df['bb_lower'] = ta.bbands(df['close'], length=20, std=2)['BBL_20_2.0']
+    df['bb_upper'] = ta.bbands(df['close'], length=20, std=2)['BBU_20_2.0']
     df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
-
     # Shifted columns for price & volume comparison
     df['high_1d_ago'] = df['high'].shift(1)
     df['low_1d_ago'] = df['low'].shift(1)
     df['high_2d_ago'] = df['high'].shift(2)
     df['low_2d_ago'] = df['low'].shift(2)
     df['volume_1d_ago'] = df['volume'].shift(1)
-
     df.dropna(inplace=True)
     df.reset_index(drop=True, inplace=True)
     return df
@@ -62,14 +61,24 @@ def bullish_entry_filter(row):
     return (
         row['macd_line'] > 0 and
         row['macd_signal'] > 0 and
-        row['rsi_14'] > 55 and
+        40 <= row['rsi_14'] <= 70 and
         row['high'] > row['high_1d_ago'] and
         row['low'] > row['low_1d_ago'] and
         row['high'] > row['high_2d_ago'] and
         row['low'] > row['low_2d_ago'] and
         row['volume'] > row['volume_1d_ago'] and
-        row['rsi_14'] < 70 and
         row['close'] >= row['bb_lower']
+    )
+
+def losing_momentum_exit_filter(row):
+    return (
+        (row['macd_line'] < 0) or
+        (row['macd_signal'] < 0) or
+        (row['rsi_14'] < 70) or
+        (row['high'] <= row['high_1d_ago']) or
+        (row['low'] <= row['low_1d_ago']) or
+        (row['volume'] <= row['volume_1d_ago']) or
+        (row['close'] < row['bb_upper'])
     )
 
 def backtest_symbol(df, symbol):
@@ -77,22 +86,30 @@ def backtest_symbol(df, symbol):
     positions = []
     trades = []
     trade_count = 0
-
+    
     for i in range(1, len(df)):
         row = df.iloc[i]
         date = row['date']
         price = row['close']
-
-        # Close positions if stop loss hit
-        for pos in positions[:]:
+        
+        # Check exit logic
+        positions_to_close = []
+        for pos in positions:
+            # ATR stop loss price
             direction = pos['direction']
             entry_price = pos['entry_price']
             atr = pos['atr']
             stop_loss_price = entry_price - direction * SL_ATR_MULT * atr
-
-            if (direction == 1 and df.iloc[i]['low'] <= stop_loss_price) or \
-               (direction == -1 and df.iloc[i]['high'] >= stop_loss_price):
-                exit_price = stop_loss_price
+            
+            # Exit on stop loss
+            stop_loss_hit = (direction == 1 and df.iloc[i]['low'] <= stop_loss_price) or \
+                            (direction == -1 and df.iloc[i]['high'] >= stop_loss_price)
+                            
+            # Exit on losing momentum
+            momentum_exit = losing_momentum_exit_filter(row)
+            
+            if stop_loss_hit or momentum_exit:
+                exit_price = stop_loss_price if stop_loss_hit else price
                 pnl = direction * (exit_price - entry_price) * pos['shares']
                 pnl -= abs(pnl) * TRANSACTION_COST * 2  # buy + sell cost
                 cash += exit_price * pos['shares'] * (1 - TRANSACTION_COST)
@@ -103,14 +120,16 @@ def backtest_symbol(df, symbol):
                                'entry_price': entry_price,
                                'exit_price': exit_price,
                                'direction': 'Long' if direction == 1 else 'Short',
-                               'exit_reason': 'Stop Loss'})
-                positions.remove(pos)
+                               'exit_reason': 'Stop Loss' if stop_loss_hit else 'Momentum Exit'})
+                positions_to_close.append(pos)
                 trade_count += 1
                 if trade_count >= MAX_TRADES:
                     break
+        for pos in positions_to_close:
+            positions.remove(pos)
         if trade_count >= MAX_TRADES:
             break
-
+        
         # Entry logic
         if len(positions) < MAX_POSITIONS and cash > 0:
             if bullish_entry_filter(row):
@@ -118,18 +137,15 @@ def backtest_symbol(df, symbol):
                 stop_loss_distance = SL_ATR_MULT * atr
                 position_size = RISK_PER_TRADE / stop_loss_distance
                 shares = min(cash / price, position_size)
-
                 if shares < 1:
                     continue
-
                 cash -= shares * price * (1 + TRANSACTION_COST)
                 pos = {'entry_date': date, 'entry_price': price, 'shares': shares,
                        'direction': 1, 'atr': atr}
                 positions.append(pos)
-
         if trade_count >= MAX_TRADES:
             break
-
+            
     # Close all open positions at last day close
     final_date = df.iloc[-1]['date']
     final_close = df.iloc[-1]['close']
@@ -148,13 +164,12 @@ def backtest_symbol(df, symbol):
                        'exit_price': final_close,
                        'direction': 'Long' if direction == 1 else 'Short',
                        'exit_reason': 'EOD Exit'})
-
+    
     return trades
 
 def main():
     symbols = get_symbols_from_gsheet(GOOGLE_SHEET_ID)
     all_trades = []
-
     for symbol in symbols:
         print(f"Processing {symbol}...")
         df = load_data(symbol)
@@ -164,17 +179,14 @@ def main():
         df = compute_indicators(df)
         trades = backtest_symbol(df, symbol)
         all_trades.extend(trades)
-
         total_pnl = sum(t['pnl'] for t in trades)
         wins = sum(1 for t in trades if t['pnl'] > 0)
         win_rate = (wins / len(trades) * 100) if trades else 0
         print(f"{symbol}: Trades={len(trades)}, Total PnL={total_pnl:.2f}, Win Rate={win_rate:.2f}%")
-
     overall_pnl = sum(t['pnl'] for t in all_trades)
     overall_wins = sum(1 for t in all_trades if t['pnl'] > 0)
     overall_trades = len(all_trades)
     overall_win_rate = (overall_wins / overall_trades * 100) if overall_trades else 0
-
     print("\n--- Overall Backtest Summary ---")
     print(f"Total trades: {overall_trades}")
     print(f"Total PnL: {overall_pnl:.2f}")

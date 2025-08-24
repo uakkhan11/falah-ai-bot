@@ -29,6 +29,7 @@ def backtest(df, symbol):
     MAX_POSITIONS = 5
     MAX_TRADES = 2000
     TRANSACTION_COST = 0.001  # 0.1%
+    SCALE_OUT_PCT = 0.5  # Take half profit at target, trail rest
 
     cash = INITIAL_CAPITAL
     positions = {}
@@ -40,13 +41,18 @@ def backtest(df, symbol):
         row = df.iloc[i]
         date, price = row['date'], row['close']
         sig, sigtype = row.get('entry_signal', 0), row.get('entry_type', '')
-    
-        # Compute regime_ok every iteration before any usage
-        regime_ok = (price > row['ema200']) and (row['adx'] > 15) and (df.at[i, 'ema200_slope'] > 0)
+
+        regime_ok = (
+            (price > row['ema200']) and
+            (row['adx'] > 15) and
+            (df.at[i, 'ema200_slope'] > 0) and
+            (row['rsi'] > 50) and
+            (df.at[i, 'weekly_ema50_slope'] > 0)
+        )
 
         # EXIT LOGIC
         to_close = []
-        for pid, pos in positions.items():
+        for pid, pos in list(positions.items()):
             ret = (price - pos['entry_price']) / pos['entry_price']
             atr_stop = pos['entry_price'] - ATR_SL_MULT * pos.get('entry_atr', 0)
 
@@ -60,8 +66,34 @@ def backtest(df, symbol):
             if pos.get('trail_active', False) and row.get('chandelier_exit', 0) > pos.get('trail_stop', 0):
                 pos['trail_stop'] = row.get('chandelier_exit', 0)
 
+            sell_shares = pos['shares']
             reason = None
-            if ret >= PROFIT_TARGET:
+            pnl = 0
+
+            # Partial scaling out
+            if ret >= PROFIT_TARGET and not pos.get('scaled_out', False):
+                scale_qty = pos['shares'] * SCALE_OUT_PCT
+                remain_qty = pos['shares'] - scale_qty
+                buy_val = scale_qty * pos['entry_price']
+                sell_val = scale_qty * price
+                charges = (buy_val + sell_val) * TRANSACTION_COST
+                pnl = sell_val * (1 - TRANSACTION_COST) - buy_val - charges
+
+                trades.append({
+                    'symbol': symbol,
+                    'entry_date': pos['entry_date'],
+                    'exit_date': date,
+                    'pnl': pnl,
+                    'entry_type': pos['entry_type'],
+                    'exit_reason': 'Partial Profit Target'
+                })
+
+                pos['shares'] = remain_qty
+                pos['scaled_out'] = True
+                cash += sell_val
+                continue  # keep position with remaining shares
+
+            if ret >= PROFIT_TARGET and pos.get('scaled_out', False):
                 reason = 'Profit Target'
             elif price <= atr_stop:
                 reason = 'ATR Stop Loss'
@@ -79,7 +111,7 @@ def backtest(df, symbol):
             if reason:
                 buy_val = pos['shares'] * pos['entry_price']
                 sell_val = pos['shares'] * price
-                charges = buy_val * TRANSACTION_COST + sell_val * TRANSACTION_COST
+                charges = (buy_val + sell_val) * TRANSACTION_COST
                 pnl = sell_val * (1 - TRANSACTION_COST) - buy_val - charges
 
                 trades.append({
@@ -107,7 +139,7 @@ def backtest(df, symbol):
         # ENTRY LOGIC
         if sig == 1 and len(positions) < MAX_POSITIONS and cash >= POSITION_SIZE:
             shares = POSITION_SIZE / price
-            positions[len(positions)+1] = {
+            positions[len(positions) + 1] = {
                 'entry_date': date,
                 'entry_price': price,
                 'shares': shares,
@@ -115,7 +147,8 @@ def backtest(df, symbol):
                 'trail_active': False,
                 'trail_stop': 0,
                 'entry_atr': row.get('atr', 0),
-                'entry_type': sigtype
+                'entry_type': sigtype,
+                'scaled_out': False,
             }
             cash -= POSITION_SIZE * (1 + TRANSACTION_COST)
 

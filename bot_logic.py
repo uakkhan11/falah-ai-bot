@@ -39,8 +39,7 @@ class FalahTradingBot:
         self.trading_symbols = []
         self.instruments = {}
         self.instrument_tokens = []
-
-        # Cooling mode vars
+        # Cooling variables
         self.cooling_mode = False
         self.max_drawdown_threshold = 10.0  # % drawdown to start cooling
         self.min_capital_to_trade = 10000   # minimal capital to allow trade
@@ -126,17 +125,29 @@ class FalahTradingBot:
         return syms
 
     def check_exit_conditions(self, position, live_row):
-        entry_price = position['entry_price']
-        shares = position['qty']
-        chand_sl = live_row.get('chandelier_exit', 0)
-        atr_sl = entry_price - ATR_MULT * live_row.get('atr', 0)
-        dynamic_sl = max(chand_sl, atr_sl)
-        stop_loss_hit = live_row['low'] <= dynamic_sl if 'low' in live_row else False
-        momentum_exit = (live_row.get('rsi_14', 100) < 70 and live_row['close'] < live_row.get('bb_upper', 0)) or (live_row.get('supertrend_direction', 1) < 0)
-        return stop_loss_hit, momentum_exit, dynamic_sl
+        symbol = position['symbol']
+        current_stop_loss = self.exit_manager.update_trailing_stop(symbol, live_row)
+        if current_stop_loss is None:
+            entry_price = position['entry_price']
+            current_stop_loss = max(
+                live_row.get('chandelier_exit', 0),
+                entry_price - ATR_MULT * live_row.get('atr', 0)
+            )
+            self.exit_manager.update_position(symbol, {
+                'entry_price': entry_price,
+                'qty': position['qty'],
+                'stop_loss_price': current_stop_loss
+            })
+        stop_loss_hit = live_row['low'] <= current_stop_loss if 'low' in live_row else False
+        rsi = live_row.get('rsi_14', 100)
+        close_price = live_row['close']
+        bb_upper = live_row.get('bb_upper', 0)
+        supertrend_dir = live_row.get('supertrend_direction', 1)
+        momentum_exit = (rsi < 70 and close_price < bb_upper) or (supertrend_dir < 0)
+        return stop_loss_hit, momentum_exit, current_stop_loss
 
     def check_and_apply_cooling(self):
-        equity_curve = self.capital_manager.get_equity_curve()  # You must implement this method returning list of floats
+        equity_curve = self.capital_manager.get_equity_curve()  # Implement this method to return list of floats
         if not equity_curve or len(equity_curve) < 2:
             self.cooling_mode = False
             self.config.RISK_PER_TRADE = 0.01 * self.capital_manager.get_portfolio_value()
@@ -167,6 +178,7 @@ class FalahTradingBot:
     def run_cycle(self):
         if not self.authenticated:
             return "Bot not authenticated yet."
+
         self.capital_manager.update_funds()
         self.check_and_apply_cooling()
 
@@ -218,26 +230,30 @@ class FalahTradingBot:
                             'volume': live_candle['volume'],
                         }])
                         df_15m = pd.concat([df_15m.iloc[:-1], live_candle_df], ignore_index=True)
+
                 df_daily = add_indicators(df_daily)
                 df_15m = add_indicators(df_15m)
 
                 if symbol in pos_dict and pos_dict[symbol]['qty'] > 0:
                     latest_row = df_15m.iloc[-1]
-                    stop_loss_hit, momentum_exit, dynamic_sl = self.check_exit_conditions(pos_dict[symbol], latest_row)
+                    stop_loss_hit, momentum_exit, current_stop_loss = self.check_exit_conditions(pos_dict[symbol], latest_row)
+                    
                     if stop_loss_hit or momentum_exit:
-                        order_id = self.order_manager.place_sell_order(symbol, pos_dict[symbol]['qty'], price=latest_row['close'])
+                        qty = pos_dict[symbol]['qty']
+                        order_id = self.order_manager.place_sell_order(symbol, qty, price=latest_row['close'])
                         if order_id:
-                            self.capital_manager.free_capital(pos_dict[symbol]['qty'] * latest_row['close'])
-                            self.trade_logger.log_trade(symbol, "SELL", pos_dict[symbol]['qty'], latest_row['close'], "ORDER_PLACED")
+                            self.capital_manager.free_capital(qty * latest_row['close'])
+                            self.trade_logger.log_trade(symbol, "SELL", qty, latest_row['close'], "ORDER_PLACED")
                             try:
                                 import asyncio
-                                asyncio.run(self.notifier.send_trade_alert(symbol, "SELL", pos_dict[symbol]['qty'], latest_row['close'], "ORDER_PLACED"))
+                                asyncio.run(self.notifier.send_trade_alert(symbol, "SELL", qty, latest_row['close'], "ORDER_PLACED"))
                             except RuntimeError:
                                 pass
-                            results.append(f"{symbol} Sell order placed qty={pos_dict[symbol]['qty']}")
+                            results.append(f"{symbol} Sell order placed qty={qty}")
                             executed += 1
+                            self.exit_manager.remove_position(symbol)
                         else:
-                            self.trade_logger.log_trade(symbol, "SELL", pos_dict[symbol]['qty'], latest_row['close'], "ORDER_FAILED")
+                            self.trade_logger.log_trade(symbol, "SELL", qty, latest_row['close'], "ORDER_FAILED")
                             results.append(f"{symbol} Sell order failed")
                             failed += 1
                     else:
@@ -246,6 +262,7 @@ class FalahTradingBot:
 
                 latest_row = df_15m.iloc[-1]
                 daily_up = df_daily.iloc[-1]['close'] > df_daily.iloc[-1].get('ema200', 0)
+
                 if daily_up and latest_row.get('entry_signal', 0) == 1:
                     price = self.live_price_streamer.get_price(symbol)
                     if price is None or price <= 0:
@@ -259,6 +276,7 @@ class FalahTradingBot:
                     desired_qty = int(self.config.RISK_PER_TRADE / risk_per_share)
                     qty, cap_reason = self.capital_manager.adjust_quantity_for_capital(symbol, price, desired_qty)
                     allowed, risk_reason = self.risk_manager.allow_trade()
+
                     if qty > 0 and allowed:
                         order_id = self.order_manager.place_buy_order(symbol, qty, price=price)
                         if order_id:
@@ -276,6 +294,12 @@ class FalahTradingBot:
                                     pass
                             executed += 1
                             results.append(f"{symbol}: Order placed qty={qty}")
+                            # Initialize trailing stop loss state for exit manager
+                            self.exit_manager.update_position(symbol, {
+                                'entry_price': price,
+                                'qty': qty,
+                                'stop_loss_price': price - self.config.ATR_MULT * atr
+                            })
                         else:
                             self.trade_logger.log_trade(symbol, "BUY", qty, price, "ORDER_FAILED")
                             failed += 1
@@ -298,7 +322,6 @@ class FalahTradingBot:
                         results.append(f"⏩ Capital blocked {symbol}: insufficient funds")
                 else:
                     results.append(f"{symbol}: Entry conditions not met or daily trend down")
-
             except Exception as e:
                 results.append(f"❌ Error processing {symbol}: {e}")
 
@@ -311,7 +334,6 @@ class FalahTradingBot:
             "Details:\n" + "\n".join(results)
         )
         return summary
-
 
 def create_bot_instance():
     return FalahTradingBot()

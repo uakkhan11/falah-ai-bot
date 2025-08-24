@@ -13,23 +13,15 @@ SYMBOLS = ["RELIANCE", "SUNPHARMA"]
 YEARS_BACK = 2
 
 def add_weekly_ema(df):
-    # Ensure 'date' column is datetime and set index for resample
     df = df.copy()
     df['date'] = pd.to_datetime(df['date'])
-    
-    # Resample to weekly frequency, taking last close in the week
     df_weekly = df.set_index('date').resample('W-MON')['close'].last().dropna().to_frame()
-    
-    # Calculate 50-period EMA on weekly closes
     df_weekly['ema50'] = ta.ema(df_weekly['close'], length=50)
     df_weekly['ema50_slope'] = df_weekly['ema50'].diff()
-    
-    # Forward-fill weekly EMA and slope values back to daily dates
     df = df.set_index('date')
     df['weekly_ema50'] = df_weekly['ema50'].reindex(df.index, method='ffill')
     df['weekly_ema50_slope'] = df_weekly['ema50_slope'].reindex(df.index, method='ffill')
     df = df.reset_index()
-    
     return df
 
 def load_candle_data(symbol, years=YEARS_BACK):
@@ -38,7 +30,7 @@ def load_candle_data(symbol, years=YEARS_BACK):
         print(f"Data file missing for {symbol}: {path}")
         return None
     df = pd.read_csv(path, parse_dates=['date'])
-    cutoff = datetime.now() - timedelta(days=365*years)
+    cutoff = datetime.now() - timedelta(days=365 * years)
     df = df[df['date'] >= cutoff].sort_values('date').reset_index(drop=True)
     return df
 
@@ -88,7 +80,6 @@ def backtest(df, symbol):
             if pos.get('trail_active', False) and row.get('chandelier_exit', 0) > pos.get('trail_stop', 0):
                 pos['trail_stop'] = row.get('chandelier_exit', 0)
 
-            sell_shares = pos['shares']
             reason = None
             pnl = 0
 
@@ -113,7 +104,7 @@ def backtest(df, symbol):
                 pos['shares'] = remain_qty
                 pos['scaled_out'] = True
                 cash += sell_val
-                continue  # keep position with remaining shares
+                continue
 
             if ret >= PROFIT_TARGET and pos.get('scaled_out', False):
                 reason = 'Profit Target'
@@ -185,6 +176,7 @@ def main():
             continue
 
         df = add_indicators(df)
+        df = add_weekly_ema(df)
         df = combine_signals(df)
 
         trades = backtest(df, symbol)

@@ -272,3 +272,6 @@ def main():
 
     # Final Combined Report:
     overall_report(all_trades, overall_equity)
+    
+if __name__ == "__main__":
+    main()

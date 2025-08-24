@@ -4,14 +4,13 @@ import os
 import numpy as np
 import pandas as pd
 import pandas_ta as ta
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+import joblib
+
+from datetime import datetime, timedelta
 
 # --- Config ---
-GOOGLE_SHEET_ID = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebf"
-GOOGLE_CREDS_JSON = "falah-credentials.json"
-DATA_DIR_DAILY = "/root/falah-ai-bot/swing_data"
+BASE_DIR = "/root/falah-ai-bot"
+DATA_DIR = os.path.join(BASE_DIR, "swing_data")
 YEARS_BACK = 2
 SL_ATR_MULT = 2.8  # Stop loss multiplier from ATR
 INITIAL_CAPITAL = 1_000_000

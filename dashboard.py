@@ -68,6 +68,22 @@ def get_positions():
     except Exception as e:
         return pd.DataFrame([{"error": str(e)}])
 
+def refresh_portfolio_metrics():
+    try:
+        summary = bot.get_portfolio_summary()
+        pv = summary.get('portfolio_value', 'N/A')
+        ac = bot.capital_manager.get_available_capital() if bot.capital_manager else 'N/A'
+        pnl = 'N/A'
+        try:
+            pnl = float(pv) - bot.config.INITIAL_CAPITAL if isinstance(pv, (int,float)) else 'N/A'
+        except:
+            pass
+        open_trades = summary.get('open_trades', 0)
+        cooling = "Active" if getattr(bot, 'cooling_mode', False) else "Inactive"
+        return str(pv), str(ac), str(pnl), open_trades, cooling
+    except Exception as e:
+        return ("Error",)*5
+
 def run_historical_fetch():
     try:
         fetcher = bot.data_manager  # or SmartHalalFetcher if separate

@@ -1,5 +1,3 @@
-# MACD, RSI, BB and Volume breakout
-
 import os
 import numpy as np
 import pandas as pd
@@ -13,10 +11,10 @@ GOOGLE_SHEET_ID = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
 GOOGLE_CREDS_JSON = "falah-credentials.json"
 DATA_DIR_DAILY = "/root/falah-ai-bot/swing_data"
 YEARS_BACK = 2
-SL_ATR_MULT = 2.8  # Stop loss multiplier from ATR
+SL_ATR_MULT = 2.8  # ATR stop loss multiplier
 INITIAL_CAPITAL = 1_000_000
-RISK_PER_TRADE = 0.01 * INITIAL_CAPITAL
-TRANSACTION_COST = 0.001
+RISK_PER_TRADE = 0.01 * INITIAL_CAPITAL  # 1% risk per trade
+TRANSACTION_COST = 0.001  # 0.1% per transaction
 MAX_POSITIONS = 5
 MAX_TRADES = 2000
 
@@ -56,13 +54,11 @@ def compute_indicators(df):
     df['low_2d_ago'] = df['low'].shift(2)
     df['volume_1d_ago'] = df['volume'].shift(1)
 
-    # Drop rows with NaNs from indicator calculations
     df.dropna(inplace=True)
     df.reset_index(drop=True, inplace=True)
     return df
 
 def bullish_entry_filter(row):
-    # All conditions from your logic including Bollinger lower band condition
     return (
         row['macd_line'] > 0 and
         row['macd_signal'] > 0 and
@@ -94,12 +90,11 @@ def backtest_symbol(df, symbol):
             atr = pos['atr']
             stop_loss_price = entry_price - direction * SL_ATR_MULT * atr
 
-            # Check stop loss
             if (direction == 1 and df.iloc[i]['low'] <= stop_loss_price) or \
                (direction == -1 and df.iloc[i]['high'] >= stop_loss_price):
                 exit_price = stop_loss_price
                 pnl = direction * (exit_price - entry_price) * pos['shares']
-                pnl -= pnl * TRANSACTION_COST * 2  # buy + sell cost
+                pnl -= abs(pnl) * TRANSACTION_COST * 2  # buy + sell cost
                 cash += exit_price * pos['shares'] * (1 - TRANSACTION_COST)
                 trades.append({'symbol': symbol,
                                'entry_date': pos['entry_date'],
@@ -116,17 +111,16 @@ def backtest_symbol(df, symbol):
         if trade_count >= MAX_TRADES:
             break
 
-        # Entry logic: Only allow if we have room for new positions and sufficient cash
+        # Entry logic
         if len(positions) < MAX_POSITIONS and cash > 0:
             if bullish_entry_filter(row):
                 atr = row['atr']
-                position_risk = RISK_PER_TRADE
                 stop_loss_distance = SL_ATR_MULT * atr
-                position_size = position_risk / stop_loss_distance
+                position_size = RISK_PER_TRADE / stop_loss_distance
                 shares = min(cash / price, position_size)
 
                 if shares < 1:
-                    continue  # Not enough cash to buy even 1 share
+                    continue
 
                 cash -= shares * price * (1 + TRANSACTION_COST)
                 pos = {'entry_date': date, 'entry_price': price, 'shares': shares,
@@ -136,7 +130,7 @@ def backtest_symbol(df, symbol):
         if trade_count >= MAX_TRADES:
             break
 
-    # Close open positions on last day at close price
+    # Close all open positions at last day close
     final_date = df.iloc[-1]['date']
     final_close = df.iloc[-1]['close']
     for pos in positions:
@@ -144,7 +138,7 @@ def backtest_symbol(df, symbol):
         entry_price = pos['entry_price']
         shares = pos['shares']
         pnl = direction * (final_close - entry_price) * shares
-        pnl -= pnl * TRANSACTION_COST * 2
+        pnl -= abs(pnl) * TRANSACTION_COST * 2
         cash += final_close * shares * (1 - TRANSACTION_COST)
         trades.append({'symbol': symbol,
                        'entry_date': pos['entry_date'],
@@ -173,14 +167,13 @@ def main():
 
         total_pnl = sum(t['pnl'] for t in trades)
         wins = sum(1 for t in trades if t['pnl'] > 0)
-        win_rate = wins / len(trades) * 100 if trades else 0
+        win_rate = (wins / len(trades) * 100) if trades else 0
         print(f"{symbol}: Trades={len(trades)}, Total PnL={total_pnl:.2f}, Win Rate={win_rate:.2f}%")
 
-    # Overall summary
     overall_pnl = sum(t['pnl'] for t in all_trades)
     overall_wins = sum(1 for t in all_trades if t['pnl'] > 0)
     overall_trades = len(all_trades)
-    overall_win_rate = overall_wins / overall_trades * 100 if overall_trades else 0
+    overall_win_rate = (overall_wins / overall_trades * 100) if overall_trades else 0
 
     print("\n--- Overall Backtest Summary ---")
     print(f"Total trades: {overall_trades}")

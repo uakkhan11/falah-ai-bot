@@ -10,6 +10,8 @@ from datetime import datetime
 GOOGLE_SHEET_ID = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
 GOOGLE_CREDS_JSON = "falah-credentials.json"
 DATA_DIR_DAILY = "/root/falah-ai-bot/swing_data"
+DATA_DIR_INTRADAY_1H = "/root/falah-ai-bot/intraday_swing_data"
+DATA_DIR_INTRADAY_15M = "/root/falah-ai-bot/scalping_data"
 YEARS_BACK = 2
 SL_ATR_MULT = 2.8
 INITIAL_CAPITAL = 1_000_000
@@ -17,9 +19,6 @@ RISK_PER_TRADE = 0.01 * INITIAL_CAPITAL
 TRANSACTION_COST = 0.001
 MAX_POSITIONS = 5
 MAX_TRADES = 2000
-
-# Volatility threshold for regime switching
-VOLATILITY_THRESHOLD = 1.0  # Adjust as needed based on ATR scale
 
 def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
     scope = ['https://spreadsheets.google.com/feeds',
@@ -31,10 +30,19 @@ def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
     symbols = worksheet.col_values(1)
     return [s.strip() for s in symbols if s.strip()]
 
-def load_data(symbol):
-    path = os.path.join(DATA_DIR_DAILY, f"{symbol}.csv")
+def load_data(symbol, timeframe="daily"):
+    if timeframe == "daily":
+        data_dir = DATA_DIR_DAILY
+    elif timeframe == "1h":
+        data_dir = DATA_DIR_INTRADAY_1H
+    elif timeframe == "15m":
+        data_dir = DATA_DIR_INTRADAY_15M
+    else:
+        raise ValueError("Unsupported timeframe")
+
+    path = os.path.join(data_dir, f"{symbol}.csv")
     if not os.path.exists(path):
-        print(f"Warning: Data not found for symbol '{symbol}', skipping.")
+        print(f"Warning: Data not found for symbol '{symbol}' in timeframe {timeframe}, skipping.")
         return None
     df = pd.read_csv(path, parse_dates=['date']).sort_values('date').reset_index(drop=True)
     cutoff = pd.Timestamp.now() - pd.Timedelta(days=365 * YEARS_BACK)
@@ -72,30 +80,35 @@ def bullish_entry_filter(row):
         row['close'] >= row['bb_lower']
     )
 
-# Individual exit conditions
-def chandelier_exit(row):
+# Exit: Chandelier exit combined with ATR-based stop loss (stop loss handled in backtest)
+def exit_logic_chandelier(row):
     return row['close'] < row['chandelier_exit']
 
-def rsi_bb_exit(row):
-    return (row['rsi_14'] < 70) and (row['close'] < row['bb_upper'])
-
-def supertrend_exit(row):
-    return row['supertrend_direction'] < 0
-
-# Hybrid exit combines all exits
-def hybrid_exit_logic(row):
-    return chandelier_exit(row) or rsi_bb_exit(row) or supertrend_exit(row)
-
-# Regime-adaptive exit switches based on ATR level (volatility)
-def regime_adaptive_exit(row):
-    if row['atr'] is None or np.isnan(row['atr']):
-        return False
-    if row['atr'] > VOLATILITY_THRESHOLD:
-        # Higher volatility: use chandelier exit
-        return chandelier_exit(row)
-    else:
-        # Lower volatility: use RSI + BB exit
-        return rsi_bb_exit(row)
+def merge_multitimeframe(daily_df, df_1h, df_15m):
+    # Simple merging: Add intraday volatility or momentum features on daily date index
+    # Resample 1h and 15m to daily max/min for feature merging
+    if df_1h is not None:
+        df_1h['date_daily'] = df_1h['date'].dt.floor('D')
+        agg_1h = df_1h.groupby('date_daily').agg({
+            'high': 'max',
+            'low': 'min',
+            'close': 'last',
+            'volume': 'sum'
+        }).rename(columns=lambda x: x + '_1h')
+        daily_df = daily_df.merge(agg_1h, how='left', left_on='date', right_on='date_daily')
+        daily_df.drop(columns=['date_daily'], inplace=True)
+    if df_15m is not None:
+        df_15m['date_daily'] = df_15m['date'].dt.floor('D')
+        agg_15m = df_15m.groupby('date_daily').agg({
+            'high': 'max',
+            'low': 'min',
+            'close': 'last',
+            'volume': 'sum'
+        }).rename(columns=lambda x: x + '_15m')
+        daily_df = daily_df.merge(agg_15m, how='left', left_on='date', right_on='date_daily')
+        daily_df.drop(columns=['date_daily'], inplace=True)
+    daily_df.fillna(method='ffill', inplace=True)
+    return daily_df
 
 def backtest_symbol(df, symbol, exit_logic, label):
     cash = INITIAL_CAPITAL
@@ -154,11 +167,7 @@ def backtest_symbol(df, symbol, exit_logic, label):
                 if shares < 1:
                     continue
                 cash -= shares * price * (1 + TRANSACTION_COST)
-                pos = {'entry_date': date,
-                       'entry_price': price,
-                       'shares': shares,
-                       'direction': 1,
-                       'atr': atr}
+                pos = {'entry_date': date, 'entry_price': price, 'shares': shares, 'direction': 1, 'atr': atr}
                 positions.append(pos)
                 entry_signal_count += 1
         if trade_count >= MAX_TRADES:
@@ -198,50 +207,55 @@ def backtest_symbol(df, symbol, exit_logic, label):
 
     return trades, entry_signal_count, exit_signal_count
 
-
 def main():
     symbols = get_symbols_from_gsheet(GOOGLE_SHEET_ID)
-    summary_data = {
-        'Hybrid Exit': {'trades': [], 'entries': 0, 'exits': 0},
-        'Regime-Adaptive Exit': {'trades': [], 'entries': 0, 'exits': 0}
-    }
 
-    print("=== Running Hybrid Exit Backtest ===")
+    # Case 1: Daily data only with chandelier + ATR stop loss
+    print("=== Running Case 1: Daily Data with Chandelier Exit + ATR SL ===")
+    summary_case_1 = {'trades': [], 'entries': 0, 'exits': 0}
     for symbol in symbols:
-        df = load_data(symbol)
-        if df is None or len(df) < 20:
+        daily_df = load_data(symbol, "daily")
+        if daily_df is None or len(daily_df) < 20:
             continue
-        df = compute_indicators(df)
-        trades, entries, exits = backtest_symbol(df, symbol, hybrid_exit_logic, "Hybrid Exit")
-        summary_data['Hybrid Exit']['trades'].extend(trades)
-        summary_data['Hybrid Exit']['entries'] += entries
-        summary_data['Hybrid Exit']['exits'] += exits
+        daily_df = compute_indicators(daily_df)
+        trades, entries, exits = backtest_symbol(daily_df, symbol, exit_logic_chandelier, "Case 1")
+        summary_case_1['trades'].extend(trades)
+        summary_case_1['entries'] += entries
+        summary_case_1['exits'] += exits
 
-    print("\n=== Running Regime-Adaptive Exit Backtest ===")
+    print("\nCase 1 Summary:")
+    print(f"Total trades: {len(summary_case_1['trades'])}")
+    print(f"Total entries signaled: {summary_case_1['entries']}")
+    print(f"Total exit logic triggered (excl. stop loss): {summary_case_1['exits']}")
+    print(f"Total PnL: {sum(t['pnl'] for t in summary_case_1['trades']):.2f}")
+    wins = sum(1 for t in summary_case_1['trades'] if t['pnl'] > 0)
+    win_rate = (wins / len(summary_case_1['trades']) * 100) if summary_case_1['trades'] else 0
+    print(f"Win rate: {win_rate:.2f}%")
+
+    # Case 2: Multi-timeframe merge (daily + 1h + 15m) with chandelier + ATR stop loss
+    print("\n=== Running Case 2: Multi-timeframe (Daily + 1h + 15m) with Chandelier Exit + ATR SL ===")
+    summary_case_2 = {'trades': [], 'entries': 0, 'exits': 0}
     for symbol in symbols:
-        df = load_data(symbol)
-        if df is None or len(df) < 20:
+        daily_df = load_data(symbol, "daily")
+        df_1h = load_data(symbol, "1h")
+        df_15m = load_data(symbol, "15m")
+        if daily_df is None or len(daily_df) < 20:
             continue
-        df = compute_indicators(df)
-        trades, entries, exits = backtest_symbol(df, symbol, regime_adaptive_exit, "Regime-Adaptive Exit")
-        summary_data['Regime-Adaptive Exit']['trades'].extend(trades)
-        summary_data['Regime-Adaptive Exit']['entries'] += entries
-        summary_data['Regime-Adaptive Exit']['exits'] += exits
+        df_merged = merge_multitimeframe(daily_df, df_1h, df_15m)
+        df_merged = compute_indicators(df_merged)
+        trades, entries, exits = backtest_symbol(df_merged, symbol, exit_logic_chandelier, "Case 2")
+        summary_case_2['trades'].extend(trades)
+        summary_case_2['entries'] += entries
+        summary_case_2['exits'] += exits
 
-    print("\n\n=== SUMMARY OF ALL ADAPTIVE EXIT CASES ===")
-    for case_label, data in summary_data.items():
-        total_trades = len(data['trades'])
-        total_entries = data['entries']
-        total_exits = data['exits']
-        total_pnl = sum(t['pnl'] for t in data['trades'])
-        wins = sum(1 for t in data['trades'] if t['pnl'] > 0)
-        win_rate = (wins / total_trades * 100) if total_trades else 0
-        print(f"\n{case_label} Overall:")
-        print(f"Total entries signaled: {total_entries}")
-        print(f"Total exit logic triggered (excl. stop loss): {total_exits}")
-        print(f"Total trades executed: {total_trades}")
-        print(f"Total PnL: {total_pnl:.2f}")
-        print(f"Win rate: {win_rate:.2f}%")
+    print("\nCase 2 Summary:")
+    print(f"Total trades: {len(summary_case_2['trades'])}")
+    print(f"Total entries signaled: {summary_case_2['entries']}")
+    print(f"Total exit logic triggered (excl. stop loss): {summary_case_2['exits']}")
+    print(f"Total PnL: {sum(t['pnl'] for t in summary_case_2['trades']):.2f}")
+    wins = sum(1 for t in summary_case_2['trades'] if t['pnl'] > 0)
+    win_rate = (wins / len(summary_case_2['trades']) * 100) if summary_case_2['trades'] else 0
+    print(f"Win rate: {win_rate:.2f}%")
 
 if __name__ == "__main__":
     main()

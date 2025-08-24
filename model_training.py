@@ -3,31 +3,86 @@ import numpy as np
 import pandas as pd
 import pandas_ta as ta
 import joblib
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, RandomizedSearchCV, cross_val_score
 from sklearn.metrics import classification_report
 
-# --- Config ---
-CSV_PATH = "your_training_data.csv"  # Update your training data CSV path here
+# === Config ===
+GOOGLE_SHEET_ID = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
+GOOGLE_CREDS_JSON = "falah-credentials.json"
+TRAINING_CSV = "training_data_all_symbols.csv"
 MODEL_SAVE_PATH = "model.pkl"
 TARGET_COLUMN = "outcome"
 FEATURES = ["rsi", "atr", "adx", "ema10", "ema21", "volumechange"]
 ML_THRESHOLD = 0.6
-
+YEARS_BACK = 5
 DATA_DIR_DAILY = "/root/falah-ai-bot/swing_data"
-DATA_DIR_1H = "/root/falah-ai-bot/intraday_swing_data"
-DATA_DIR_15M = "/root/falah-ai-bot/scalping_data"
-SYMBOLS = ["RELIANCE", "SUNPHARMA"]
-YEARS_BACK = 2
 
-# --- ML Model Training & Loading ---
+# --- Google Sheet Symbol Loader ---
+def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
+    scope = ['https://spreadsheets.google.com/feeds',
+             'https://www.googleapis.com/auth/drive']
+    creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDS_JSON, scope)
+    client = gspread.authorize(creds)
+    sheet = client.open_by_key(sheet_id)
+    worksheet = sheet.worksheet(worksheet_name)
+    symbols = worksheet.col_values(1)
+    return [s.strip() for s in symbols if s.strip()]
+
+# --- Data Preparation ---
+def load_data(symbol):
+    path = os.path.join(DATA_DIR_DAILY, f"{symbol}.csv")
+    if not os.path.exists(path):
+        print(f"Warning: Data file not found for symbol '{symbol}', skipping.")
+        return None
+    df = pd.read_csv(path, parse_dates=['date'])
+    cutoff = pd.Timestamp.now() - pd.Timedelta(days=365 * YEARS_BACK)
+    df = df[df['date'] >= cutoff].sort_values('date').reset_index(drop=True)
+    return df
+
+def compute_features(df):
+    df['rsi'] = ta.rsi(df['close'], length=14)
+    df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+    adx = ta.adx(df['high'], df['low'], df['close'], length=14)
+    df['adx'] = adx['ADX_14']
+    df['ema10'] = ta.ema(df['close'], length=10)
+    df['ema21'] = ta.ema(df['close'], length=21)
+    if 'volume' in df.columns:
+        df['volumechange'] = df['volume'].pct_change().fillna(0)
+    else:
+        df['volumechange'] = 0
+    df = df.dropna()
+    return df
+
+def define_target(df):
+    df['future_high'] = df['close'].rolling(window=10, min_periods=1).max().shift(-1)
+    df['outcome'] = (df['future_high'] >= df['close'] * 1.05).astype(int)
+    return df
+
+def generate_training_csv(symbols):
+    aggregated_df = pd.DataFrame()
+    for sym in symbols:
+        print(f"Processing symbol: {sym}")
+        df = load_data(sym)
+        if df is None:
+            continue
+        df = compute_features(df)
+        df = define_target(df)
+        df['symbol'] = sym
+        cols = ['symbol', 'date', 'rsi', 'atr', 'adx', 'ema10', 'ema21', 'volumechange', 'outcome']
+        aggregated_df = pd.concat([aggregated_df, df[cols]], ignore_index=True)
+    aggregated_df.to_csv(TRAINING_CSV, index=False)
+    print(f"Training CSV saved: {TRAINING_CSV} with {len(aggregated_df)} rows.")
+
+# --- ML Model Training ---
 def train_and_save_model():
     if os.path.exists(MODEL_SAVE_PATH):
         print(f"Model '{MODEL_SAVE_PATH}' found. Loading existing model.")
         return joblib.load(MODEL_SAVE_PATH)
-
     print("Training new model from scratch...")
-    df = pd.read_csv(CSV_PATH)
+    df = pd.read_csv(TRAINING_CSV)
     df.columns = [c.lower() for c in df.columns]
     df.dropna(subset=FEATURES + [TARGET_COLUMN], inplace=True)
 
@@ -72,74 +127,28 @@ def train_and_save_model():
 
     return final_model
 
-# --- Data loading & indicator functions ---
-def add_weekly_ema(df):
+# --- Placeholder functions: update/replace with actual implementations ---
+def add_indicators(df):
     df = df.copy()
-    df['date'] = pd.to_datetime(df['date'])
-    df_weekly = df.set_index('date').resample('W-MON')['close'].last().dropna().to_frame()
-    df_weekly['ema50'] = ta.ema(df_weekly['close'], length=50)
-    df_weekly['ema50_slope'] = df_weekly['ema50'].diff()
-    df = df.set_index('date')
-    df['weekly_ema50'] = df_weekly['ema50'].reindex(df.index, method='ffill')
-    df['weekly_ema50_slope'] = df_weekly['ema50_slope'].reindex(df.index, method='ffill')
-    df = df.reset_index()
+    df['rsi'] = ta.rsi(df['close'], length=14)
+    df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+    df['ema10'] = ta.ema(df['close'], length=10)
+    df['ema20'] = ta.ema(df['close'], length=20)
+    df['ema50'] = ta.ema(df['close'], length=50)
+    df['ema200'] = ta.ema(df['close'], length=200)
+    df['ema20_slope'] = df['ema20'].diff()
+    df['ema50_slope'] = df['ema50'].diff()
+    df['ema200_slope'] = df['ema200'].diff()
+    df = df.dropna()
     return df
-
-def load_candle_data(symbol, timeframe, years=YEARS_BACK):
-    folder_map = {
-        "daily": DATA_DIR_DAILY,
-        "1h": DATA_DIR_1H,
-        "15m": DATA_DIR_15M,
-    }
-    path = os.path.join(folder_map[timeframe], f"{symbol}.csv")
-    if not os.path.exists(path):
-        print(f"Data file missing for {symbol} timeframe {timeframe}: {path}")
-        return None
-    df = pd.read_csv(path, parse_dates=['date'])
-    cutoff = pd.Timestamp.now() - pd.Timedelta(days=365 * years)
-    df = df[df['date'] >= cutoff].sort_values('date').reset_index(drop=True)
-    return df
-
-def prepare_multitimeframe_data(symbol):
-    df_daily = load_candle_data(symbol, "daily")
-    df_1h = load_candle_data(symbol, "1h")
-    df_15m = load_candle_data(symbol, "15m")
-    if df_daily is None or df_1h is None or df_15m is None:
-        return None
-
-    df_15m['rsi_15m'] = ta.rsi(df_15m['close'], length=14)
-    df_15m['ema20_15m'] = ta.ema(df_15m['close'], length=20)
-    df_15m['ema20_15m_slope'] = df_15m['ema20_15m'].diff()
-
-    df_1h['rsi_1h'] = ta.rsi(df_1h['close'], length=14)
-    df_1h['ema50_1h'] = ta.ema(df_1h['close'], length=50)
-    df_1h['ema50_1h_slope'] = df_1h['ema50_1h'].diff()
-
-    daily_15m_agg = df_15m.groupby(df_15m['date'].dt.floor('D')).agg({
-        'rsi_15m': 'last',
-        'ema20_15m_slope': 'last'
-    }).rename_axis('date').reset_index()
-
-    daily_1h_agg = df_1h.groupby(df_1h['date'].dt.floor('D')).agg({
-        'rsi_1h': 'last',
-        'ema50_1h_slope': 'last'
-    }).rename_axis('date').reset_index()
-
-    df_daily = pd.merge(df_daily, daily_15m_agg, on='date', how='left')
-    df_daily = pd.merge(df_daily, daily_1h_agg, on='date', how='left')
-
-    df_daily['rsi_15m'] = df_daily['rsi_15m'].ffill()
-    df_daily['ema20_15m_slope'] = df_daily['ema20_15m_slope'].fillna(0)
-    df_daily['rsi_1h'] = df_daily['rsi_1h'].ffill()
-    df_daily['ema50_1h_slope'] = df_daily['ema50_1h_slope'].fillna(0)
-
-    df_daily = add_indicators(df_daily)  # Your existing function needs to be available
-    df_daily = add_weekly_ema(df_daily)
-
-    return df_daily
 
 def modify_combine_signals_with_mtf(df):
-    df = combine_signals(df)  # Your existing function needs to be available or implement similarly
+    # Base daily entry signal: e.g. EMA20 > EMA50 and RSI >50 means long entry
+    df['entry_signal'] = 0
+    df.loc[(df['ema20'] > df['ema50']) & (df['rsi'] > 50), 'entry_signal'] = 1
+    df.loc[(df['ema20'] < df['ema50']) & (df['rsi'] < 50), 'entry_signal'] = -1
+
+    # Confirm with intraday indicators (assumes these columns are present)
     long_cond = (
         (df['entry_signal'] == 1) &
         (df['rsi_15m'] > 50) &
@@ -154,24 +163,17 @@ def modify_combine_signals_with_mtf(df):
         (df['ema20_15m_slope'] < 0) &
         (df['ema50_1h_slope'] < 0)
     )
+
     df['entry_signal_long'] = long_cond
     df['entry_signal_short'] = short_cond
+
     df['entry_signal_final'] = 0
     df.loc[long_cond, 'entry_signal_final'] = 1
     df.loc[short_cond, 'entry_signal_final'] = -1
+
     return df
 
-def apply_ml_filter(df, model, features=FEATURES, threshold=ML_THRESHOLD):
-    X = df[features]
-    missing_mask = X.isnull().any(axis=1)
-    preds_prob = np.zeros(len(df))
-    if not missing_mask.all():
-        preds_prob_valid = model.predict_proba(X[~missing_mask])[:, 1]
-        preds_prob[~missing_mask] = preds_prob_valid
-    df['ml_prob'] = preds_prob
-    df['ml_signal'] = (df['ml_prob'] >= threshold) & (df['entry_signal_final'] != 0)
-    return df
-
+# --- Full backtest function with ML filtering and advanced exits ---
 def backtest_mtf(df, symbol):
     INITIAL_CAPITAL = 1_000_000
     RISK_PER_TRADE = 0.01 * INITIAL_CAPITAL
@@ -193,14 +195,13 @@ def backtest_mtf(df, symbol):
 
     rolling_atr_mean = df['atr'].rolling(window=20, min_periods=1).mean()
 
-    df = apply_ml_filter(df, joblib.load(MODEL_SAVE_PATH))
-
     for i in range(1, len(df)):
         row = df.iloc[i]
         date, price = row['date'], row['close']
         sig = row.get('entry_signal_final', 0)
         sigtype = 'Long' if sig == 1 else ('Short' if sig == -1 else '')
 
+        # ML signal filter: assumed in df['ml_signal'] from your ML filter step
         ml_entry_ok = row.get('ml_signal', False)
         if sig == 0 or not ml_entry_ok:
             sig = 0
@@ -289,7 +290,7 @@ def backtest_mtf(df, symbol):
             if (direction == 1 and price <= adaptive_stop_loss) or (direction == -1 and price >= adaptive_stop_loss):
                 reason = 'ATR Stop Loss'
             elif pos.get('trail_active', False) and (
-                (direction == 1 and price <= pos.get('trail_stop', 0)) or (direction == -1 and price >= pos.get('trail_stop', 0))
+                    (direction == 1 and price <= pos.get('trail_stop', 0)) or (direction == -1 and price >= pos.get('trail_stop', 0))
             ):
                 reason = 'Trailing Stop'
             elif (direction == 1 and price <= pos.get('chandelier_exit', 0)) or (direction == -1 and price >= pos.get('chandelier_exit', 0)):
@@ -354,16 +355,37 @@ def backtest_mtf(df, symbol):
 
     return trades
 
+def apply_ml_filter(df, model):
+    X = df[FEATURES]
+    missing_mask = X.isnull().any(axis=1)
+    preds_prob = np.zeros(len(df))
+    if not missing_mask.all():
+        preds_prob_valid = model.predict_proba(X[~missing_mask])[:, 1]
+        preds_prob[~missing_mask] = preds_prob_valid
+    df['ml_prob'] = preds_prob
+    df['ml_signal'] = (df['ml_prob'] >= ML_THRESHOLD) & (df['entry_signal_final'] != 0)
+    return df
+
+def backtest_mtf(df, symbol):
+    # Your full backtesting function with ML filtering and position management here
+    # This should align with the backtest function previously shared
+    return []
+
+# --- Main Pipeline ---
 def main():
-    # Train or load ML model
+    symbols = get_symbols_from_gsheet(GOOGLE_SHEET_ID)
+    print(f"Loaded {len(symbols)} symbols from Google Sheet.")
+
+    generate_training_csv(symbols)
     ml_model = train_and_save_model()
 
-    for symbol in SYMBOLS:
-        print(f"\nBacktesting {symbol} multi-timeframe with ML filtering for last {YEARS_BACK} years...")
-        df = prepare_multitimeframe_data(symbol)
+    for symbol in symbols:
+        print(f"\nBacktesting {symbol} multi-timeframe with ML filtering...")
+        df = load_data(symbol)
         if df is None:
             print(f"Skipping {symbol} due to missing data.")
             continue
+        df = add_indicators(df)
         df = modify_combine_signals_with_mtf(df)
         df = apply_ml_filter(df, ml_model)
         trades = backtest_mtf(df, symbol)
@@ -374,10 +396,6 @@ def main():
             print(f"Total trades: {len(trades_df)}")
             print(f"Total PnL: {trades_df['pnl'].sum():.2f}")
             print(f"Win rate: {(trades_df['pnl'] > 0).mean() * 100:.2f}%")
-            print("\nPnL by Entry Type:")
-            print(trades_df.groupby('entry_type')['pnl'].agg(['count', 'sum', 'mean']))
-            print("\nExit Reason Performance:")
-            print(trades_df.groupby('exit_reason')['pnl'].agg(['count', 'sum', 'mean']))
         else:
             print(f"No trades executed for {symbol}.")
 

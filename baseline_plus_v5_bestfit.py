@@ -21,6 +21,7 @@ MAX_TRADES = 2000
 # Regime volatility threshold for stop loss sensitivity
 VOLATILITY_THRESHOLD = 1.0
 
+
 def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDS_JSON, scope)
@@ -29,6 +30,7 @@ def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
     worksheet = sheet.worksheet(worksheet_name)
     symbols = worksheet.col_values(1)
     return [s.strip() for s in symbols if s.strip()]
+
 
 def load_data(symbol):
     path = os.path.join(DATA_DIR_DAILY, f"{symbol}.csv")
@@ -39,6 +41,7 @@ def load_data(symbol):
     cutoff = pd.Timestamp.now() - pd.Timedelta(days=365 * YEARS_BACK)
     df = df[df['date'] >= cutoff]
     return df
+
 
 def compute_indicators(df):
     df = df.copy()
@@ -55,7 +58,9 @@ def compute_indicators(df):
     df.reset_index(drop=True, inplace=True)
     return df
 
+
 def bullish_entry_filter(row):
+    # RSI changed to >=50
     return (
         row['macd_line'] > 0 and
         row['macd_signal'] > 0 and
@@ -63,11 +68,13 @@ def bullish_entry_filter(row):
         row['close'] >= row['bb_lower']
     )
 
+
 def momentum_trend_exit(row):
     # Exit if momentum fading or trend reversing
     rsi_exit = (row['rsi_14'] < 70) and (row['close'] < row['bb_upper'])
     trend_exit = row['supertrend_direction'] < 0
     return rsi_exit or trend_exit
+
 
 def adaptive_sl_atr_multiplier(atr):
     # Tighter stop loss in calm markets, looser in volatile markets
@@ -75,6 +82,7 @@ def adaptive_sl_atr_multiplier(atr):
         return 3.0
     else:
         return 2.0
+
 
 def backtest_symbol(df, symbol):
     cash = INITIAL_CAPITAL
@@ -86,20 +94,21 @@ def backtest_symbol(df, symbol):
     equity_curve = []
     portfolio_value = cash
 
+    # Simulate daily live trading - process one day at a time
     for i in range(1, len(df)):
         row = df.iloc[i]
-        date = row['date']
         price = row['close']
-
+        date = row['date']
         positions_to_close = []
+
+        # Check exits first
         for pos in positions:
             sl_atr_mult = adaptive_sl_atr_multiplier(pos['atr'])
-
             entry_price = pos['entry_price']
             stop_loss_price = entry_price - sl_atr_mult * pos['atr']
             stop_loss_hit = df.iloc[i]['low'] <= stop_loss_price
-
             exit_signal = momentum_trend_exit(row)
+
             if stop_loss_hit or exit_signal:
                 exit_price = stop_loss_price if stop_loss_hit else price
                 pnl = (exit_price - entry_price) * pos['shares']
@@ -119,25 +128,28 @@ def backtest_symbol(df, symbol):
                 trade_count += 1
                 if trade_count >= MAX_TRADES:
                     break
+
         for pos in positions_to_close:
             positions.remove(pos)
+
         if trade_count >= MAX_TRADES:
             break
 
+        # Entry logic for new trades each day, respecting max position and cash
         if len(positions) < MAX_POSITIONS and cash > 0:
             if bullish_entry_filter(row):
                 position_size = RISK_PER_TRADE / (adaptive_sl_atr_multiplier(row['atr']) * row['atr'])
                 shares = min(cash / price, position_size)
-                if shares < 1:
-                    continue
-                cash -= shares * price * (1 + TRANSACTION_COST + SLIPPAGE)
-                positions.append({'entry_date': date, 'entry_price': price, 'shares': shares, 'atr': row['atr']})
-                entry_signal_count += 1
+                if shares >= 1:
+                    cash -= shares * price * (1 + TRANSACTION_COST + SLIPPAGE)
+                    positions.append({'entry_date': date, 'entry_price': price, 'shares': shares, 'atr': row['atr']})
+                    entry_signal_count += 1
 
         position_value = sum((row['close'] - pos['entry_price']) * pos['shares'] for pos in positions)
         portfolio_value = cash + position_value
         equity_curve.append(portfolio_value)
 
+    # Close remaining positions at final date
     final_date = df.iloc[-1]['date']
     final_close = df.iloc[-1]['close']
     for pos in positions:
@@ -159,43 +171,55 @@ def backtest_symbol(df, symbol):
     wins = sum(1 for t in trades if t['pnl'] > 0)
     total_trades = len(trades)
     win_rate = (wins / total_trades * 100) if total_trades else 0
+
     equity_array = np.array(equity_curve)
     running_max = np.maximum.accumulate(equity_array)
     drawdowns = (running_max - equity_array) / running_max
     max_drawdown = np.max(drawdowns) * 100 if drawdowns.size else 0
+
     durations = [(t['exit_date'] - t['entry_date']).days for t in trades if (t['exit_date'] - t['entry_date']).days >= 0]
     avg_duration = np.mean(durations) if durations else 0
 
     print(f"\n{symbol} Backtest Summary:")
-    print(f"Total Trades: {total_trades}, Win Rate: {win_rate:.2f}%")
+    print(f"Total Trades: {total_trades}")
+    print(f"Entry signals taken: {entry_signal_count}")
+    print(f"Exit signals triggered (excluding stop loss): {exit_signal_count}")
+    print(f"Win Rate: {win_rate:.2f}%")
     print(f"Total PnL: {total_pnl:.2f}")
     print(f"Max Drawdown: {max_drawdown:.2f}%")
-    print(f"Avg Trade Duration: {avg_duration:.2f} days")
+    print(f"Average Trade Duration: {avg_duration:.2f} days")
 
-    return total_pnl, win_rate, max_drawdown, avg_duration
+    return total_pnl, total_trades, win_rate, max_drawdown, avg_duration
 
 def main():
     symbols = get_symbols_from_gsheet(GOOGLE_SHEET_ID)
-    total_pnl = 0
-    total_trades = 0
-    total_wins = 0
-    total_drawdowns = []
-    total_durations = []
+
+    overall_pnl = 0
+    overall_trades = 0
+    overall_wins = 0
+    drawdown_list = []
+    duration_list = []
 
     for symbol in symbols:
         df = load_data(symbol)
         if df is None or len(df) < 20:
             continue
         df = compute_indicators(df)
-        pnl, win_rate, max_dd, avg_dur = backtest_symbol(df, symbol)
-        total_pnl += pnl
-        total_drawdowns.append(max_dd)
-        total_durations.append(avg_dur)
+        pnl, trades, win_rate, max_dd, avg_dur = backtest_symbol(df, symbol)
+        overall_pnl += pnl
+        overall_trades += trades
+        overall_wins += win_rate * trades / 100  # convert win_rate% back to wins count approximately
+        drawdown_list.append(max_dd)
+        duration_list.append(avg_dur)
 
-    avg_drawdown = np.mean(total_drawdowns) if total_drawdowns else 0
-    avg_duration = np.mean(total_durations) if total_durations else 0
-    print("\n=== Aggregate Strategy Performance ===")
-    print(f"Total PnL: {total_pnl:.2f}")
+    avg_drawdown = np.mean(drawdown_list) if drawdown_list else 0
+    avg_duration = np.mean(duration_list) if duration_list else 0
+    overall_win_rate = (overall_wins / overall_trades * 100) if overall_trades > 0 else 0
+
+    print("\n= Aggregate Performance Summary =")
+    print(f"Total Trades Executed: {overall_trades}")
+    print(f"Total PnL: {overall_pnl:.2f}")
+    print(f"Overall Win Rate: {overall_win_rate:.2f}%")
     print(f"Average Max Drawdown: {avg_drawdown:.2f}%")
     print(f"Average Trade Duration: {avg_duration:.2f} days")
 

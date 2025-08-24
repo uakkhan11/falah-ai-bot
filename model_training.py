@@ -400,12 +400,12 @@ def main():
     ml_model = train_and_save_model()
 
     
-        df = prepare_multitimeframe_data(symbol)  # Multi-timeframe data with intraday indicators merged
-        df_daily = load_data(symbol, "daily")
-        if df_daily is None:
-            return None
-
-        return df_daily
+        def prepare_multitimeframe_data(symbol):  # Multi-timeframe data with intraday indicators merged
+            df_daily = load_data(symbol, "daily")
+            if df_daily is None:
+                return None
+    
+            return df_daily
     # Usage in backtesting loop:
     for symbol in symbols:
         print(f"\nBacktesting {symbol} multi-timeframe with ML filtering...")  

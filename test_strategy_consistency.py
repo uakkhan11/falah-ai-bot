@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from strategy_utils import (
     add_indicators, breakout_signal,
     bb_breakout_signal, bb_pullback_signal,
-    combine_signals, backtest
+    combine_signals
 )
 
 # Data folder path

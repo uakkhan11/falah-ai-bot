@@ -11,10 +11,10 @@ GOOGLE_SHEET_ID = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
 GOOGLE_CREDS_JSON = "falah-credentials.json"
 DATA_DIR_DAILY = "/root/falah-ai-bot/swing_data"
 YEARS_BACK = 2
-SL_ATR_MULT = 2.8  # ATR stop loss multiplier
+SL_ATR_MULT = 2.8
 INITIAL_CAPITAL = 1_000_000
-RISK_PER_TRADE = 0.01 * INITIAL_CAPITAL  # 1% risk per trade
-TRANSACTION_COST = 0.001  # 0.1% per transaction
+RISK_PER_TRADE = 0.01 * INITIAL_CAPITAL
+TRANSACTION_COST = 0.001
 MAX_POSITIONS = 5
 MAX_TRADES = 2000
 
@@ -44,15 +44,17 @@ def compute_indicators(df):
     df['macd_line'] = macd['MACD_12_26_9']
     df['macd_signal'] = macd['MACDs_12_26_9']
     df['rsi_14'] = ta.rsi(df['close'], length=14)
-    df['bb_lower'] = ta.bbands(df['close'], length=20, std=2)['BBL_20_2.0']
-    df['bb_upper'] = ta.bbands(df['close'], length=20, std=2)['BBU_20_2.0']
+    bbands = ta.bbands(df['close'], length=20, std=2)
+    df['bb_lower'] = bbands['BBL_20_2.0']
+    df['bb_upper'] = bbands['BBU_20_2.0']
     df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
-    # Shifted columns for price & volume comparison
+    # Calculate chandelier exit as close - ATR * multiplier (e.g., 3)
+    df['chandelier_exit'] = df['close'] - 3 * df['atr']
+
     df['high_1d_ago'] = df['high'].shift(1)
     df['low_1d_ago'] = df['low'].shift(1)
-    df['high_2d_ago'] = df['high'].shift(2)
-    df['low_2d_ago'] = df['low'].shift(2)
     df['volume_1d_ago'] = df['volume'].shift(1)
+
     df.dropna(inplace=True)
     df.reset_index(drop=True, inplace=True)
     return df
@@ -64,35 +66,27 @@ def bullish_entry_filter(row):
         40 <= row['rsi_14'] <= 70 and
         row['high'] > row['high_1d_ago'] and
         row['low'] > row['low_1d_ago'] and
-        row['high'] > row['high_2d_ago'] and
-        row['low'] > row['low_2d_ago'] and
         row['volume'] > row['volume_1d_ago'] and
         row['close'] >= row['bb_lower']
     )
 
-def losing_momentum_exit_filter(row):
-    return (
-        (row['macd_line'] < 0) or
-        (row['macd_signal'] < 0) or
-        (row['rsi_14'] < 70) or
-        (row['high'] <= row['high_1d_ago']) or
-        (row['low'] <= row['low_1d_ago']) or
-        (row['volume'] <= row['volume_1d_ago']) or
-        (row['close'] < row['bb_upper'])
-    )
+def exit_case_1(row):
+    return (row['rsi_14'] < 70) and (row['close'] < row['bb_upper'])
 
-def backtest_symbol(df, symbol):
+def exit_case_2(row):
+    return ((row['rsi_14'] < 70) and (row['close'] < row['bb_upper'])) or (row['close'] < row['chandelier_exit'])
+
+def backtest_symbol(df, symbol, exit_logic):
     cash = INITIAL_CAPITAL
     positions = []
     trades = []
     trade_count = 0
-    
+
     for i in range(1, len(df)):
         row = df.iloc[i]
         date = row['date']
         price = row['close']
-        
-        # Check exit logic
+
         positions_to_close = []
         for pos in positions:
             # ATR stop loss price
@@ -100,18 +94,16 @@ def backtest_symbol(df, symbol):
             entry_price = pos['entry_price']
             atr = pos['atr']
             stop_loss_price = entry_price - direction * SL_ATR_MULT * atr
-            
-            # Exit on stop loss
+
             stop_loss_hit = (direction == 1 and df.iloc[i]['low'] <= stop_loss_price) or \
                             (direction == -1 and df.iloc[i]['high'] >= stop_loss_price)
-                            
-            # Exit on losing momentum
-            momentum_exit = losing_momentum_exit_filter(row)
-            
+
+            momentum_exit = exit_logic(row)
+
             if stop_loss_hit or momentum_exit:
                 exit_price = stop_loss_price if stop_loss_hit else price
                 pnl = direction * (exit_price - entry_price) * pos['shares']
-                pnl -= abs(pnl) * TRANSACTION_COST * 2  # buy + sell cost
+                pnl -= abs(pnl) * TRANSACTION_COST * 2
                 cash += exit_price * pos['shares'] * (1 - TRANSACTION_COST)
                 trades.append({'symbol': symbol,
                                'entry_date': pos['entry_date'],
@@ -120,7 +112,7 @@ def backtest_symbol(df, symbol):
                                'entry_price': entry_price,
                                'exit_price': exit_price,
                                'direction': 'Long' if direction == 1 else 'Short',
-                               'exit_reason': 'Stop Loss' if stop_loss_hit else 'Momentum Exit'})
+                               'exit_reason': 'Stop Loss' if stop_loss_hit else 'Exit Logic'})
                 positions_to_close.append(pos)
                 trade_count += 1
                 if trade_count >= MAX_TRADES:
@@ -129,7 +121,7 @@ def backtest_symbol(df, symbol):
             positions.remove(pos)
         if trade_count >= MAX_TRADES:
             break
-        
+
         # Entry logic
         if len(positions) < MAX_POSITIONS and cash > 0:
             if bullish_entry_filter(row):
@@ -145,7 +137,7 @@ def backtest_symbol(df, symbol):
                 positions.append(pos)
         if trade_count >= MAX_TRADES:
             break
-            
+
     # Close all open positions at last day close
     final_date = df.iloc[-1]['date']
     final_close = df.iloc[-1]['close']
@@ -164,12 +156,14 @@ def backtest_symbol(df, symbol):
                        'exit_price': final_close,
                        'direction': 'Long' if direction == 1 else 'Short',
                        'exit_reason': 'EOD Exit'})
-    
+
     return trades
 
 def main():
     symbols = get_symbols_from_gsheet(GOOGLE_SHEET_ID)
-    all_trades = []
+
+    print("Backtesting using Exit Case 1 (RSI < 70 + Close < BB Upper):")
+    all_trades_case_1 = []
     for symbol in symbols:
         print(f"Processing {symbol}...")
         df = load_data(symbol)
@@ -177,20 +171,30 @@ def main():
             print(f"Not enough data for {symbol}, skipping.")
             continue
         df = compute_indicators(df)
-        trades = backtest_symbol(df, symbol)
-        all_trades.extend(trades)
-        total_pnl = sum(t['pnl'] for t in trades)
-        wins = sum(1 for t in trades if t['pnl'] > 0)
-        win_rate = (wins / len(trades) * 100) if trades else 0
-        print(f"{symbol}: Trades={len(trades)}, Total PnL={total_pnl:.2f}, Win Rate={win_rate:.2f}%")
-    overall_pnl = sum(t['pnl'] for t in all_trades)
-    overall_wins = sum(1 for t in all_trades if t['pnl'] > 0)
-    overall_trades = len(all_trades)
-    overall_win_rate = (overall_wins / overall_trades * 100) if overall_trades else 0
-    print("\n--- Overall Backtest Summary ---")
-    print(f"Total trades: {overall_trades}")
-    print(f"Total PnL: {overall_pnl:.2f}")
-    print(f"Overall Win Rate: {overall_win_rate:.2f}%")
+        trades = backtest_symbol(df, symbol, exit_case_1)
+        all_trades_case_1.extend(trades)
+
+    total_pnl_1 = sum(t['pnl'] for t in all_trades_case_1)
+    wins_1 = sum(1 for t in all_trades_case_1 if t['pnl'] > 0)
+    win_rate_1 = (wins_1 / len(all_trades_case_1) * 100) if all_trades_case_1 else 0
+    print(f"\nExit Case 1 Summary: Total Trades={len(all_trades_case_1)}, Total PnL={total_pnl_1:.2f}, Win Rate={win_rate_1:.2f}%")
+
+    print("\nBacktesting using Exit Case 2 (Case 1 + Chandelier Exit):")
+    all_trades_case_2 = []
+    for symbol in symbols:
+        print(f"Processing {symbol}...")
+        df = load_data(symbol)
+        if df is None or len(df) < 20:
+            print(f"Not enough data for {symbol}, skipping.")
+            continue
+        df = compute_indicators(df)
+        trades = backtest_symbol(df, symbol, exit_case_2)
+        all_trades_case_2.extend(trades)
+
+    total_pnl_2 = sum(t['pnl'] for t in all_trades_case_2)
+    wins_2 = sum(1 for t in all_trades_case_2 if t['pnl'] > 0)
+    win_rate_2 = (wins_2 / len(all_trades_case_2) * 100) if all_trades_case_2 else 0
+    print(f"\nExit Case 2 Summary: Total Trades={len(all_trades_case_2)}, Total PnL={total_pnl_2:.2f}, Win Rate={win_rate_2:.2f}%")
 
 if __name__ == "__main__":
     main()

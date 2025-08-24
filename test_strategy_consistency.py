@@ -1,5 +1,7 @@
 import os
 import pandas as pd
+import numpy as np
+import pandas_ta as ta
 from datetime import datetime, timedelta
 from strategy_utils import (
     add_indicators,
@@ -9,6 +11,26 @@ from strategy_utils import (
 DATA_DIR = "swing_data"
 SYMBOLS = ["RELIANCE", "SUNPHARMA"]
 YEARS_BACK = 2
+
+def add_weekly_ema(df):
+    # Ensure 'date' column is datetime and set index for resample
+    df = df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    
+    # Resample to weekly frequency, taking last close in the week
+    df_weekly = df.set_index('date').resample('W-MON')['close'].last().dropna().to_frame()
+    
+    # Calculate 50-period EMA on weekly closes
+    df_weekly['ema50'] = ta.ema(df_weekly['close'], length=50)
+    df_weekly['ema50_slope'] = df_weekly['ema50'].diff()
+    
+    # Forward-fill weekly EMA and slope values back to daily dates
+    df = df.set_index('date')
+    df['weekly_ema50'] = df_weekly['ema50'].reindex(df.index, method='ffill')
+    df['weekly_ema50_slope'] = df_weekly['ema50_slope'].reindex(df.index, method='ffill')
+    df = df.reset_index()
+    
+    return df
 
 def load_candle_data(symbol, years=YEARS_BACK):
     path = os.path.join(DATA_DIR, f"{symbol}.csv")

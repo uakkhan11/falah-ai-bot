@@ -19,16 +19,6 @@ TRANSACTION_COST = 0.001
 MAX_POSITIONS = 5
 MAX_TRADES = 2000
 
-def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
-    scope = ['https://spreadsheets.google.com/feeds',
-             'https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDS_JSON, scope)
-    client = gspread.authorize(creds)
-    sheet = client.open_by_key(sheet_id)
-    worksheet = sheet.worksheet(worksheet_name)
-    symbols = worksheet.col_values(1)
-    return [s.strip() for s in symbols if s.strip()]
-
 def load_data(symbol):
     path = os.path.join(DATA_DIR_DAILY, f"{symbol}.csv")
     if not os.path.exists(path):

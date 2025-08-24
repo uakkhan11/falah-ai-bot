@@ -65,13 +65,11 @@ def compute_indicators(df):
     df['low_1d_ago'] = df['low'].shift(1)
     df['volume_1d_ago'] = df['volume'].shift(1)
     df = calculate_fib_retracement(df)
-    df.dropna(inplace=True)
+    df.ffill(inplace=True)
     df.reset_index(drop=True, inplace=True)
     return df
 
 def calculate_fib_retracement(df):
-    # Calculate daily Fibonacci retracement levels using rolling window
-    # Using last 14 days high and low for calculation
     period = 14
     df['fib_high'] = df['high'].rolling(period).max()
     df['fib_low'] = df['low'].rolling(period).min()
@@ -90,21 +88,10 @@ def bullish_entry_filter(row):
         row['close'] >= row['bb_lower']
     )
 
-# Exit Case 1: Chandelier exit only (stop loss handled in backtest)
 def exit_case_1(row):
     return row['close'] < row['chandelier_exit']
 
-# Exit Case 2: Multi-timeframe not needed in exit logic, same as case 1 (chandelier)
-# But data includes intraday merged features applied before backtest
-
-# Exit Case 3: Fibonacci retracement exit with ATR stop loss
-def exit_case_3(row):
-    # Exit if price falls below 61.8% fib retracement level
-    below_fib_618 = row['close'] < row['fib_618']
-    return below_fib_618
-
 def merge_multitimeframe(daily_df, df_1h, df_15m):
-    # Merge 1h and 15m aggregated features as daily max/min/close/volume
     df = daily_df.copy()
     if df_1h is not None:
         df_1h = df_1h.copy()
@@ -124,8 +111,11 @@ def merge_multitimeframe(daily_df, df_1h, df_15m):
         df = df.merge(agg_15m, how='left', left_on='date', right_on='date_daily')
         if 'date_daily' in df.columns:
             df.drop(columns=['date_daily'], inplace=True)
-    df.fillna(method='ffill', inplace=True)
+    df.ffill(inplace=True)
     return df
+
+def exit_case_3(row):
+    return row['close'] < row['fib_618']
 
 def backtest_symbol(df, symbol, exit_logic, label):
     cash = INITIAL_CAPITAL
@@ -134,12 +124,11 @@ def backtest_symbol(df, symbol, exit_logic, label):
     trade_count = 0
     entry_signal_count = 0
     exit_signal_count = 0
-    
+
     for i in range(1, len(df)):
         row = df.iloc[i]
         date = row['date']
         price = row['close']
-
         positions_to_close = []
         for pos in positions:
             direction = pos['direction']
@@ -149,7 +138,6 @@ def backtest_symbol(df, symbol, exit_logic, label):
             stop_loss_hit = (direction == 1 and df.iloc[i]['low'] <= stop_loss_price) or \
                             (direction == -1 and df.iloc[i]['high'] >= stop_loss_price)
             momentum_exit = exit_logic(row)
-
             if stop_loss_hit or momentum_exit:
                 exit_price = stop_loss_price if stop_loss_hit else price
                 pnl = direction * (exit_price - entry_price) * pos['shares']
@@ -174,7 +162,6 @@ def backtest_symbol(df, symbol, exit_logic, label):
             positions.remove(pos)
         if trade_count >= MAX_TRADES:
             break
-
         if len(positions) < MAX_POSITIONS and cash > 0:
             if bullish_entry_filter(row):
                 atr = row['atr']
@@ -226,10 +213,12 @@ def backtest_symbol(df, symbol, exit_logic, label):
 
 def main():
     symbols = get_symbols_from_gsheet(GOOGLE_SHEET_ID)
+    summary_case_1 = {'trades': [], 'entries': 0, 'exits': 0}
+    summary_case_2 = {'trades': [], 'entries': 0, 'exits': 0}
+    summary_case_3 = {'trades': [], 'entries': 0, 'exits': 0}
 
     # Case 1: Daily only
     print("=== Running Case 1: Daily Data with Chandelier Exit + ATR SL ===")
-    summary_case_1 = {'trades': [], 'entries': 0, 'exits': 0}
     for symbol in symbols:
         daily_df = load_data(symbol, "daily")
         if daily_df is None or len(daily_df) < 20:
@@ -240,18 +229,8 @@ def main():
         summary_case_1['entries'] += entries
         summary_case_1['exits'] += exits
 
-    print("\nCase 1 Overall Summary:")
-    print(f"Total trades: {len(summary_case_1['trades'])}")
-    print(f"Total entries signaled: {summary_case_1['entries']}")
-    print(f"Total exit logic triggered (excl. stop loss): {summary_case_1['exits']}")
-    print(f"Total PnL: {sum(t['pnl'] for t in summary_case_1['trades']):.2f}")
-    wins = sum(1 for t in summary_case_1['trades'] if t['pnl'] > 0)
-    win_rate = (wins / len(summary_case_1['trades']) * 100) if summary_case_1['trades'] else 0
-    print(f"Win rate: {win_rate:.2f}%")
-
-    # Case 2: Multi-timeframe (daily + 1h + 15m)
+    # Case 2: Multi-timeframe
     print("\n=== Running Case 2: Multi-timeframe (Daily + 1h + 15m) with Chandelier Exit + ATR SL ===")
-    summary_case_2 = {'trades': [], 'entries': 0, 'exits': 0}
     for symbol in symbols:
         daily_df = load_data(symbol, "daily")
         df_1h = load_data(symbol, "1h")
@@ -265,14 +244,36 @@ def main():
         summary_case_2['entries'] += entries
         summary_case_2['exits'] += exits
 
-    print("\nCase 2 Overall Summary:")
-    print(f"Total trades: {len(summary_case_2['trades'])}")
-    print(f"Total entries signaled: {summary_case_2['entries']}")
-    print(f"Total exit logic triggered (excl. stop loss): {summary_case_2['exits']}")
-    print(f"Total PnL: {sum(t['pnl'] for t in summary_case_2['trades']):.2f}")
-    wins = sum(1 for t in summary_case_2['trades'] if t['pnl'] > 0)
-    win_rate = (wins / len(summary_case_2['trades']) * 100) if summary_case_2['trades'] else 0
-    print(f"Win rate: {win_rate:.2f}%")
+    # Case 3: Daily + Fibonacci retracement exit
+    print("\n=== Running Case 3: Daily Data with Fibonacci Retracement Exit + ATR SL ===")
+    for symbol in symbols:
+        daily_df = load_data(symbol, "daily")
+        if daily_df is None or len(daily_df) < 20:
+            continue
+        daily_df = compute_indicators(daily_df)
+        trades, entries, exits = backtest_symbol(daily_df, symbol, exit_case_3, "Case 3")
+        summary_case_3['trades'].extend(trades)
+        summary_case_3['entries'] += entries
+        summary_case_3['exits'] += exits
+
+    # Print overall summary for all cases
+    print("\n\n=== OVERALL SUMMARY OF ALL CASES ===")
+    for idx, (summary, label) in enumerate(zip(
+        [summary_case_1, summary_case_2, summary_case_3],
+        ["Case 1: Daily + Chandelier Exit", "Case 2: Multi-timeframe + Chandelier Exit", "Case 3: Daily + Fibonacci Exit"])):
+
+        total_trades = len(summary['trades'])
+        total_entries = summary['entries']
+        total_exits = summary['exits']
+        total_pnl = sum(t['pnl'] for t in summary['trades'])
+        wins = sum(1 for t in summary['trades'] if t['pnl'] > 0)
+        win_rate = (wins / total_trades * 100) if total_trades else 0
+        print(f"\n{label} Overall:")
+        print(f"Total entries signaled: {total_entries}")
+        print(f"Total exit logic triggered (excluding stop loss): {total_exits}")
+        print(f"Total trades executed: {total_trades}")
+        print(f"Total PnL: {total_pnl:.2f}")
+        print(f"Win rate: {win_rate:.2f}%")
 
 if __name__ == "__main__":
     main()

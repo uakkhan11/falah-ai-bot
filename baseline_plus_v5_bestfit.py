@@ -10,15 +10,16 @@ from datetime import datetime
 GOOGLE_SHEET_ID = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
 GOOGLE_CREDS_JSON = "falah-credentials.json"
 DATA_DIR_DAILY = "/root/falah-ai-bot/swing_data"
-DATA_DIR_INTRADAY_1H = "/root/falah-ai-bot/intraday_swing_data"
-DATA_DIR_INTRADAY_15M = "/root/falah-ai-bot/scalping_data"
 YEARS_BACK = 2
-SL_ATR_MULT = 2.8
-INITIAL_CAPITAL = 1_000_000
+INITIAL_CAPITAL = 200_000  # Changed to 2 lakhs
 RISK_PER_TRADE = 0.01 * INITIAL_CAPITAL
 TRANSACTION_COST = 0.001
 MAX_POSITIONS = 5
 MAX_TRADES = 2000
+
+# Parameter sweep ranges
+SL_ATR_MULT_RANGE = [2.0, 2.5, 2.8, 3.0]
+CHANDLER_MULT_RANGE = [2.5, 3.0, 3.5, 4.0]
 
 def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -32,13 +33,8 @@ def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
 def load_data(symbol, timeframe="daily"):
     if timeframe == "daily":
         data_dir = DATA_DIR_DAILY
-    elif timeframe == "1h":
-        data_dir = DATA_DIR_INTRADAY_1H
-    elif timeframe == "15m":
-        data_dir = DATA_DIR_INTRADAY_15M
     else:
         raise ValueError("Unsupported timeframe")
-
     path = os.path.join(data_dir, f"{symbol}.csv")
     if not os.path.exists(path):
         print(f"Warning: Data not found for symbol '{symbol}' in timeframe {timeframe}, skipping.")
@@ -48,7 +44,7 @@ def load_data(symbol, timeframe="daily"):
     df = df[df['date'] >= cutoff]
     return df
 
-def compute_indicators(df):
+def compute_indicators(df, chandelier_mult):
     df = df.copy()
     macd = ta.macd(df['close'], fast=12, slow=26, signal=9)
     df['macd_line'] = macd['MACD_12_26_9']
@@ -58,23 +54,12 @@ def compute_indicators(df):
     df['bb_lower'] = bbands['BBL_20_2.0']
     df['bb_upper'] = bbands['BBU_20_2.0']
     df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
-    df['chandelier_exit'] = df['close'] - 3 * df['atr']
-    supertrend_df = ta.supertrend(df['high'], df['low'], df['close'], length=10, multiplier=3.0)
-    df['supertrend_direction'] = supertrend_df['SUPERTd_10_3.0']
+    df['chandelier_exit'] = df['close'] - chandelier_mult * df['atr']
     df['high_1d_ago'] = df['high'].shift(1)
     df['low_1d_ago'] = df['low'].shift(1)
     df['volume_1d_ago'] = df['volume'].shift(1)
-    df = calculate_fib_retracement(df)
-    df.ffill(inplace=True)
+    df.dropna(inplace=True)
     df.reset_index(drop=True, inplace=True)
-    return df
-
-def calculate_fib_retracement(df):
-    period = 14
-    df['fib_high'] = df['high'].rolling(period).max()
-    df['fib_low'] = df['low'].rolling(period).min()
-    df['fib_382'] = df['fib_high'] - 0.382 * (df['fib_high'] - df['fib_low'])
-    df['fib_618'] = df['fib_high'] - 0.618 * (df['fib_high'] - df['fib_low'])
     return df
 
 def bullish_entry_filter(row):
@@ -88,56 +73,34 @@ def bullish_entry_filter(row):
         row['close'] >= row['bb_lower']
     )
 
-def exit_case_1(row):
+def exit_logic_chandelier(row):
     return row['close'] < row['chandelier_exit']
 
-def merge_multitimeframe(daily_df, df_1h, df_15m):
-    df = daily_df.copy()
-    if df_1h is not None:
-        df_1h = df_1h.copy()
-        df_1h['date_daily'] = df_1h['date'].dt.floor('D')
-        agg_1h = df_1h.groupby('date_daily').agg({
-            'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
-        }).rename(columns=lambda x: x + '_1h')
-        df = df.merge(agg_1h, how='left', left_on='date', right_on='date_daily')
-        if 'date_daily' in df.columns:
-            df.drop(columns=['date_daily'], inplace=True)
-    if df_15m is not None:
-        df_15m = df_15m.copy()
-        df_15m['date_daily'] = df_15m['date'].dt.floor('D')
-        agg_15m = df_15m.groupby('date_daily').agg({
-            'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
-        }).rename(columns=lambda x: x + '_15m')
-        df = df.merge(agg_15m, how='left', left_on='date', right_on='date_daily')
-        if 'date_daily' in df.columns:
-            df.drop(columns=['date_daily'], inplace=True)
-    df.ffill(inplace=True)
-    return df
-
-def exit_case_3(row):
-    return row['close'] < row['fib_618']
-
-def backtest_symbol(df, symbol, exit_logic, label):
+def backtest_symbol(df, symbol, sl_atr_mult, chandelier_mult):
     cash = INITIAL_CAPITAL
     positions = []
     trades = []
     trade_count = 0
     entry_signal_count = 0
     exit_signal_count = 0
+    equity_curve = []
+    portfolio_value = cash
 
     for i in range(1, len(df)):
         row = df.iloc[i]
         date = row['date']
         price = row['close']
+
         positions_to_close = []
         for pos in positions:
             direction = pos['direction']
             entry_price = pos['entry_price']
             atr = pos['atr']
-            stop_loss_price = entry_price - direction * SL_ATR_MULT * atr
+            stop_loss_price = entry_price - direction * sl_atr_mult * atr
             stop_loss_hit = (direction == 1 and df.iloc[i]['low'] <= stop_loss_price) or \
                             (direction == -1 and df.iloc[i]['high'] >= stop_loss_price)
-            momentum_exit = exit_logic(row)
+            momentum_exit = exit_logic_chandelier(row)
+
             if stop_loss_hit or momentum_exit:
                 exit_price = stop_loss_price if stop_loss_hit else price
                 pnl = direction * (exit_price - entry_price) * pos['shares']
@@ -160,12 +123,14 @@ def backtest_symbol(df, symbol, exit_logic, label):
                     break
         for pos in positions_to_close:
             positions.remove(pos)
+
         if trade_count >= MAX_TRADES:
             break
+
         if len(positions) < MAX_POSITIONS and cash > 0:
             if bullish_entry_filter(row):
                 atr = row['atr']
-                stop_loss_distance = SL_ATR_MULT * atr
+                stop_loss_distance = sl_atr_mult * atr
                 position_size = RISK_PER_TRADE / stop_loss_distance
                 shares = min(cash / price, position_size)
                 if shares < 1:
@@ -174,9 +139,13 @@ def backtest_symbol(df, symbol, exit_logic, label):
                 pos = {'entry_date': date, 'entry_price': price, 'shares': shares, 'direction': 1, 'atr': atr}
                 positions.append(pos)
                 entry_signal_count += 1
-        if trade_count >= MAX_TRADES:
-            break
 
+        # Update portfolio_value for equity curve
+        position_value = sum((row['close'] - pos['entry_price']) * pos['shares'] * pos['direction'] for pos in positions)
+        portfolio_value = cash + position_value
+        equity_curve.append(portfolio_value)
+
+    # Close remaining open positions
     final_date = df.iloc[-1]['date']
     final_close = df.iloc[-1]['close']
     for pos in positions:
@@ -196,84 +165,71 @@ def backtest_symbol(df, symbol, exit_logic, label):
             'direction': 'Long' if direction == 1 else 'Short',
             'exit_reason': 'EOD Exit'
         })
+        equity_curve.append(cash)  # update equity curve with final close
 
     total_pnl = sum(t['pnl'] for t in trades)
     wins = sum(1 for t in trades if t['pnl'] > 0)
     total_trades = len(trades)
     win_rate = (wins / total_trades * 100) if total_trades else 0
 
-    print(f"\n{label} - {symbol} Summary:")
-    print(f"Entry signals taken: {entry_signal_count}")
-    print(f"Total trades executed: {total_trades}")
-    print(f"Total PnL: {total_pnl:.2f}")
-    print(f"Win Rate: {win_rate:.2f}%")
-    print(f"Exit signals triggered (excluding stop loss): {exit_signal_count}")
+    # Compute max drawdown
+    equity_array = np.array(equity_curve)
+    running_max = np.maximum.accumulate(equity_array)
+    drawdowns = (running_max - equity_array) / running_max
+    max_drawdown = np.max(drawdowns) * 100 if len(drawdowns) > 0 else 0
 
-    return trades, entry_signal_count, exit_signal_count
+    # Average trade duration
+    trade_durations = []
+    # Collect trade durations by date difference
+    for t in trades:
+        d = (t['exit_date'] - t['entry_date']).days
+        if d >= 0:
+            trade_durations.append(d)
+    avg_duration = np.mean(trade_durations) if trade_durations else 0
 
-def main():
+    print(f"\n{symbol}: SL ATR {sl_atr_mult}, Chandler Mult {chandelier_mult}")
+    print(f"Trades: {total_trades}, Entries: {entry_signal_count}, Exits (excl stop loss): {exit_signal_count}")
+    print(f"Total PnL: {total_pnl:.2f}, Win Rate: {win_rate:.2f}%, Max Drawdown: {max_drawdown:.2f}%, Avg Trade Duration: {avg_duration:.2f} days")
+
+    return total_pnl, win_rate, max_drawdown, avg_duration
+
+def parameter_sweep():
     symbols = get_symbols_from_gsheet(GOOGLE_SHEET_ID)
-    summary_case_1 = {'trades': [], 'entries': 0, 'exits': 0}
-    summary_case_2 = {'trades': [], 'entries': 0, 'exits': 0}
-    summary_case_3 = {'trades': [], 'entries': 0, 'exits': 0}
+    results = []
 
-    # Case 1: Daily only
-    print("=== Running Case 1: Daily Data with Chandelier Exit + ATR SL ===")
-    for symbol in symbols:
-        daily_df = load_data(symbol, "daily")
-        if daily_df is None or len(daily_df) < 20:
-            continue
-        daily_df = compute_indicators(daily_df)
-        trades, entries, exits = backtest_symbol(daily_df, symbol, exit_case_1, "Case 1")
-        summary_case_1['trades'].extend(trades)
-        summary_case_1['entries'] += entries
-        summary_case_1['exits'] += exits
+    for sl_atr_mult in SL_ATR_MULT_RANGE:
+        for chandelier_mult in CHANDLER_MULT_RANGE:
+            total_pnl_sum = 0
+            total_wins_sum = 0
+            total_trades_sum = 0
+            total_drawdown_list = []
+            total_duration_list = []
+            for symbol in symbols:
+                daily_df = load_data(symbol, "daily")
+                if daily_df is None or len(daily_df) < 20:
+                    continue
+                df = compute_indicators(daily_df, chandelier_mult)
+                pnl, win_rate, max_dd, avg_dur = backtest_symbol(df, symbol, sl_atr_mult, chandelier_mult)
+                total_pnl_sum += pnl
+                total_drawdown_list.append(max_dd)
+                total_duration_list.append(avg_dur)
+            avg_drawdown = np.mean(total_drawdown_list) if total_drawdown_list else 0
+            avg_duration = np.mean(total_duration_list) if total_duration_list else 0
+            results.append({
+                'SL_ATR_MULT': sl_atr_mult,
+                'CHANDLER_MULT': chandelier_mult,
+                'TOTAL_PnL': total_pnl_sum,
+                'AVG_MAX_DD_pct': avg_drawdown,
+                'AVG_TRADE_DURATION_days': avg_duration
+            })
 
-    # Case 2: Multi-timeframe
-    print("\n=== Running Case 2: Multi-timeframe (Daily + 1h + 15m) with Chandelier Exit + ATR SL ===")
-    for symbol in symbols:
-        daily_df = load_data(symbol, "daily")
-        df_1h = load_data(symbol, "1h")
-        df_15m = load_data(symbol, "15m")
-        if daily_df is None or len(daily_df) < 20:
-            continue
-        df_merged = merge_multitimeframe(daily_df, df_1h, df_15m)
-        df_merged = compute_indicators(df_merged)
-        trades, entries, exits = backtest_symbol(df_merged, symbol, exit_case_1, "Case 2")
-        summary_case_2['trades'].extend(trades)
-        summary_case_2['entries'] += entries
-        summary_case_2['exits'] += exits
+    # Sort by total PnL descending
+    results = sorted(results, key=lambda x: x['TOTAL_PnL'], reverse=True)
 
-    # Case 3: Daily + Fibonacci retracement exit
-    print("\n=== Running Case 3: Daily Data with Fibonacci Retracement Exit + ATR SL ===")
-    for symbol in symbols:
-        daily_df = load_data(symbol, "daily")
-        if daily_df is None or len(daily_df) < 20:
-            continue
-        daily_df = compute_indicators(daily_df)
-        trades, entries, exits = backtest_symbol(daily_df, symbol, exit_case_3, "Case 3")
-        summary_case_3['trades'].extend(trades)
-        summary_case_3['entries'] += entries
-        summary_case_3['exits'] += exits
-
-    # Print overall summary for all cases
-    print("\n\n=== OVERALL SUMMARY OF ALL CASES ===")
-    for idx, (summary, label) in enumerate(zip(
-        [summary_case_1, summary_case_2, summary_case_3],
-        ["Case 1: Daily + Chandelier Exit", "Case 2: Multi-timeframe + Chandelier Exit", "Case 3: Daily + Fibonacci Exit"])):
-
-        total_trades = len(summary['trades'])
-        total_entries = summary['entries']
-        total_exits = summary['exits']
-        total_pnl = sum(t['pnl'] for t in summary['trades'])
-        wins = sum(1 for t in summary['trades'] if t['pnl'] > 0)
-        win_rate = (wins / total_trades * 100) if total_trades else 0
-        print(f"\n{label} Overall:")
-        print(f"Total entries signaled: {total_entries}")
-        print(f"Total exit logic triggered (excluding stop loss): {total_exits}")
-        print(f"Total trades executed: {total_trades}")
-        print(f"Total PnL: {total_pnl:.2f}")
-        print(f"Win rate: {win_rate:.2f}%")
+    print("\n=== Parameter Sweep Results ===")
+    print("SL_ATR_MULT | CHANDLER_MULT | TOTAL_PnL | AVG_MAX_DD% | AVG_TRADE_DURATION_days")
+    for r in results:
+        print(f"{r['SL_ATR_MULT']:11} | {r['CHANDLER_MULT']:13} | {r['TOTAL_PnL']:9.2f} | {r['AVG_MAX_DD_pct']:10.2f} | {r['AVG_TRADE_DURATION_days']:21.2f}")
 
 if __name__ == "__main__":
-    main()
+    parameter_sweep()

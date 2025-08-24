@@ -19,6 +19,8 @@ FEATURES = ["rsi", "atr", "adx", "ema10", "ema21", "volumechange"]
 ML_THRESHOLD = 0.6
 YEARS_BACK = 5
 DATA_DIR_DAILY = "/root/falah-ai-bot/swing_data"
+DATA_DIR_1H = "/root/falah-ai-bot/intraday_swing_data"
+DATA_DIR_15M = "/root/falah-ai-bot/scalping_data"
 
 # --- Google Sheet Symbol Loader ---
 def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
@@ -32,14 +34,19 @@ def get_symbols_from_gsheet(sheet_id, worksheet_name="HalalList"):
     return [s.strip() for s in symbols if s.strip()]
 
 # --- Data Preparation ---
-def load_data(symbol):
-    path = os.path.join(DATA_DIR_DAILY, f"{symbol}.csv")
+def load_data(symbol, timeframe):
+    folder_map = {
+        "daily": DATA_DIR_DAILY,
+        "1h": DATA_DIR_1H,
+        "15m": DATA_DIR_15M,
+    }
+    path = os.path.join(folder_map[timeframe], f"{symbol}.csv")
     if not os.path.exists(path):
-        print(f"Warning: Data file not found for symbol '{symbol}', skipping.")
+        print(f"File not found for {symbol} timeframe {timeframe}: {path}")
         return None
-    df = pd.read_csv(path, parse_dates=['date'])
+    df = pd.read_csv(path, parse_dates=["date"])
     cutoff = pd.Timestamp.now() - pd.Timedelta(days=365 * YEARS_BACK)
-    df = df[df['date'] >= cutoff].sort_values('date').reset_index(drop=True)
+    df = df[df["date"] >= cutoff].sort_values("date").reset_index(drop=True)
     return df
 
 def compute_features(df):
@@ -55,7 +62,20 @@ def compute_features(df):
         df['volumechange'] = 0
     df = df.dropna()
     return df
+    
+def compute_intraday_indicators(df_15m, df_1h):
+    # 15m RSI and EMA20 slope
+    df_15m["rsi_15m"] = ta.rsi(df_15m["close"], length=14)
+    df_15m["ema20_15m"] = ta.ema(df_15m["close"], length=20)
+    df_15m["ema20_15m_slope"] = df_15m["ema20_15m"].diff()
 
+    # 1h RSI and EMA50 slope
+    df_1h["rsi_1h"] = ta.rsi(df_1h["close"], length=14)
+    df_1h["ema50_1h"] = ta.ema(df_1h["close"], length=50)
+    df_1h["ema50_1h_slope"] = df_1h["ema50_1h"].diff()
+
+    return df_15m, df_1h
+    
 def define_target(df):
     df['future_high'] = df['close'].rolling(window=10, min_periods=1).max().shift(-1)
     df['outcome'] = (df['future_high'] >= df['close'] * 1.05).astype(int)
@@ -379,17 +399,16 @@ def main():
     generate_training_csv(symbols)
     ml_model = train_and_save_model()
 
-    for symbol in symbols:
+        for symbol in symbols:
         print(f"\nBacktesting {symbol} multi-timeframe with ML filtering...")
-        df = load_data(symbol)
+        df = prepare_multitimeframe_data(symbol)  # Multi-timeframe data with intraday indicators merged
         if df is None:
-            print(f"Skipping {symbol} due to missing data.")
+            print(f"Skipping {symbol} due to missing multi-timeframe data.")
             continue
-        df = add_indicators(df)
-        df = modify_combine_signals_with_mtf(df)
-        df = apply_ml_filter(df, ml_model)
+        df = add_indicators(df)  # Your daily indicators (e.g. daily EMAs, ATR, etc.)
+        df = modify_combine_signals_with_mtf(df)  # Uses daily + intraday signals
+        df = apply_ml_filter(df, ml_model)  # ML filtering of entry signals
         trades = backtest_mtf(df, symbol)
-
         if trades:
             trades_df = pd.DataFrame(trades)
             print(f"{symbol} Backtest Results:")
@@ -398,6 +417,7 @@ def main():
             print(f"Win rate: {(trades_df['pnl'] > 0).mean() * 100:.2f}%")
         else:
             print(f"No trades executed for {symbol}.")
+
 
 if __name__ == "__main__":
     main()

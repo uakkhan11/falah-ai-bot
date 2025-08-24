@@ -132,12 +132,19 @@ class FalahTradingBot:
             return {f"Error getting portfolio summary: {e}"}
 
     def get_positions(self):
+        import pandas as pd
         try:
             if not self.authenticated:
-                return [{"error": "Bot not authenticated yet."}]
-            return self.order_tracker.get_positions_with_pl()
+                # Return a DataFrame with an error message row instead of a list of dicts
+                return pd.DataFrame([{"error": "Bot not authenticated yet."}])
+            positions = self.order_tracker.get_positions_with_pl()
+            if positions and isinstance(positions, list) and len(positions) > 0:
+                return pd.DataFrame(positions)
+            else:
+                # Return empty DataFrame with appropriate columns or blank
+                return pd.DataFrame()
         except Exception as e:
-            return [{"error": str(e)}]
+            return pd.DataFrame([{"error": str(e)}])
 
     def run_cycle(self):
         try:

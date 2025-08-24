@@ -46,7 +46,7 @@ def backtest(df, symbol):
     TRANSACTION_COST = 0.001  # 0.1%
 
     RSI_THRESHOLD = 55
-    EMA_SLOPE_THRESHOLD = 0.0  # Minimum positive slope to be considered rising
+    EMA_SLOPE_THRESHOLD = 0.0
 
     cash = INITIAL_CAPITAL
     positions = {}
@@ -54,7 +54,6 @@ def backtest(df, symbol):
     trade_count = 0
     regime_fail_count = {}
 
-    # Calculate recent average ATR to use for adaptive trailing stop multiplier
     rolling_atr_mean = df['atr'].rolling(window=20, min_periods=1).mean()
 
     for i in range(1, len(df)):
@@ -62,7 +61,6 @@ def backtest(df, symbol):
         date, price = row['date'], row['close']
         sig, sigtype = row.get('entry_signal', 0), row.get('entry_type', '')
 
-        # Enhanced regime check with configurable thresholds
         regime_ok = (
             (price > row['ema200']) and
             (row['adx'] > 15) and
@@ -71,22 +69,17 @@ def backtest(df, symbol):
             (df.at[i, 'weekly_ema50_slope'] > EMA_SLOPE_THRESHOLD)
         )
 
-        # ENTRY LOGIC - calculate position size adaptively based on ATR stop loss distance
-        # Stop loss distance in price terms
         if i > 0 and not pd.isna(row['atr']):
             stop_loss_distance = ATR_SL_MULT * row['atr']
         else:
             stop_loss_distance = ATR_SL_MULT * (df['atr'].mean() if not df['atr'].isna().all() else 1)
 
-        # Volatility-adjusted position sizing (risk per trade / stop_loss_distance)
         position_size = min(cash, RISK_PER_TRADE / stop_loss_distance * price)
 
-        # EXIT LOGIC
         to_close = []
         for pid, pos in list(positions.items()):
             ret = (price - pos['entry_price']) / pos['entry_price']
 
-            # Adaptive trailing stop using recent ATR mean
             adaptive_atr_mult = ATR_SL_MULT * (rolling_atr_mean.iloc[i] / rolling_atr_mean.mean())
             adaptive_stop_loss = pos['entry_price'] - adaptive_atr_mult * pos.get('entry_atr', 0)
 
@@ -103,7 +96,6 @@ def backtest(df, symbol):
             reason = None
             pnl = 0
 
-            # Two-level partial scaling
             if ret >= PROFIT_TARGET1 and 'scale1' not in pos:
                 scale_qty = pos['shares'] * 0.5
                 remain_qty = pos['shares'] - scale_qty
@@ -124,7 +116,7 @@ def backtest(df, symbol):
                 pos['shares'] = remain_qty
                 pos['scale1'] = True
                 cash += sell_val
-                continue  # keep position with remaining shares
+                continue
 
             if ret >= PROFIT_TARGET2 and 'scale2' not in pos:
                 scale_qty = pos['shares'] * 0.5
@@ -151,12 +143,13 @@ def backtest(df, symbol):
                     trade_count += 1
                 continue
 
-            # Final full exit conditions
             if pos.get('scale2', False):
                 reason = 'Profit Target'
             elif price <= adaptive_stop_loss:
                 reason = 'ATR Stop Loss'
             elif pos.get('trail_active', False) and price <= pos.get('trail_stop', 0):
+                reason = 'Trailing Stop'
+            elif price <= pos.get('chandelier_exit', 0):
                 reason = 'Chandelier Exit'
             else:
                 pid_key = f"{symbol}_{pid}"
@@ -208,7 +201,6 @@ def backtest(df, symbol):
                 'trail_stop': 0,
                 'entry_atr': row.get('atr', 0),
                 'entry_type': sigtype,
-                # Track scaling state
                 'scale1': False,
                 'scale2': False,
             }

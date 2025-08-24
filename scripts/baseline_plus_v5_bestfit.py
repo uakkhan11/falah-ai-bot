@@ -20,7 +20,7 @@ MAX_POSITIONS = 5
 MAX_TRADES = 2000
 
 def load_data(symbol):
-    path = os.path.join(DATA_DIR_DAILY, f"{symbol}.csv")
+    path = os.path.join(DATA_DIR, f"{symbol}.csv")
     if not os.path.exists(path):
         print(f"Warning: Data not found for symbol '{symbol}', skipping.")
         return None

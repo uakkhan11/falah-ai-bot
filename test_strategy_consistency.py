@@ -36,14 +36,17 @@ def load_candle_data(symbol, years=YEARS_BACK):
 
 def backtest(df, symbol):
     INITIAL_CAPITAL = 1_000_000
-    POSITION_SIZE = 100_000
-    PROFIT_TARGET = 0.10
+    RISK_PER_TRADE = 0.01 * INITIAL_CAPITAL  # 1% risk per trade
+    PROFIT_TARGET1 = 0.10
+    PROFIT_TARGET2 = 0.15
     ATR_SL_MULT = 2.8
     TRAIL_TRIGGER = 0.07
     MAX_POSITIONS = 5
     MAX_TRADES = 2000
     TRANSACTION_COST = 0.001  # 0.1%
-    SCALE_OUT_PCT = 0.5  # Take half profit at target, trail rest
+
+    RSI_THRESHOLD = 55
+    EMA_SLOPE_THRESHOLD = 0.0  # Minimum positive slope to be considered rising
 
     cash = INITIAL_CAPITAL
     positions = {}
@@ -51,24 +54,41 @@ def backtest(df, symbol):
     trade_count = 0
     regime_fail_count = {}
 
+    # Calculate recent average ATR to use for adaptive trailing stop multiplier
+    rolling_atr_mean = df['atr'].rolling(window=20, min_periods=1).mean()
+
     for i in range(1, len(df)):
         row = df.iloc[i]
         date, price = row['date'], row['close']
         sig, sigtype = row.get('entry_signal', 0), row.get('entry_type', '')
 
+        # Enhanced regime check with configurable thresholds
         regime_ok = (
             (price > row['ema200']) and
             (row['adx'] > 15) and
-            (df.at[i, 'ema200_slope'] > 0) and
-            (row['rsi'] > 50) and
-            (df.at[i, 'weekly_ema50_slope'] > 0)
+            (df.at[i, 'ema200_slope'] > EMA_SLOPE_THRESHOLD) and
+            (row['rsi'] > RSI_THRESHOLD) and
+            (df.at[i, 'weekly_ema50_slope'] > EMA_SLOPE_THRESHOLD)
         )
+
+        # ENTRY LOGIC - calculate position size adaptively based on ATR stop loss distance
+        # Stop loss distance in price terms
+        if i > 0 and not pd.isna(row['atr']):
+            stop_loss_distance = ATR_SL_MULT * row['atr']
+        else:
+            stop_loss_distance = ATR_SL_MULT * (df['atr'].mean() if not df['atr'].isna().all() else 1)
+
+        # Volatility-adjusted position sizing (risk per trade / stop_loss_distance)
+        position_size = min(cash, RISK_PER_TRADE / stop_loss_distance * price)
 
         # EXIT LOGIC
         to_close = []
         for pid, pos in list(positions.items()):
             ret = (price - pos['entry_price']) / pos['entry_price']
-            atr_stop = pos['entry_price'] - ATR_SL_MULT * pos.get('entry_atr', 0)
+
+            # Adaptive trailing stop using recent ATR mean
+            adaptive_atr_mult = ATR_SL_MULT * (rolling_atr_mean.iloc[i] / rolling_atr_mean.mean())
+            adaptive_stop_loss = pos['entry_price'] - adaptive_atr_mult * pos.get('entry_atr', 0)
 
             if price > pos['high']:
                 pos['high'] = price
@@ -83,9 +103,9 @@ def backtest(df, symbol):
             reason = None
             pnl = 0
 
-            # Partial scaling out
-            if ret >= PROFIT_TARGET and not pos.get('scaled_out', False):
-                scale_qty = pos['shares'] * SCALE_OUT_PCT
+            # Two-level partial scaling
+            if ret >= PROFIT_TARGET1 and 'scale1' not in pos:
+                scale_qty = pos['shares'] * 0.5
                 remain_qty = pos['shares'] - scale_qty
                 buy_val = scale_qty * pos['entry_price']
                 sell_val = scale_qty * price
@@ -98,17 +118,43 @@ def backtest(df, symbol):
                     'exit_date': date,
                     'pnl': pnl,
                     'entry_type': pos['entry_type'],
-                    'exit_reason': 'Partial Profit Target'
+                    'exit_reason': 'Partial Profit Target 1'
                 })
 
                 pos['shares'] = remain_qty
-                pos['scaled_out'] = True
+                pos['scale1'] = True
                 cash += sell_val
+                continue  # keep position with remaining shares
+
+            if ret >= PROFIT_TARGET2 and 'scale2' not in pos:
+                scale_qty = pos['shares'] * 0.5
+                remain_qty = pos['shares'] - scale_qty
+                buy_val = scale_qty * pos['entry_price']
+                sell_val = scale_qty * price
+                charges = (buy_val + sell_val) * TRANSACTION_COST
+                pnl = sell_val * (1 - TRANSACTION_COST) - buy_val - charges
+
+                trades.append({
+                    'symbol': symbol,
+                    'entry_date': pos['entry_date'],
+                    'exit_date': date,
+                    'pnl': pnl,
+                    'entry_type': pos['entry_type'],
+                    'exit_reason': 'Partial Profit Target 2'
+                })
+
+                pos['shares'] = remain_qty
+                pos['scale2'] = True
+                cash += sell_val
+                if remain_qty <= 0:
+                    to_close.append(pid)
+                    trade_count += 1
                 continue
 
-            if ret >= PROFIT_TARGET and pos.get('scaled_out', False):
+            # Final full exit conditions
+            if pos.get('scale2', False):
                 reason = 'Profit Target'
-            elif price <= atr_stop:
+            elif price <= adaptive_stop_loss:
                 reason = 'ATR Stop Loss'
             elif pos.get('trail_active', False) and price <= pos.get('trail_stop', 0):
                 reason = 'Chandelier Exit'
@@ -144,14 +190,15 @@ def backtest(df, symbol):
                     break
 
         for pid in to_close:
-            del positions[pid]
+            if pid in positions:
+                del positions[pid]
 
         if trade_count >= MAX_TRADES:
             break
 
         # ENTRY LOGIC
-        if sig == 1 and len(positions) < MAX_POSITIONS and cash >= POSITION_SIZE:
-            shares = POSITION_SIZE / price
+        if sig == 1 and len(positions) < MAX_POSITIONS and cash >= position_size:
+            shares = position_size / price
             positions[len(positions) + 1] = {
                 'entry_date': date,
                 'entry_price': price,
@@ -161,11 +208,14 @@ def backtest(df, symbol):
                 'trail_stop': 0,
                 'entry_atr': row.get('atr', 0),
                 'entry_type': sigtype,
-                'scaled_out': False,
+                # Track scaling state
+                'scale1': False,
+                'scale2': False,
             }
-            cash -= POSITION_SIZE * (1 + TRANSACTION_COST)
+            cash -= position_size * (1 + TRANSACTION_COST)
 
     return trades
+
 
 def main():
     all_trades = []

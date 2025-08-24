@@ -40,8 +40,9 @@ def backtest(df, symbol):
         row = df.iloc[i]
         date, price = row['date'], row['close']
         sig, sigtype = row.get('entry_signal', 0), row.get('entry_type', '')
-
-        df['ema200_slope'] = df['ema200'].diff()
+    
+        # Compute regime_ok every iteration before any usage
+        regime_ok = (price > row['ema200']) and (row['adx'] > 15) and (df.at[i, 'ema200_slope'] > 0)
 
         # EXIT LOGIC
         to_close = []

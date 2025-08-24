@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import pandas_ta as ta
 from datetime import datetime, timedelta
+from improved_fetcher import SmartHalalFetcher
 from strategy_utils import add_indicators, combine_signals
 
 DATA_DIR_DAILY = "swing_data/daily"

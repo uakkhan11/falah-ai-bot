@@ -1,87 +1,152 @@
 import pandas as pd
-from strategy_utils import add_indicators
+import numpy as np
 from datetime import datetime
+import os
 
-ATR_MULT = 2.0
+def add_indicators(df):
+    df['ema8'] = df['close'].ewm(span=8, adjust=False).mean()
+    df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
+    df['rsi'] = compute_rsi(df['close'], 14)
+    df['vol_sma20'] = df['volume'].rolling(window=20).mean()
+    return df
 
-class BacktestBot:
-    def __init__(self, symbol, df, initial_capital=100000, timeframe='15m'):
-        self.symbol = symbol
-        self.df = df
+def compute_rsi(series, window):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.fillna(50)
+
+class BacktestStrategy:
+    def __init__(self, daily_df, hourly_df, df_15m, initial_capital=100000):
+        self.daily_df = daily_df.sort_values('date').reset_index(drop=True)
+        self.hourly_df = add_indicators(hourly_df.sort_values('date').reset_index(drop=True))
+        self.df_15m = add_indicators(df_15m.sort_values('date').reset_index(drop=True))
         self.initial_capital = initial_capital
+
         self.cash = initial_capital
-        self.position = 0  # number of shares held
+        self.position = 0
         self.entry_price = 0
+        self.entry_date = None
         self.trades = []
-        self.timeframe = timeframe
+        self.exit_reasons = {'StopLoss': 0, 'SignalExit': 0, 'EOD Exit': 0}
 
     def run_backtest(self):
-        self.df = add_indicators(self.df)
+        daily_row = self.daily_df.iloc[-1]
+        if daily_row['close'] <= daily_row['close'].ewm(span=200, adjust=False).mean():
+            return []  # Daily trend down, skip symbol
 
-        for i in range(len(self.df)):
-            row = self.df.iloc[i]
+        last_hourly = self.hourly_df.iloc[-1]
+        if not (last_hourly['ema8'] > last_hourly['ema20'] and last_hourly['rsi'] > 50 and last_hourly['volume'] > last_hourly['vol_sma20']):
+            return []  # Hourly confirmation failed
 
-            # Skip if not enough data for indicators
-            if pd.isna(row.get('ema200', None)) or pd.isna(row.get('atr', None)):
-                continue
+        df = self.df_15m
 
-            # Check if holding position: apply exit logic
-            if self.position > 0:
-                stop_loss = max(row.get('chandelier_exit', 0), self.entry_price - ATR_MULT * row['atr'])
-                stop_loss_hit = row['low'] <= stop_loss
-                momentum_exit = (row.get('rsi_14', 100) < 70 and row['close'] < row.get('bb_upper', 0)) or (row.get('supertrend_direction', 1) < 0)
+        for i in range(1, len(df)):
+            prev = df.iloc[i-1]
+            curr = df.iloc[i]
 
-                if stop_loss_hit or momentum_exit:
-                    exit_price = row['close']
-                    self.cash += self.position * exit_price
-                    self.trades.append({
-                        'type': 'SELL',
-                        'price': exit_price,
-                        'qty': self.position,
-                        'date': row['date'],
-                        'pnl': (exit_price - self.entry_price) * self.position
-                    })
-                    print(f"{self.timeframe} {self.symbol} SELL {self.position} @ {exit_price} on {row['date']} PnL: {(exit_price - self.entry_price) * self.position}")
-                    self.position = 0
-                    self.entry_price = 0
+            # Entry signal: EMA8 crosses above EMA20 15m
+            entry_signal = prev['ema8'] <= prev['ema20'] and curr['ema8'] > curr['ema20']
 
-            # Check entry condition only if not holding
-            if self.position == 0:
-                daily_up = row['close'] > row.get('ema200', 0)
-                entry_signal = row.get('entry_signal', 0) == 1
-                if daily_up and entry_signal:
-                    # Simple position sizing: buy as many shares as possible with 10% capital per trade
-                    risk_per_trade = self.cash * 0.10
-                    qty = int(risk_per_trade / row['close'])
-                    if qty > 0:
-                        self.position = qty
-                        self.entry_price = row['close']
-                        cost = qty * row['close']
-                        self.cash -= cost
-                        self.trades.append({
-                            'type': 'BUY',
-                            'price': row['close'],
-                            'qty': qty,
-                            'date': row['date']
-                        })
-                        print(f"{self.timeframe} {self.symbol} BUY {qty} @ {row['close']} on {row['date']}")
+            if self.position == 0 and entry_signal:
+                qty = int(self.cash / curr['close'])
+                if qty > 0:
+                    self.entry_price = curr['close']
+                    self.position = qty
+                    self.entry_date = curr['date']
+                    self.cash -= qty * self.entry_price
+                    self.trades.append({'type': 'BUY', 'date': curr['date'], 'price': self.entry_price, 'qty': qty})
+            elif self.position > 0:
+                current_price = curr['close']
+                profit_target = self.entry_price * 1.01
+                stop_loss = self.entry_price * 0.9975
 
-        total_value = self.cash + (self.position * self.df.iloc[-1]['close'] if self.position > 0 else 0)
-        print(f"Backtest complete for {self.symbol} {self.timeframe}. Initial capital: {self.initial_capital}, Final value: {total_value}")
+                if current_price >= profit_target:
+                    pnl = (current_price - self.entry_price) * self.position
+                    self.exit_reasons['SignalExit'] += 1
+                    self._exit_trade(current_price, pnl, curr['date'], "Profit Target")
+                elif current_price <= stop_loss:
+                    pnl = (current_price - self.entry_price) * self.position
+                    self.exit_reasons['StopLoss'] += 1
+                    self._exit_trade(current_price, pnl, curr['date'], "Stop Loss")
 
-        return self.trades, total_value
+        # Force exit end of day (last candle)
+        if self.position > 0:
+            current_price = df.iloc[-1]['close']
+            pnl = (current_price - self.entry_price) * self.position
+            self.exit_reasons['EOD Exit'] += 1
+            self._exit_trade(current_price, pnl, df.iloc[-1]['date'], "EOD Exit")
+
+        return self.trades
+
+    def _exit_trade(self, price, pnl, date, reason):
+        self.cash += self.position * price
+        trade_duration = (pd.to_datetime(date) - pd.to_datetime(self.entry_date)).days + 1
+        self.trades.append({
+            'type': 'SELL', 'date': date, 'price': price, 'qty': self.position, 'pnl': pnl, 'duration': trade_duration, 'exit_reason': reason
+        })
+        self.position = 0
+        self.entry_price = 0
+        self.entry_date = None
+
+def overall_performance(trades, initial_capital):
+    if not trades:
+        print("No trades executed")
+        return
+
+    df = pd.DataFrame(trades)
+    total_trades = len(df) // 2  # Buy + Sell pairs
+    wins = df[df['pnl'] > 0]['pnl'].count()
+    losses = df[df['pnl'] <= 0]['pnl'].count()
+    win_rate = wins / total_trades * 100 if total_trades else 0
+    gross_profit = df[df['pnl'] > 0]['pnl'].sum()
+    gross_loss = -df[df['pnl'] <= 0]['pnl'].sum()
+    profit_factor = gross_profit / gross_loss if gross_loss != 0 else np.inf
+    expectancy = df['pnl'].mean()
+    best_trade = df['pnl'].max()
+    worst_trade = df['pnl'].min()
+    avg_duration = df[df['pnl'].notnull()]['duration'].mean()
+
+    total_return = (df['pnl'].sum() / initial_capital) * 100
+
+    print("\n= OVERALL BACKTEST SUMMARY =")
+    print(f"Total Trades Taken     : {total_trades}")
+    print(f"Winning Trades         : {wins}")
+    print(f"Losing Trades          : {losses}")
+    print(f"Win Rate               : {win_rate:.2f}%")
+    print(f"Profit Factor          : {profit_factor:.2f}")
+    print(f"Expectancy (per trade) : {expectancy:.2f}")
+    print(f"Best Trade (PnL)       : {best_trade:.2f}")
+    print(f"Worst Trade (PnL)      : {worst_trade:.2f}")
+    print(f"Avg Trade Duration     : {avg_duration:.2f} days")
+
+    print("\n---- Equity Summary ----")
+    print(f"Total Return           : {total_return:.2f}%")
+    # Placeholder for CAGR, Max Drawdown, Sharpe Ratio (requires time series data)
+    print(f"CAGR                   : N/A")
+    print(f"Max Drawdown           : N/A")
+    print(f"Sharpe Ratio           : N/A")
+    print("=====")
 
 if __name__ == "__main__":
-    # Load CSVs for 15m scalping and 1h swing data
-    symbol = "RELIANCE"
+    initial_capital = 100000
+    symbol_list = pd.read_csv("halallist.csv")['Symbol'].tolist()
 
-    df_15m = pd.read_csv(f"scalping_data/{symbol}.csv", parse_dates=['date']).sort_values('date').reset_index(drop=True)
-    df_1h = pd.read_csv(f"intraday_swing_data/{symbol}.csv", parse_dates=['date']).sort_values('date').reset_index(drop=True)
+    all_trades = []
+    for symbol in symbol_list:
+        print(f"\nRunning backtest for {symbol}...")
+        try:
+            daily_df = pd.read_csv(f"swing_data/{symbol}.csv", parse_dates=['date'])
+            hourly_df = pd.read_csv(f"intraday_swing_data/{symbol}.csv", parse_dates=['date'])
+            df_15m = pd.read_csv(f"scalping_data/{symbol}.csv", parse_dates=['date'])
 
-    # Run scalping backtest
-    bot_15m = BacktestBot(symbol, df_15m, timeframe='15m')
-    trades_15m, final_value_15m = bot_15m.run_backtest()
+            strategy = BacktestStrategy(daily_df, hourly_df, df_15m, initial_capital)
+            trades = strategy.run_backtest()
+            all_trades.extend(trades)
 
-    # Run 1-hour backtest
-    bot_1h = BacktestBot(symbol, df_1h, timeframe='1h')
-    trades_1h, final_value_1h = bot_1h.run_backtest()
+        except Exception as e:
+            print(f"Error with symbol {symbol}: {e}")
+
+    overall_performance(all_trades, initial_capital)

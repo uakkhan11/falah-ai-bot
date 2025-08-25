@@ -3,6 +3,20 @@ import numpy as np
 from datetime import datetime
 import os
 
+BASE_DIR = "/root/falah-ai-bot"  # Update this path to your base directory
+
+DATA_PATHS = {
+    'daily': os.path.join(BASE_DIR, "swing_data"),
+    '15minute': os.path.join(BASE_DIR, "scalping_data"),
+    '1hour': os.path.join(BASE_DIR, "intraday_swing_data"),
+}
+
+def get_symbols_from_daily_data():
+    # List all CSV files in the daily data folder and get filenames without extension
+    daily_files = os.listdir(DATA_PATHS['daily'])
+    symbols = [os.path.splitext(f)[0] for f in daily_files if f.endswith('.csv')]
+    return symbols
+
 def add_indicators(df):
     df['ema8'] = df['close'].ewm(span=8, adjust=False).mean()
     df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
@@ -132,21 +146,25 @@ def overall_performance(trades, initial_capital):
 
 if __name__ == "__main__":
     initial_capital = 100000
-    symbol_list = pd.read_csv("halallist.csv")['Symbol'].tolist()
+    symbols = get_symbols_from_daily_data()  # Load symbols by daily data CSV filenames
 
     all_trades = []
-    for symbol in symbol_list:
-        print(f"\nRunning backtest for {symbol}...")
-        try:
-            daily_df = pd.read_csv(f"swing_data/{symbol}.csv", parse_dates=['date'])
-            hourly_df = pd.read_csv(f"intraday_swing_data/{symbol}.csv", parse_dates=['date'])
-            df_15m = pd.read_csv(f"scalping_data/{symbol}.csv", parse_dates=['date'])
 
-            strategy = BacktestStrategy(daily_df, hourly_df, df_15m, initial_capital)
+    for symbol in symbols:
+        try:
+            daily_csv = os.path.join(DATA_PATHS['daily'], f"{symbol}.csv")
+            hourly_csv = os.path.join(DATA_PATHS['1hour'], f"{symbol}.csv")
+            scalping_csv = os.path.join(DATA_PATHS['15minute'], f"{symbol}.csv")
+
+            daily_df = pd.read_csv(daily_csv, parse_dates=['date'])
+            hourly_df = pd.read_csv(hourly_csv, parse_dates=['date'])
+            scalping_df = pd.read_csv(scalping_csv, parse_dates=['date'])
+
+            strategy = BacktestStrategy(daily_df, hourly_df, scalping_df, initial_capital)
             trades = strategy.run_backtest()
             all_trades.extend(trades)
 
         except Exception as e:
-            print(f"Error with symbol {symbol}: {e}")
+            print(f"Skipping {symbol} due to error: {e}")
 
     overall_performance(all_trades, initial_capital)

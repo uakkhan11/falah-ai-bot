@@ -18,10 +18,10 @@ def get_symbols_from_daily_data():
 
 def compute_indicators(df):
     df = df.copy()
-    df['close'] = pd.to_numeric(df['close'], errors='coerce').fillna(method='ffill').astype(np.float64)
-    df['high'] = pd.to_numeric(df['high'], errors='coerce').fillna(method='ffill').astype(np.float64)
-    df['low'] = pd.to_numeric(df['low'], errors='coerce').fillna(method='ffill').astype(np.float64)
-    df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0).astype(np.float64)  # Volume zero fill safe
+    df['close'] = pd.to_numeric(df['close'], errors='coerce').ffill().astype(np.float64)
+    df['high'] = pd.to_numeric(df['high'], errors='coerce').ffill().astype(np.float64)
+    df['low'] = pd.to_numeric(df['low'], errors='coerce').ffill().astype(np.float64)
+    df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0).astype(np.float64)
     
     close = df['close'].values
     high = df['high'].values

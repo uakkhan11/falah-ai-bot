@@ -45,9 +45,16 @@ def load_and_filter_data(symbol, years=5):
     daily_df = pd.read_csv(os.path.join(DATA_PATHS['daily'], f"{symbol}.csv"), parse_dates=['date'])
     hourly_df = pd.read_csv(os.path.join(DATA_PATHS['1hour'], f"{symbol}.csv"), parse_dates=['date'])
     m15_df = pd.read_csv(os.path.join(DATA_PATHS['15minute'], f"{symbol}.csv"), parse_dates=['date'])
+
+    # Ensure datetime dtype
+    daily_df['date'] = pd.to_datetime(daily_df['date'])
+    hourly_df['date'] = pd.to_datetime(hourly_df['date'])
+    m15_df['date'] = pd.to_datetime(m15_df['date'])
+
     daily_df = daily_df[daily_df['date'] >= cutoff_date].reset_index(drop=True)
     hourly_df = hourly_df[hourly_df['date'] >= cutoff_date].reset_index(drop=True)
     m15_df = m15_df[m15_df['date'] >= cutoff_date].reset_index(drop=True)
+
     return daily_df, hourly_df, m15_df
 
 class BacktestStrategy:

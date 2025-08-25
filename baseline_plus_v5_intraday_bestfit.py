@@ -21,7 +21,6 @@ def compute_indicators(df):
     high = df['high'].values
     low = df['low'].values
     volume = df['volume'].values
-
     df['ema8'] = talib.EMA(close, timeperiod=8)
     df['ema20'] = talib.EMA(close, timeperiod=20)
     df['rsi_14'] = talib.RSI(close, timeperiod=14)
@@ -37,16 +36,14 @@ def compute_indicators(df):
     df['bb_lower'] = lowerband
     df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
     df['obv'] = talib.OBV(close, volume)
-
     return df
 
 def load_and_filter_data(symbol, years=5):
-    cutoff_date = pd.Timestamp.utcnow() - pd.Timedelta(days=365*years)
+    cutoff_date = pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=365*years)
     daily_df = pd.read_csv(os.path.join(DATA_PATHS['daily'], f"{symbol}.csv"), parse_dates=['date'])
     hourly_df = pd.read_csv(os.path.join(DATA_PATHS['1hour'], f"{symbol}.csv"), parse_dates=['date'])
     m15_df = pd.read_csv(os.path.join(DATA_PATHS['15minute'], f"{symbol}.csv"), parse_dates=['date'])
 
-    # Ensure datetime dtype
     daily_df['date'] = pd.to_datetime(daily_df['date'])
     hourly_df['date'] = pd.to_datetime(hourly_df['date'])
     m15_df['date'] = pd.to_datetime(m15_df['date'])
@@ -71,27 +68,24 @@ class BacktestStrategy:
         self.exit_reasons = {'StopLoss': 0, 'ProfitTarget': 0, 'EOD Exit': 0}
 
     def run_backtest(self):
-        # Calculate daily EMA200 for trend filter
         daily_ema200 = self.daily_df['close'].ewm(span=200, adjust=False).mean()
         daily_close_last = self.daily_df['close'].iloc[-1]
         if daily_close_last <= daily_ema200.iloc[-1]:
-            return []  # Skip - daily trend not up
-
+            return []
         last_hourly = self.hourly_df.iloc[-1]
-        if not (last_hourly['ema8'] > last_hourly['ema20'] 
-                and last_hourly['rsi_14'] > 50 
-                and last_hourly['volume'] > last_hourly['volume'].rolling(window=20).mean().iloc[-1]):
-            return []  # Skip - hourly confirmation not met
+        hourly_vol_sma20 = self.hourly_df['volume'].rolling(window=20).mean().iloc[-1]
+        if not (last_hourly['ema8'] > last_hourly['ema20']
+                and last_hourly['rsi_14'] > 50
+                and last_hourly['volume'] > hourly_vol_sma20):
+            return []
 
         df = self.df_15m
         for i in range(1, len(df)):
             prev = df.iloc[i-1]
             curr = df.iloc[i]
 
-            # Long entry signal: EMA8 crosses above EMA20 on 15m
             entry_signal = prev['ema8'] <= prev['ema20'] and curr['ema8'] > curr['ema20']
-            
-            if self.position == 0 and entry_signal:
+            if self.position == 0 and entry_signal and curr['close'] > 0:
                 qty = int(self.cash / curr['close'])
                 if qty > 0:
                     self.entry_price = curr['close']
@@ -99,38 +93,32 @@ class BacktestStrategy:
                     self.entry_date = curr['date']
                     self.cash -= qty * self.entry_price
                     self.trades.append({'type': 'BUY', 'date': curr['date'], 'price': self.entry_price, 'qty': qty})
-
             elif self.position > 0:
                 current_price = curr['close']
-                profit_target = self.entry_price * 1.01   # 1% profit target
-                stop_loss = self.entry_price * 0.9975     # 0.25% stop loss
-                
+                profit_target = self.entry_price * 1.01
+                stop_loss = self.entry_price * 0.9975
+
                 if current_price >= profit_target:
                     pnl = (current_price - self.entry_price) * self.position
                     self.exit_reasons['ProfitTarget'] += 1
                     self._exit_trade(current_price, pnl, curr['date'], "Profit Target")
-
                 elif current_price <= stop_loss:
                     pnl = (current_price - self.entry_price) * self.position
                     self.exit_reasons['StopLoss'] += 1
                     self._exit_trade(current_price, pnl, curr['date'], "Stop Loss")
 
-        # Exit any open position at last candle close
         if self.position > 0:
             current_price = df.iloc[-1]['close']
             pnl = (current_price - self.entry_price) * self.position
             self.exit_reasons['EOD Exit'] += 1
             self._exit_trade(current_price, pnl, df.iloc[-1]['date'], "EOD Exit")
-
         return self.trades
 
     def _exit_trade(self, price, pnl, date, reason):
         self.cash += self.position * price
         trade_duration = (pd.to_datetime(date) - pd.to_datetime(self.entry_date)).days + 1
-        self.trades.append({
-            'type': 'SELL', 'date': date, 'price': price, 'qty': self.position,
-            'pnl': pnl, 'duration': trade_duration, 'exit_reason': reason
-        })
+        self.trades.append({'type': 'SELL', 'date': date, 'price': price, 'qty': self.position,
+                            'pnl': pnl, 'duration': trade_duration, 'exit_reason': reason})
         self.position = 0
         self.entry_price = 0
         self.entry_date = None
@@ -139,7 +127,7 @@ def generate_report_symbol(trades, symbol, initial_capital):
     df = pd.DataFrame(trades)
     if df.empty:
         return None
-    total_trades = len(df) // 2  # buy+sell pairs
+    total_trades = len(df) // 2
     wins = df[df['pnl'] > 0]['pnl'].count()
     losses = df[df['pnl'] <= 0]['pnl'].count()
     win_rate = wins / total_trades * 100 if total_trades > 0 else 0
@@ -151,19 +139,9 @@ def generate_report_symbol(trades, symbol, initial_capital):
     worst_trade = df['pnl'].min()
     avg_duration = df['duration'].mean()
     total_return = (df['pnl'].sum() / initial_capital) * 100
-    report = {
-        'Symbol': symbol,
-        'Total Trades': total_trades,
-        'Wins': wins,
-        'Losses': losses,
-        'Win Rate %': win_rate,
-        'Profit Factor': profit_factor,
-        'Expectancy': expectancy,
-        'Best Trade PnL': best_trade,
-        'Worst Trade PnL': worst_trade,
-        'Avg Trade Duration (days)': avg_duration,
-        'Total Return %': total_return,
-    }
+    report = {'Symbol': symbol, 'Total Trades': total_trades, 'Wins': wins, 'Losses': losses, 'Win Rate %': win_rate,
+              'Profit Factor': profit_factor, 'Expectancy': expectancy, 'Best Trade PnL': best_trade,
+              'Worst Trade PnL': worst_trade, 'Avg Trade Duration (days)': avg_duration, 'Total Return %': total_return}
     return report
 
 def overall_report(all_trades, initial_capital):
@@ -172,7 +150,7 @@ def overall_report(all_trades, initial_capital):
         print("No trades executed.")
         return
     summary = generate_report_symbol(all_trades, "ALL_SYMBOLS", initial_capital)
-    print("\n===== OVERALL BACKTEST REPORT =====")
+    print("\n= OVERALL BACKTEST REPORT =")
     for k, v in summary.items():
         print(f"{k}: {v}")
     all_df.to_csv("all_symbols_trades.csv", index=False)

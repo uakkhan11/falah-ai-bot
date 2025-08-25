@@ -17,10 +17,17 @@ def get_symbols_from_daily_data():
     return symbols
 
 def compute_indicators(df):
+    df = df.copy()
+    df['close'] = pd.to_numeric(df['close'], errors='coerce').fillna(method='ffill').astype(np.float64)
+    df['high'] = pd.to_numeric(df['high'], errors='coerce').fillna(method='ffill').astype(np.float64)
+    df['low'] = pd.to_numeric(df['low'], errors='coerce').fillna(method='ffill').astype(np.float64)
+    df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0).astype(np.float64)  # Volume zero fill safe
+    
     close = df['close'].values
     high = df['high'].values
     low = df['low'].values
     volume = df['volume'].values
+    
     df['ema8'] = talib.EMA(close, timeperiod=8)
     df['ema20'] = talib.EMA(close, timeperiod=20)
     df['rsi_14'] = talib.RSI(close, timeperiod=14)

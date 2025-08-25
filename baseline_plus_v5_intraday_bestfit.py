@@ -47,10 +47,11 @@ class BacktestStrategy:
         self.exit_reasons = {'StopLoss': 0, 'SignalExit': 0, 'EOD Exit': 0}
 
     def run_backtest(self):
-        daily_row = self.daily_df.iloc[-1]
-        if daily_row['close'] <= daily_row['close'].ewm(span=200, adjust=False).mean():
-            return []  # Daily trend down, skip symbol
-
+        daily_ema200 = self.daily_df['close'].ewm(span=200, adjust=False).mean()
+        daily_close_last = self.daily_df['close'].iloc[-1]
+        
+        if daily_close_last <= daily_ema200.iloc[-1]:
+            return []
         last_hourly = self.hourly_df.iloc[-1]
         if not (last_hourly['ema8'] > last_hourly['ema20'] and last_hourly['rsi'] > 50 and last_hourly['volume'] > last_hourly['vol_sma20']):
             return []  # Hourly confirmation failed

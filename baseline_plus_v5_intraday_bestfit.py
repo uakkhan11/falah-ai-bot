@@ -33,7 +33,10 @@ def compute_indicators(df):
     df['low'] = pd.to_numeric(df['low'], errors='coerce').ffill()
     df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
 
-    close, high, low, volume = df['close'].values, df['high'].values, df['low'].values, df['volume'].values
+    close = df['close'].values.astype(np.float64)
+    high = df['high'].values.astype(np.float64)
+    low = df['low'].values.astype(np.float64)
+    volume = df['volume'].values.astype(np.float64)
 
     df['ema8'] = talib.EMA(close, timeperiod=8)
     df['ema20'] = talib.EMA(close, timeperiod=20)
@@ -45,7 +48,9 @@ def compute_indicators(df):
     df['roc'] = talib.ROC(close, timeperiod=10)
     df['cmo'] = talib.CMO(close, timeperiod=14)
     upperband, middleband, lowerband = talib.BBANDS(close, timeperiod=20)
-    df['bb_upper'], df['bb_middle'], df['bb_lower'] = upperband, middleband, lowerband
+    df['bb_upper'] = upperband
+    df['bb_middle'] = middleband
+    df['bb_lower'] = lowerband
     df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
     df['obv'] = talib.OBV(close, volume)
 

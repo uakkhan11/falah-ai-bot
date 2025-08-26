@@ -4,13 +4,14 @@ import numpy as np
 import talib
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, classification_report
 import warnings
+import json
 
 warnings.filterwarnings("ignore")
 
 # ================================
-# Paths
+# Paths and Constants
 # ================================
 BASE_DIR = "/root/falah-ai-bot"
 DATA_PATHS = {
@@ -20,7 +21,7 @@ DATA_PATHS = {
 }
 
 # ================================
-# Data Preparation
+# Data Loading & Indicator Computation
 # ================================
 def get_symbols_from_daily_data():
     daily_files = os.listdir(DATA_PATHS['daily'])
@@ -48,9 +49,7 @@ def compute_indicators(df):
     df['roc'] = talib.ROC(close, timeperiod=10)
     df['cmo'] = talib.CMO(close, timeperiod=14)
     upperband, middleband, lowerband = talib.BBANDS(close, timeperiod=20)
-    df['bb_upper'] = upperband
-    df['bb_middle'] = middleband
-    df['bb_lower'] = lowerband
+    df['bb_upper'], df['bb_middle'], df['bb_lower'] = upperband, middleband, lowerband
     df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
     df['obv'] = talib.OBV(close, volume)
 
@@ -77,7 +76,7 @@ def prepare_data_for_symbol(symbol, years=5):
     return daily_df, hourly_df, m15_df
 
 # ================================
-# Backtesting Strategy
+# Backtesting Strategy Class
 # ================================
 class BacktestStrategy:
     def __init__(self, daily_df, hourly_df, m15_df, initial_capital=100000, params=None):
@@ -105,7 +104,7 @@ class BacktestStrategy:
         df = self.df_15m
         for i in range(1, len(df)):
             prev, curr = df.iloc[i-1], df.iloc[i]
-            if pd.isna(prev['ema8']) or pd.isna(prev['ema20']): 
+            if pd.isna(prev['ema8']) or pd.isna(prev['ema20']):
                 continue
             entry_signal = prev['ema8'] <= prev['ema20'] and curr['ema8'] > curr['ema20']
             if self.position == 0 and entry_signal:
@@ -151,7 +150,7 @@ class BacktestStrategy:
         self.position, self.entry_price, self.entry_date = 0, 0, None
 
 # ================================
-# ML Features & Training
+# ML Feature Preparation and Training
 # ================================
 def create_ml_features(m15_df, hourly_df):
     hourly_df = hourly_df.set_index('date')
@@ -159,11 +158,12 @@ def create_ml_features(m15_df, hourly_df):
     for col in ['ema8', 'ema20', 'rsi_14', 'adx']:
         if col in hourly_df.columns:
             m15_df['hour_' + col] = hourly_df[col].reindex(m15_df.index, method='ffill')
+
     m15_df['future_return'] = m15_df['close'].shift(-10) / m15_df['close'] - 1
     m15_df['label'] = (m15_df['future_return'] > 0.01).astype(int)
     m15_df.dropna(inplace=True)
     labels = m15_df['label']
-    features = m15_df.drop(columns=['label', 'future_return', 'open','high','low','volume'], errors='ignore')
+    features = m15_df.drop(columns=['label', 'future_return', 'open', 'high', 'low', 'volume'], errors='ignore')
     return features, labels
 
 def train_xgboost_model(X, y):
@@ -174,97 +174,195 @@ def train_xgboost_model(X, y):
     accuracy = round(accuracy_score(y_test, y_pred), 4)
     precision = round(precision_score(y_test, y_pred), 4)
     recall = round(recall_score(y_test, y_pred), 4)
+    clf_report = classification_report(y_test, y_pred, output_dict=True)
     importance = model.get_booster().get_score(importance_type='weight')
     importance = dict(sorted(importance.items(), key=lambda item: item[1], reverse=True))
-    return model, accuracy, precision, recall, importance
+    return model, accuracy, precision, recall, importance, clf_report
 
 # ================================
-# Reporting
+# Reporting Functions
 # ================================
-def generate_report_symbol(trades, symbol, initial_capital):
+def extract_trade_stats(trades):
     df = pd.DataFrame(trades)
     if df.empty or 'pnl' not in df.columns:
-        return None
+        return {}
+
     df_closed = df[df['type'] == 'SELL']
-    if df_closed.empty:
-        return None
-    total_trades = len(df_closed)
-    wins = (df_closed['pnl'] > 0).sum()
-    losses = (df_closed['pnl'] <= 0).sum()
-    win_rate = wins / total_trades * 100 if total_trades > 0 else 0
-    gross_profit = df_closed[df_closed['pnl'] > 0]['pnl'].sum()
-    gross_loss = -df_closed[df_closed['pnl'] <= 0]['pnl'].sum()
-    profit_factor = gross_profit / gross_loss if gross_loss > 0 else np.inf
-    return {
-        'Symbol': symbol,
-        'Total Trades': total_trades,
-        'Wins': wins, 'Losses': losses,
-        'Win Rate %': round(win_rate,2),
-        'Profit Factor': round(profit_factor,2),
-        'Expectancy': round(df_closed['pnl'].mean(),2),
-        'Best Trade PnL': round(df_closed['pnl'].max(),2),
-        'Worst Trade PnL': round(df_closed['pnl'].min(),2),
-        'Avg Trade Duration (days)': round(df_closed['duration'].mean(),2),
-        'Total Return %': round((df_closed['pnl'].sum() / initial_capital) * 100,2)
+    stats = {
+        'Total Trades': len(df_closed),
+        'Winning Trades': (df_closed['pnl'] > 0).sum(),
+        'Losing Trades': (df_closed['pnl'] <= 0).sum(),
+        'Win Rate %': round((df_closed['pnl'] > 0).mean() * 100, 2),
+        'Avg PnL per Trade': round(df_closed['pnl'].mean(), 4),
+        'Best PnL': round(df_closed['pnl'].max(), 4),
+        'Worst PnL': round(df_closed['pnl'].min(), 4),
+        'Avg Trade Duration (days)': round(df_closed['duration'].mean(), 2),
+        'Stop Loss Hits': sum(t['exit_reason']=='Stop Loss' for t in trades if 'exit_reason' in t),
+        'Profit Target Hits': sum(t['exit_reason']=='Profit Target' for t in trades if 'exit_reason' in t),
+        'EOD Exits': sum(t['exit_reason']=='EOD Exit' for t in trades if 'exit_reason' in t),
+        'Total PnL': round(df_closed['pnl'].sum(), 4)
     }
+    return stats
+
+def format_classification_report(report_dict):
+    lines = []
+    for label in ['0', '1', 'accuracy', 'macro avg', 'weighted avg']:
+        if label in report_dict:
+            if label in ['accuracy']:
+                lines.append(f"Accuracy: {report_dict[label]:.4f}")
+            else:
+                rec = report_dict[label].get('recall', np.nan)
+                prec = report_dict[label].get('precision', np.nan)
+                f1 = report_dict[label].get('f1-score', np.nan)
+                support = report_dict[label].get('support', np.nan)
+                lines.append(f"{label} -> Precision: {prec:.4f}, Recall: {rec:.4f}, F1-score: {f1:.4f}, Support: {support}")
+    return "\n".join(lines)
+
+def save_detailed_report(filename, title, results_dict, clf_report, trade_stats, ml_metrics, feature_imp):
+    with open(filename, "a") as f:
+        f.write("="*80 + "\n")
+        f.write(f"{title}\n")
+        f.write("="*80 + "\n")
+        f.write("Backtest Trade Stats:\n")
+        for k,v in trade_stats.items():
+            f.write(f"  {k}: {v}\n")
+        f.write("\nML Classification Report:\n")
+        f.write(format_classification_report(clf_report))
+        f.write("\n\nML Metrics:\n")
+        for k,v in ml_metrics.items():
+            f.write(f"  {k}: {v}\n")
+        f.write("\nTop Feature Importances:\n")
+        for feat, imp in feature_imp.items():
+            f.write(f"  {feat}: {imp}\n")
+        f.write("\n\n")
 
 # ================================
-# Grid Search
+# Full Grid Search with Detailed Reports
 # ================================
 def full_grid_search(symbols, indicator_combos, stop_loss_params, profit_target_params, initial_capital=100000):
     results = []
+    # Clear or create report file
+    report_file = "detailed_summary_report.txt"
+    with open(report_file, "w") as f:
+        f.write("Detailed Backtest and ML Report\n\n")
+
     for indicators in indicator_combos:
-        print(f"\nEvaluating indicators combo: {indicators}")
+        indicator_str = ",".join(sorted(indicators))
         for sl in stop_loss_params:
             for pt in profit_target_params:
-                print(f" Stop Loss: {sl}, Profit Target: {pt}")
                 all_trades, ml_accuracies, ml_precisions, ml_recalls = [], [], [], []
                 feature_importances_accum = {}
+                trade_stats_per_symbol = {}
+                ml_reports_per_symbol = {}
                 for symbol in symbols:
                     try:
                         daily_df, hourly_df, m15_df = prepare_data_for_symbol(symbol)
                         if len(daily_df)<100 or len(hourly_df)<100 or len(m15_df)<100:
-                            print(f"Skipping {symbol}: insufficient data.")
                             continue
+                        # Drop unwanted indicator columns based on current combo
+                        if 'daily' not in indicators:
+                            daily_df = daily_df.drop(columns=[col for col in daily_df.columns if any(col.startswith(p) for p in ['ema','rsi','macd','adx','atr','sar','roc','cmo','bb','adosc','obv'])], errors='ignore')
+                        if 'hourly' not in indicators:
+                            hourly_df = hourly_df.drop(columns=[col for col in hourly_df.columns if any(col.startswith(p) for p in ['ema','rsi','macd','adx','atr','sar','roc','cmo','bb','adosc','obv'])], errors='ignore')
+                        if '15minute' not in indicators:
+                            m15_df = m15_df.drop(columns=[col for col in m15_df.columns if any(col.startswith(p) for p in ['ema','rsi','macd','adx','atr','sar','roc','cmo','bb','adosc','obv'])], errors='ignore')
+
                         strategy = BacktestStrategy(daily_df, hourly_df, m15_df, initial_capital, params={'stop_loss_pct':sl, 'profit_target_pct':pt})
                         trades = strategy.run_backtest()
                         all_trades.extend(trades)
+
                         X, y = create_ml_features(m15_df, hourly_df)
-                        model, acc, prec, rec, feat_imp = train_xgboost_model(X, y)
-                        ml_accuracies.append(acc); ml_precisions.append(prec); ml_recalls.append(rec)
-                        for k,v in feat_imp.items(): feature_importances_accum[k] = feature_importances_accum.get(k,0)+v
+                        model, acc, prec, rec, feat_imp, clf_report = train_xgboost_model(X, y)
+
+                        ml_accuracies.append(acc)
+                        ml_precisions.append(prec)
+                        ml_recalls.append(rec)
+                        
+                        for k,v in feat_imp.items():
+                            feature_importances_accum[k] = feature_importances_accum.get(k,0)+v
+
+                        # Detailed per-symbol stats
+                        trade_stats_per_symbol[symbol] = extract_trade_stats(trades)
+                        ml_reports_per_symbol[symbol] = clf_report
+
                     except Exception as e:
-                        print(f"Error with {symbol}: {e}")
+                        print(f"Error processing {symbol}: {e}")
+
                 if not all_trades:
-                    print(" No trades executed for this setting.")
                     continue
-                backtest_metrics = generate_report_symbol(all_trades, 'ALL_SYMBOLS', initial_capital)
-                avg_acc, avg_prec, avg_rec = np.mean(ml_accuracies), np.mean(ml_precisions), np.mean(ml_recalls)
+
+                backtest_metrics = extract_trade_stats(all_trades)
+                avg_acc = np.mean(ml_accuracies) if ml_accuracies else 0
+                avg_prec = np.mean(ml_precisions) if ml_precisions else 0
+                avg_rec = np.mean(ml_recalls) if ml_recalls else 0
+                ml_metrics = {'Accuracy': avg_acc, 'Precision': avg_prec, 'Recall': avg_rec}
+
                 sorted_feat_imp = dict(sorted(feature_importances_accum.items(), key=lambda item: item[1], reverse=True))
-                result = {
-                    'Indicators': ','.join(indicators),
-                    'Stop Loss %': sl, 'Profit Target %': pt,
-                    'Total Trades': backtest_metrics['Total Trades'],
-                    'Win Rate %': backtest_metrics['Win Rate %'],
-                    'Profit Factor': backtest_metrics['Profit Factor'],
-                    'Total Return %': backtest_metrics['Total Return %'],
-                    'ML Accuracy': round(avg_acc,4), 'ML Precision': round(avg_prec,4), 'ML Recall': round(avg_rec,4),
-                    'Top Features': ", ".join(list(sorted_feat_imp.keys())[:5])
+                result_row = {
+                    'Indicators': indicator_str,
+                    'Stop Loss %': sl,
+                    'Profit Target %': pt,
+                    'Total Trades': backtest_metrics.get('Total Trades', 0),
+                    'Win Rate %': backtest_metrics.get('Win Rate %', 0),
+                    'Profit Factor': (np.sum([t['pnl'] for t in all_trades if 'pnl' in t and t['pnl'] > 0]) /
+                                      -np.sum([t['pnl'] for t in all_trades if 'pnl' in t and t['pnl'] <= 0]) 
+                                      if np.sum([t['pnl'] for t in all_trades if 'pnl' in t and t['pnl'] <= 0]) < 0 else np.inf),
+                    'Total Return %': (np.sum([t['pnl'] for t in all_trades if 'pnl' in t]) / initial_capital * 100),
+                    'ML Accuracy': round(avg_acc,4),
+                    'ML Precision': round(avg_prec,4),
+                    'ML Recall': round(avg_rec,4),
+                    'Top Features': ", ".join(list(sorted_feat_imp.keys())[:10])
                 }
-                results.append(result)
-                print(f" ✅ Result: {result}")
-    return pd.DataFrame(results)
+                results.append(result_row)
+                print(f"Completed: Indicators={indicator_str}, SL={sl}, PT={pt}, Trades={result_row['Total Trades']}, Return={result_row['Total Return %']:.2f}%")
+
+                # Save detailed report per config
+                title = (f"Indicator Set: {indicator_str}\n"
+                         f"Stop Loss: {sl}, Profit Target: {pt}\n")
+                with open(report_file, "a") as f:
+                    f.write("\n" + "="*80 + "\n")
+                    f.write(title)
+                    f.write("="*80 + "\n")
+                    f.write("Overall Backtest Stats:\n")
+                    for k, v in backtest_metrics.items():
+                        f.write(f"{k}: {v}\n")
+                    f.write("\nML Metrics (average over symbols):\n")
+                    for k, v in ml_metrics.items():
+                        f.write(f"{k}: {v:.4f}\n")
+                    f.write("\nTop Feature Importances:\n")
+                    for feat, imp in sorted_feat_imp.items():
+                        f.write(f"{feat}: {imp}\n")
+
+                    f.write("\nPer-Symbol Trade Stats:\n")
+                    for sym, stats in trade_stats_per_symbol.items():
+                        f.write(f"Symbol: {sym}\n")
+                        for k, v in stats.items():
+                            f.write(f"  {k}: {v}\n")
+                        f.write("\n")
+
+                    f.write("\n")  # spacer for next config already appended
+
+    # Final summary CSV for all results
+    results_df = pd.DataFrame(results)
+    results_df.to_csv("full_grid_search_results.csv", index=False)
+
+    # Also print a concise summary
+    print("\nAll runs completed. Summary saved to 'full_grid_search_results.csv' and detailed text report.")
+    print_consolidated_report(results_df, save_path="summary_consolidated_report.txt")
+
+    return results_df
 
 # ================================
-# Consolidated Report Export + Terminal
+# Consolidated Summary & Export
 # ================================
-def print_consolidated_report(results_df, save_path="summary_report.txt"):
+def print_consolidated_report(results_df, save_path="summary_consolidated_report.txt"):
     lines = []
     lines.append("="*100)
     lines.append("📊 CONSOLIDATED REPORT")
     lines.append("="*100)
     total_runs = len(results_df)
     lines.append(f"Total Strategies Tested: {total_runs}")
+
     if total_runs == 0:
         lines.append("No results available.")
     else:
@@ -272,33 +370,40 @@ def print_consolidated_report(results_df, save_path="summary_report.txt"):
         best_winrate = results_df.loc[results_df['Win Rate %'].idxmax()]
         best_profitfactor = results_df.loc[results_df['Profit Factor'].idxmax()]
         lines.append("\n🏆 Best Strategies:")
-        lines.append(f"- Highest Return %: {best_return['Total Return %']} | Indicators={best_return['Indicators']} | SL={best_return['Stop Loss %']} | PT={best_return['Profit Target %']}")
-        lines.append(f"- Highest Win Rate %: {best_winrate['Win Rate %']} | Indicators={best_winrate['Indicators']} | SL={best_winrate['Stop Loss %']} | PT={best_winrate['Profit Target %']}")
-        lines.append(f"- Highest Profit Factor: {best_profitfactor['Profit Factor']} | Indicators={best_profitfactor['Indicators']} | SL={best_profitfactor['Stop Loss %']} | PT={best_profitfactor['Profit Target %']}")
-        lines.append("\n🤖 ML Metrics (Average across all runs)")
-        lines.append(f"- Accuracy: {results_df['ML Accuracy'].mean():.3f}")
-        lines.append(f"- Precision: {results_df['ML Precision'].mean():.3f}")
-        lines.append(f"- Recall: {results_df['ML Recall'].mean():.3f}")
+        lines.append(f"- Highest Return %: {best_return['Total Return %']:.2f} | Indicators={best_return['Indicators']} | SL={best_return['Stop Loss %']} | PT={best_return['Profit Target %']}")
+        lines.append(f"- Highest Win Rate %: {best_winrate['Win Rate %']:.2f} | Indicators={best_winrate['Indicators']} | SL={best_winrate['Stop Loss %']} | PT={best_winrate['Profit Target %']}")
+        lines.append(f"- Highest Profit Factor: {best_profitfactor['Profit Factor']:.2f} | Indicators={best_profitfactor['Indicators']} | SL={best_profitfactor['Stop Loss %']} | PT={best_profitfactor['Profit Target %']}")
+
+        lines.append("\n🤖 ML Metrics (Average across all runs):")
+        lines.append(f"- Accuracy: {results_df['ML Accuracy'].mean():.4f}")
+        lines.append(f"- Precision: {results_df['ML Precision'].mean():.4f}")
+        lines.append(f"- Recall: {results_df['ML Recall'].mean():.4f}")
+
         features_flat = []
         for feat in results_df['Top Features']:
             if isinstance(feat, str):
                 features_flat.extend([f.strip() for f in feat.split(",")])
         common_features = pd.Series(features_flat).value_counts().head(10)
+
         lines.append("\n🔥 Top ML Features (most frequently important):")
         for i, (feat, count) in enumerate(common_features.items(), 1):
             lines.append(f"{i}. {feat} ({count} times)")
+
         lines.append("\n📈 Performance Grouped by Indicator Combo:")
         group_stats = results_df.groupby("Indicators")[["Total Return %", "Win Rate %", "Profit Factor"]].mean().sort_values("Total Return %", ascending=False)
         lines.append(group_stats.to_string(float_format=lambda x: f"{x:0.2f}"))
+
     lines.append("="*100)
     report_text = "\n".join(lines)
     print(report_text)
+
     with open(save_path, "w") as f:
         f.write(report_text)
-    print(f"\n📝 Consolidated report also saved to '{save_path}'")
+
+    print(f"\n📝 Consolidated report saved to '{save_path}'")
 
 # ================================
-# Main
+# Main Entry Point
 # ================================
 if __name__ == "__main__":
     symbols = get_symbols_from_daily_data()
@@ -306,9 +411,7 @@ if __name__ == "__main__":
         {'daily','hourly','15minute'},{'daily','hourly'},{'daily','15minute'},
         {'hourly','15minute'},{'daily'},{'hourly'},{'15minute'}
     ]
-    stop_loss_params = [0.0025, 0.005, 0.0075]
-    profit_target_params = [0.01, 0.015, 0.02]
+    stop_loss_params = [0.005, 0.0075, 0.01]  # Finer grid around best SL
+    profit_target_params = [0.0125, 0.015, 0.02]  # Finer grid around best PT
+
     results_df = full_grid_search(symbols, indicator_combos, stop_loss_params, profit_target_params)
-    results_df.to_csv("full_grid_search_results.csv", index=False)
-    print("\n🚀 Grid search complete, results saved to 'full_grid_search_results.csv'.")
-    print_consolidated_report(results_df, save_path="summary_report.txt")

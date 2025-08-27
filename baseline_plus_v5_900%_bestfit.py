@@ -353,6 +353,12 @@ def normalize_trade_dates(trades):
             raise ValueError("Trade missing 'date' key: " + str(t))
     return trades
 
+missing_date = [t for t in trades_with_duration if 'date' not in t]
+if missing_date:
+    print(f"Trades missing 'date' key for symbol {symbol}: {missing_date}")
+else:
+    print(f"All trades have 'date' for symbol {symbol}")
+
 if __name__ == "__main__":
     symbols = get_symbols_from_daily_data()
     for symbol in symbols:

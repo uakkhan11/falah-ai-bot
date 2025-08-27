@@ -17,6 +17,8 @@ DATA_PATHS = {
     '15minute': os.path.join(BASE_DIR, "scalping_data"),
 }
 
+CAPITAL = 100000
+
 def get_symbols_from_daily_data():
     daily_files = os.listdir(DATA_PATHS['daily'])
     return [os.path.splitext(f)[0] for f in daily_files if f.endswith('.csv')]
@@ -73,7 +75,7 @@ def get_worst_market_periods(df, percentile=5):
     return worst_days[['date', 'return']]
 
 class BacktestTrailingStrategy:
-    def __init__(self, df, initial_capital=100000, trailing_pct=0.01):
+    def __init__(self, df, initial_capital=CAPITAL, trailing_pct=0.01):
         self.df = df.sort_values('date').reset_index(drop=True)
         self.initial_capital = initial_capital
         self.cash = initial_capital
@@ -111,7 +113,7 @@ class BacktestTrailingStrategy:
             self.trades.append({'type': 'SELL', 'date': self.df.iloc[-1]['date'], 'price': self.df.iloc[-1]['close'], 'qty': self.position, 'pnl': pnl, 'exit_reason': "EOD Exit"})
         return self.trades
 
-def run_fixed_stop_backtest(df, initial_capital=100000, stop_loss_pct=0.01, profit_target_pct=0.015):
+def run_fixed_stop_backtest(df, initial_capital=CAPITAL, stop_loss_pct=0.01, profit_target_pct=0.015):
     cash = initial_capital
     position = 0
     entry_price = None
@@ -119,7 +121,6 @@ def run_fixed_stop_backtest(df, initial_capital=100000, stop_loss_pct=0.01, prof
     for i in range(1, len(df)):
         row = df.iloc[i]
         if position == 0:
-            # Entry signal: EMA8 crosses above EMA20
             if row.get('ema8') is not None and row.get('ema20') is not None:
                 prev_row = df.iloc[i-1]
                 if prev_row['ema8'] <= prev_row['ema20'] and row['ema8'] > row['ema20']:
@@ -145,7 +146,6 @@ def run_fixed_stop_backtest(df, initial_capital=100000, stop_loss_pct=0.01, prof
                 trades.append({'type': 'SELL', 'date': row['date'], 'price': current_price, 'qty': position, 'pnl': pnl, 'exit_reason': 'Profit Target'})
                 position = 0
                 entry_price = None
-    # Exit open position at end
     if position > 0:
         last_price = df.iloc[-1]['close']
         pnl = (last_price - entry_price) * position
@@ -172,15 +172,18 @@ def calc_trade_stats(trades):
     }
     return stats
 
-def ml_performance(X, y):
-    X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=False, test_size=0.2)
-    model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
-    precision = precision_score(y_test, y_pred)
-    recall = recall_score(y_test, y_pred)
-    return {'Accuracy': accuracy, 'Precision': precision, 'Recall': recall}, model
+def create_ml_features(m15_df, hourly_df):
+    hourly_df = hourly_df.set_index('date')
+    m15_df = m15_df.set_index('date')
+    for col in ['ema8', 'ema20', 'rsi_14', 'adx']:
+        if col in hourly_df.columns:
+            m15_df['hour_' + col] = hourly_df[col].reindex(m15_df.index, method='ffill')
+    m15_df['future_return'] = m15_df['close'].shift(-10) / m15_df['close'] - 1
+    m15_df['label'] = (m15_df['future_return'] > 0.01).astype(int)
+    m15_df.dropna(inplace=True)
+    labels = m15_df['label']
+    features = m15_df.drop(columns=['label', 'future_return', 'open', 'high', 'low', 'volume'], errors='ignore')
+    return features, labels
 
 def ml_train_and_filter(df, hourly_df, threshold=0.7):
     X, y = create_ml_features(df, hourly_df)
@@ -206,6 +209,7 @@ def ml_train_and_filter(df, hourly_df, threshold=0.7):
         'filtered_precision': filtered_prec,
         'filtered_recall': filtered_rec
     }
+
 def walk_forward_test_symbol(symbol, window_days=180, test_days=30, trailing_pct=0.01):
     daily_df, hourly_df, m15_df = prepare_data_for_symbol(symbol)
     m15_df = m15_df.sort_values('date').reset_index(drop=True)
@@ -224,8 +228,6 @@ def walk_forward_test_symbol(symbol, window_days=180, test_days=30, trailing_pct
                         'total_trades_test': len([t for t in trades_test if t['type']=='SELL'])})
         start_idx += test_days
     return results
-
-CAPITAL = 100000
 
 def symbol_allocation_optimization(symbol_stats, total_capital=CAPITAL):
     total_pf = sum(max(stats.get('Profit Factor', 0.01), 0.01) for stats in symbol_stats.values())
@@ -283,9 +285,8 @@ def compare_fixed_vs_trailing(df, hourly_df, capital=CAPITAL, stop_loss_pct=0.01
         'Capital Fixed SL': fixed_cash,
         'Capital Trailing SL': bt.cash
     }
-# Entry point to batch process all symbols
+
 if __name__ == "__main__":
-    CAPITAL = 100000
     symbols = get_symbols_from_daily_data()
     summary = {'capital_used': CAPITAL, 'total_profit': 0}
     symbol_stats = {}
@@ -311,9 +312,7 @@ if __name__ == "__main__":
             'Total PnL': total_pnl
         }
         summary['total_profit'] += total_pnl
-
         walkforward_results[symbol] = walk_forward_test_symbol(symbol, window_days=180, test_days=30, trailing_pct=0.01)
-
         worst_days = get_worst_market_periods(daily_df)
         if not worst_days.empty:
             wd_df = m15_df[m15_df['date'].isin(worst_days['date'])]
@@ -322,9 +321,6 @@ if __name__ == "__main__":
             worstday_results[symbol] = {'Trades': len(trades_worst), 'PnL': worst_pnl}
         else:
             worstday_results[symbol] = {}
-
         comparison_reports[symbol] = compare_fixed_vs_trailing(m15_df, hourly_df, capital=CAPITAL)
-
     allocations = symbol_allocation_optimization(symbol_stats, total_capital=CAPITAL)
-
     write_final_report(summary, symbol_stats, allocations, walkforward_results, worstday_results, comparison_reports, filename="full_detailed_report.txt")

@@ -312,9 +312,13 @@ if __name__ == "__main__":
         # Add duration info to trades
         trades_with_duration = add_trade_durations(trades)
 
-        # Optionally create ML features and train/filter
-        # ml_metrics = ml_train_and_filter(m15_df, hourly_df, threshold=0.7)
-        ml_metrics = None  # replace with actual call if desired
+        # Normalize 'date' in trades to avoid errors
+        for t in trades_with_duration:
+            if not isinstance(t['date'], pd.Timestamp):
+                t['date'] = pd.to_datetime(t['date'])
+
+        # Run ML Train and Filter to get ML metrics
+        ml_metrics = ml_train_and_filter(m15_df, hourly_df, threshold=0.7)
 
         # Generate report
         generate_full_backtest_report(

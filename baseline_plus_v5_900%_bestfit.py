@@ -200,6 +200,45 @@ def write_comparison_report(all_stats, filename="final_comparison_report.txt"):
             f.write(" | ".join(line) + "\n")
     print(f"Comparison report saved to {filename}")
 
+def write_comparison_report(all_stats, filename="final_comparison_report.txt"):
+    total_capital_used = 0
+    total_pnl_trailing = 0
+    total_pnl_fixed = 0
+
+    with open(filename, "w") as f:
+        f.write("="*80 + "\nFINAL STOP LOSS STRATEGY COMPARISON REPORT\n" + "="*80 + "\n\n")
+        header = ['Symbol', 'TS Total Trades', 'TS Win Rate %', 'TS Avg PnL/Trade', 'TS Total PnL',
+                  'FS Total Trades', 'FS Win Rate %', 'FS Avg PnL/Trade', 'FS Total PnL']
+        f.write(f"{' | '.join(header)}\n")
+        f.write("-"*len(' | '.join(header)) + "\n")
+
+        for symbol, stats in all_stats.items():
+            ts = stats.get('TrailingSL', {})
+            fs = stats.get('FixedSL', {})
+            line = [
+                symbol,
+                str(ts.get('Total Trades', 'N/A')),
+                f"{ts.get('Win Rate %', 'N/A')}",
+                f"{ts.get('Avg PnL per Trade', 'N/A')}",
+                f"{ts.get('Total PnL', 'N/A')}",
+                str(fs.get('Total Trades', 'N/A')),
+                f"{fs.get('Win Rate %', 'N/A')}",
+                f"{fs.get('Avg PnL per Trade', 'N/A')}",
+                f"{fs.get('Total PnL', 'N/A')}",
+            ]
+            f.write(" | ".join(line) + "\n")
+
+            # Accumulate totals if values exist
+            total_capital_used += CAPITAL  # Assuming full capital used on each symbol
+            total_pnl_trailing += ts.get('Total PnL', 0)
+            total_pnl_fixed += fs.get('Total PnL', 0)
+
+        f.write("\n" + "="*80 + "\n")
+        f.write(f"Total Capital Used (across symbols): {total_capital_used}\n")
+        f.write(f"Total P&L Trailing Stop Strategy: {total_pnl_trailing:.2f}\n")
+        f.write(f"Total P&L Fixed Stop Strategy: {total_pnl_fixed:.2f}\n")
+
+
 def add_trade_durations(trades):
     enhanced_trades = []
     open_trades = []

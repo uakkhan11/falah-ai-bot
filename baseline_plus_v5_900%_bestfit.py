@@ -298,6 +298,48 @@ def generate_full_backtest_report(
     with open(filename) as f:
         print(f.read())
 
+def ml_train_and_filter(df, hourly_df, threshold=0.7):
+    # Create ML features and labels
+    hourly_df = hourly_df.set_index('date')
+    df = df.set_index('date')
+    for col in ['ema8', 'ema20', 'rsi_14', 'adx']:
+        if col in hourly_df.columns:
+            df['hour_' + col] = hourly_df[col].reindex(df.index, method='ffill')
+    df['future_return'] = df['close'].shift(-10) / df['close'] - 1
+    df['label'] = (df['future_return'] > 0.01).astype(int)
+    df.dropna(inplace=True)
+    
+    labels = df['label']
+    features = df.drop(columns=['label', 'future_return', 'open', 'high', 'low', 'volume'], errors='ignore')
+
+    X_train, X_test, y_train, y_test = train_test_split(features, labels, shuffle=False, test_size=0.2)
+    
+    model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    
+    acc = accuracy_score(y_test, y_pred)
+    prec = precision_score(y_test, y_pred)
+    rec = recall_score(y_test, y_pred)
+    proba = model.predict_proba(X_test)[:, 1]
+    
+    filtered_indices = proba > threshold
+    filtered_y_test = y_test[filtered_indices]
+    
+    filtered_acc = accuracy_score(filtered_y_test, y_pred[filtered_indices]) if len(filtered_y_test) > 0 else 0
+    filtered_prec = precision_score(filtered_y_test, y_pred[filtered_indices]) if len(filtered_y_test) > 0 else 0
+    filtered_rec = recall_score(filtered_y_test, y_pred[filtered_indices]) if len(filtered_y_test) > 0 else 0
+
+    return {
+        'model': model,
+        'accuracy': acc,
+        'precision': prec,
+        'recall': rec,
+        'filtered_accuracy': filtered_acc,
+        'filtered_precision': filtered_prec,
+        'filtered_recall': filtered_rec
+    }
+
 
 if __name__ == "__main__":
     symbols = get_symbols_from_daily_data()

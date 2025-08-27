@@ -184,17 +184,23 @@ def write_final_comparison_report(all_stats, filename="final_comparison_report.t
 if __name__ == "__main__":
     symbols = get_symbols_from_local_data()
     combined_stats = {}
-    all_data = load_all_symbols_data(symbols)
     for symbol in symbols:
         print(f"Processing symbol: {symbol}")
         df = load_and_prepare_symbol(symbol)
         
-      
-        ttrailing_stats = calc_trade_stats(trades_trailing)
+        # Trailing Stop Backtest
+        trades_trailing = backtest_trailing_stop(df, CAPITAL)
+        trailing_stats = calc_trade_stats(trades_trailing)
+        write_strategy_report(f"Trailing Stop - {symbol}", trades_trailing, trailing_stats, f"report_trailing_{symbol}.txt")
+        
+        # Fixed Stop Backtest
+        trades_fixed = backtest_fixed_stop(df, CAPITAL)
         fixed_stats = calc_trade_stats(trades_fixed)
+        write_strategy_report(f"Fixed Stop - {symbol}", trades_fixed, fixed_stats, f"report_fixed_{symbol}.txt")
+        
         combined_stats[symbol] = {
-        "Trailing Stop": trailing_stats,
-        "Fixed Stop": fixed_stats
+            "Trailing Stop": trailing_stats,
+            "Fixed Stop": fixed_stats
         }
         
         print("Portfolio Level Summary")
@@ -205,5 +211,6 @@ if __name__ == "__main__":
         print(f"Stats for {symbol} - Fixed Stop:")
         for k, v in fixed_stats.items():
             print(f"{k}: {v}")
+
     write_final_comparison_report(combined_stats)
     print("All reports generated.")

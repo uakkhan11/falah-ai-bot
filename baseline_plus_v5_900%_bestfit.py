@@ -341,6 +341,18 @@ def ml_train_and_filter(df, hourly_df, threshold=0.7):
     }
 
 
+def normalize_trade_dates(trades):
+    for t in trades:
+        # Rename if needed
+        if 'Date' in t and 'date' not in t:
+            t['date'] = t.pop('Date')
+        # Ensure datetime type
+        if 'date' in t:
+            t['date'] = pd.to_datetime(t['date'])
+        else:
+            raise ValueError("Trade missing 'date' key: " + str(t))
+    return trades
+
 if __name__ == "__main__":
     symbols = get_symbols_from_daily_data()
     for symbol in symbols:
@@ -354,13 +366,15 @@ if __name__ == "__main__":
         # Add duration info to trades
         trades_with_duration = add_trade_durations(trades)
 
-        # Normalize 'date' in trades to avoid errors
-        for t in trades_with_duration:
-            if not isinstance(t['date'], pd.Timestamp):
-                t['date'] = pd.to_datetime(t['date'])
+        # Normalize dates in trades_with_duration before reporting
+        trades_with_duration = normalize_trade_dates(trades_with_duration)
 
         # Run ML Train and Filter to get ML metrics
         ml_metrics = ml_train_and_filter(m15_df, hourly_df, threshold=0.7)
+
+        print("Sample trades before report generation:")
+        for t in trades_with_duration[:5]:
+            print(t)
 
         # Generate report
         generate_full_backtest_report(

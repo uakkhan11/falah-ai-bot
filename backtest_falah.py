@@ -1,197 +1,436 @@
-# backtest_falah.py
-
 import os
-import glob
-import json
-import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
-from kiteconnect import KiteConnect
+import numpy as np
+import talib
+from xgboost import XGBClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, precision_score, recall_score, classification_report
+import warnings
+import json
+warnings.filterwarnings("ignore")
 
-# ─── CONFIG ─────────────────────────────────────────────────────────
-DATA_DIR = "/root/falah-ai-bot/historical_data"
-RESULTS_DIR = "./backtest_results"
-os.makedirs(RESULTS_DIR, exist_ok=True)
+# ================================
+# Paths and Constants
+# ================================
+BASE_DIR = "/root/falah-ai-bot"
+DATA_PATHS = {
+    'daily': os.path.join(BASE_DIR, "swing_data"),
+    '1hour': os.path.join(BASE_DIR, "intraday_swing_data"),
+    '15minute': os.path.join(BASE_DIR, "scalping_data"),
+}
 
-# Automatically detect all CSVs in the folder
-SYMBOLS = [os.path.basename(f).replace(".csv","") for f in glob.glob(f"{DATA_DIR}/*.csv")]
-START_DATE = "2019-01-01"
-END_DATE = "2023-12-31"
-INITIAL_CAPITAL = 1_000_000
-RISK_PER_TRADE = 0.02
-SLIPPAGE = 0.001
-COMMISSION = 0.0005
+# ================================
+# Data Loading & Indicator Computation
+# ================================
+def get_symbols_from_daily_data():
+    daily_files = os.listdir(DATA_PATHS['daily'])
+    return [os.path.splitext(f)[0] for f in daily_files if f.endswith('.csv')]
 
-# ─── LOAD ALL DATA ───────────────────────────────────────────────────
-print("📂 Loading historical data...")
-all_data = {}
-for sym in SYMBOLS:
-    path = os.path.join(DATA_DIR, f"{sym}.csv")
-    if not os.path.exists(path):
-        print(f"⚠️ Missing data for {sym}")
-        continue
-    df = pd.read_csv(path, parse_dates=["date"])
-    df = df.set_index("date")
-    df = df.loc[START_DATE:END_DATE]
-    all_data[sym] = df
-print(f"✅ Loaded data for {len(all_data)} symbols.")
+def compute_indicators(df):
+    df = df.copy()
+    df['close'] = pd.to_numeric(df['close'], errors='coerce').ffill()
+    df['high'] = pd.to_numeric(df['high'], errors='coerce').ffill()
+    df['low'] = pd.to_numeric(df['low'], errors='coerce').ffill()
+    df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
+    close = df['close'].values.astype(np.float64)
+    high = df['high'].values.astype(np.float64)
+    low = df['low'].values.astype(np.float64)
+    volume = df['volume'].values.astype(np.float64)
+    df['ema8'] = talib.EMA(close, timeperiod=8)
+    df['ema20'] = talib.EMA(close, timeperiod=20)
+    df['rsi_14'] = talib.RSI(close, timeperiod=14)
+    df['macd'], df['macd_signal'], df['macd_hist'] = talib.MACD(close)
+    df['adx'] = talib.ADX(high, low, close, timeperiod=14)
+    df['atr'] = talib.ATR(high, low, close, timeperiod=14)
+    df['sar'] = talib.SAR(high, low, acceleration=0.02, maximum=0.2)
+    df['roc'] = talib.ROC(close, timeperiod=10)
+    df['cmo'] = talib.CMO(close, timeperiod=14)
+    upperband, middleband, lowerband = talib.BBANDS(close, timeperiod=20)
+    df['bb_upper'], df['bb_middle'], df['bb_lower'] = upperband, middleband, lowerband
+    df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
+    df['obv'] = talib.OBV(close, volume)
+    df = df.fillna(method='ffill').fillna(method='bfill')
+    return df
 
-ema_ok = 0
-rsi_ok = 0
-ai_ok = 0
-all_ok = 0
+def load_and_filter_data(symbol, years=5):
+    cutoff_date = pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=365 * years)
+    daily_df = pd.read_csv(os.path.join(DATA_PATHS['daily'], f"{symbol}.csv"), parse_dates=['date'])
+    hourly_df = pd.read_csv(os.path.join(DATA_PATHS['1hour'], f"{symbol}.csv"), parse_dates=['date'])
+    m15_df = pd.read_csv(os.path.join(DATA_PATHS['15minute'], f"{symbol}.csv"), parse_dates=['date'])
+    for df in [daily_df, hourly_df, m15_df]:
+        df['date'] = pd.to_datetime(df['date'])
+        df = df[df['date'] >= cutoff_date].reset_index(drop=True)
+    return daily_df, hourly_df, m15_df
 
-# ─── MAIN BACKTEST LOOP ──────────────────────────────────────────────
-capital = INITIAL_CAPITAL
-peak = capital
-drawdowns = []
-equity_curve = []
-trades = []
+def prepare_data_for_symbol(symbol, years=5):
+    daily_df, hourly_df, m15_df = load_and_filter_data(symbol, years)
+    daily_df, hourly_df, m15_df = compute_indicators(daily_df), compute_indicators(hourly_df), compute_indicators(m15_df)
+    daily_df.dropna(subset=['ema8','ema20'], inplace=True)
+    hourly_df.dropna(subset=['ema8','ema20'], inplace=True)
+    m15_df.dropna(subset=['ema8','ema20'], inplace=True)
+    return daily_df, hourly_df, m15_df
 
-# Import your smart_scanner
-from smart_scanner import model as ml_model
-from ta.momentum import RSIIndicator
-from ta.trend import EMAIndicator
-from ta.volatility import AverageTrueRange
+# ================================
+# Backtesting Strategy Class with Trailing Stop/Profit
+# ================================
+class BacktestStrategy:
+    def __init__(self, daily_df, hourly_df, m15_df, initial_capital=100000, params=None):
+        self.daily_df = daily_df.sort_values('date').reset_index(drop=True)
+        self.hourly_df = hourly_df.sort_values('date').reset_index(drop=True)
+        self.df_15m = m15_df.sort_values('date').reset_index(drop=True)
+        self.initial_capital = initial_capital
+        self.cash = initial_capital
+        self.position = 0
+        self.entry_price = 0
+        self.entry_date = None
+        self.trades = []
+        self.exit_reasons = {'StopLoss':0, 'ProfitTarget':0, 'EOD Exit':0, 'Trailing Exit':0}
+        # Default params with trailing SL enabled and default buffers
+        self.params = params or {
+            'stop_loss_pct': 0.01,
+            'profit_target_pct': 0.02,
+            'use_trailing_stop': True,
+            'trailing_stop_pct': 0.01,  # trailing stop 1% below peak price
+            'use_trailing_tp': False,   # trailing take profit optional
+            'trailing_tp_pct': 0.01
+        }
+        self.highest_price = 0
+        self.trailing_stop_price = None
 
-# ✅ Define feature names to match ML training
-FEATURE_NAMES = ["RSI", "EMA10", "EMA21", "ATR", "VolumeChange"]
-
-print("🚀 Running backtest...")
-for sym, df in all_data.items():
-    in_trade = False
-    entry_price = sl = tp = None
-    qty = 0
-
-    for i in range(21, len(df)):
-        date = df.index[i]
-        today = df.iloc[i]
-
-        # Compute indicators
-        rsi_series = RSIIndicator(close=df["close"].iloc[:i+1], window=14).rsi()
-        rsi = rsi_series.iloc[-1]
-
-        ema10_series = EMAIndicator(close=df["close"].iloc[:i+1], window=10).ema_indicator()
-        ema10 = ema10_series.iloc[-1]
-
-        ema21_series = EMAIndicator(close=df["close"].iloc[:i+1], window=21).ema_indicator()
-        ema21 = ema21_series.iloc[-1]
-
-        atr_series = AverageTrueRange(
-            high=df["high"].iloc[:i+1],
-            low=df["low"].iloc[:i+1],
-            close=df["close"].iloc[:i+1],
-            window=14
-        ).average_true_range()
-        atr = atr_series.iloc[-1]
-
-        # Force volume ratio = 1 if volume data is missing
-        rolling_mean = df["volume"].iloc[:i+1].rolling(10).mean().iloc[-1]
-        if pd.isna(rolling_mean) or rolling_mean == 0:
-            vol_ratio = 1
-        else:
-            vol_ratio = today["volume"] / rolling_mean
-
-
-        # ML features
-        features_df = pd.DataFrame([[rsi, ema10, ema21, atr, vol_ratio]], columns=FEATURE_NAMES)
-        prob = ml_model.predict_proba(features_df)[0][1]
-        ai_score = prob * 5.0
-        
-        print(
-            f"{date.date()} | {sym} | EMA10: {ema10:.2f} | EMA21: {ema21:.2f} | RSI: {rsi:.2f} | AI Score: {ai_score:.2f}"
-        )
-        # Entry criteria
-        ema_pass = ema10 > ema21
-        rsi_pass = rsi > 45
-        ai_pass = ai_score >= 1.5
-
-        if ema_pass:
-            ema_ok += 1
-        if rsi_pass:
-            rsi_ok += 1
-        if ai_pass:
-            ai_ok += 1
-        if ema_pass and rsi_pass and ai_pass:
-            all_ok += 1
-
-        passed = sum([ema_pass, rsi_pass, ai_pass])
-        entry_signal = passed >= 2
-        
-        if not in_trade and entry_signal:
-            entry_price = today["close"]
-            sl = entry_price - 1.5 * atr
-            tp = entry_price + (entry_price - sl) * 3
-            risk_amount = capital * RISK_PER_TRADE
-            qty = int(risk_amount / (entry_price - sl))
-            if qty < 1:
+    def run_backtest(self):
+        daily_ema200 = talib.EMA(self.daily_df['close'].values, timeperiod=200)
+        if self.daily_df['close'].iloc[-1] <= daily_ema200[-1]:
+            return []
+        last_hourly = self.hourly_df.iloc[-1]
+        if not (last_hourly['ema8'] > last_hourly['ema20'] and last_hourly['rsi_14'] > 50):
+            return []
+        df = self.df_15m
+        for i in range(1, len(df)):
+            prev, curr = df.iloc[i-1], df.iloc[i]
+            if pd.isna(prev['ema8']) or pd.isna(prev['ema20']):
                 continue
-            in_trade = True
-            entry_date = date
-            continue
+            entry_signal = prev['ema8'] <= prev['ema20'] and curr['ema8'] > curr['ema20']
+            if self.position == 0 and entry_signal:
+                qty = int(self.cash / curr['close'])
+                if qty > 0:
+                    self._enter_trade(curr, qty)
+            elif self.position > 0:
+                self._manage_trade(curr)
+        if self.position > 0:
+            last_row = df.iloc[-1]
+            pnl = (last_row['close'] - self.entry_price) * self.position
+            self.exit_reasons['EOD Exit'] += 1
+            self._exit_trade(last_row['close'], pnl, last_row['date'], "EOD Exit")
+        return self.trades
 
-        if in_trade:
-            exit_price = None
-            reason = ""
-            if today["low"] <= sl:
-                exit_price = sl
-                reason = "Stop Loss"
-            elif today["high"] >= tp:
-                exit_price = tp
-                reason = "Target Hit"
-            elif i == len(df) - 1:
-                exit_price = today["close"]
-                reason = "End of Data"
+    def _enter_trade(self, curr, qty):
+        self.entry_price = curr['close']
+        self.position = qty
+        self.entry_date = curr['date']
+        self.cash -= qty * self.entry_price
+        self.highest_price = self.entry_price  # reset highest price at entry
+        self.trailing_stop_price = None
+        self.trades.append({'type':'BUY','date':curr['date'],'price':self.entry_price,'qty':qty})
 
-            if exit_price:
-                buy_price = entry_price * (1 + SLIPPAGE)
-                sell_price = exit_price * (1 - SLIPPAGE)
-                cost = buy_price * qty * (1 + COMMISSION)
-                proceeds = sell_price * qty * (1 - COMMISSION)
-                pnl = proceeds - cost
+    def _manage_trade(self, curr):
+        current_price = curr['close']
+        # Update the highest price since entry
+        self.highest_price = max(self.highest_price, current_price)
 
-                capital += pnl
-                peak = max(peak, capital)
-                dd = (peak - capital) / peak
-                drawdowns.append(dd)
+        # Calculate static stop loss and profit target
+        static_stop_loss = self.entry_price * (1 - self.params['stop_loss_pct'])
+        static_profit_target = self.entry_price * (1 + self.params['profit_target_pct'])
 
-                trades.append({
-                    "symbol": sym,
-                    "entry_date": entry_date,
-                    "exit_date": date,
-                    "entry_price": entry_price,
-                    "exit_price": exit_price,
-                    "pnl": pnl,
-                    "reason": reason,
-                    "qty": qty
-                })
+        # Trailing stop loss logic
+        if self.params.get('use_trailing_stop', False):
+            self.trailing_stop_price = self.highest_price * (1 - self.params['trailing_stop_pct'])
+            stop_loss = max(static_stop_loss, self.trailing_stop_price)  # Ensures stop moves up with price
+        else:
+            stop_loss = static_stop_loss
 
-                equity_curve.append({"date": date, "capital": capital})
+        # Exit conditions
+        if current_price <= stop_loss:
+            pnl = (current_price - self.entry_price) * self.position
+            self.exit_reasons['StopLoss'] += 1
+            self._exit_trade(current_price, pnl, curr['date'], "Stop Loss / Trailing Exit")
+        elif current_price >= static_profit_target:
+            pnl = (current_price - self.entry_price) * self.position
+            self.exit_reasons['ProfitTarget'] += 1
+            self._exit_trade(current_price, pnl, curr['date'], "Profit Target")
 
-                in_trade = False
+    def _exit_trade(self, price, pnl, date, reason):
+        self.cash += self.position * price
+        trade_duration = (pd.to_datetime(date) - pd.to_datetime(self.entry_date)).days + 1
+        self.trades.append({
+            'type':'SELL', 'date':date, 'price':price, 'qty':self.position,
+            'pnl':pnl, 'duration':trade_duration, 'exit_reason':reason
+        })
+        self.position, self.entry_price, self.entry_date = 0, 0, None
+        self.highest_price = 0
+        self.trailing_stop_price = None
 
-# ─── SAVE RESULTS ────────────────────────────────────────────────────
-if trades:
-    trades_df = pd.DataFrame(trades)
-    trades_df.to_csv(os.path.join(RESULTS_DIR, "trades.csv"), index=False)
-    print(f"✅ Saved {len(trades)} trades.")
-else:
-    print("⚠️ No trades recorded.")
+# ================================
+# ML Feature Preparation and Training
+# ================================
+def create_ml_features(m15_df, hourly_df):
+    hourly_df = hourly_df.set_index('date')
+    m15_df = m15_df.set_index('date')
+    for col in ['ema8', 'ema20', 'rsi_14', 'adx']:
+        if col in hourly_df.columns:
+            m15_df['hour_' + col] = hourly_df[col].reindex(m15_df.index, method='ffill')
+    m15_df['future_return'] = m15_df['close'].shift(-10) / m15_df['close'] - 1
+    m15_df['label'] = (m15_df['future_return'] > 0.01).astype(int)
+    m15_df.dropna(inplace=True)
+    labels = m15_df['label']
+    features = m15_df.drop(columns=['label', 'future_return', 'open', 'high', 'low', 'volume'], errors='ignore')
+    return features, labels
 
-if equity_curve:
-    ec = pd.DataFrame(equity_curve)
-    ec.to_csv(os.path.join(RESULTS_DIR, "equity_curve.csv"), index=False)
-    returns = ec["capital"].pct_change().dropna()
-    cagr = ((capital / INITIAL_CAPITAL) ** (1 / ((ec['date'].iloc[-1] - ec['date'].iloc[0]).days / 365.25))) - 1
-    sharpe = returns.mean() / returns.std() * (252 ** 0.5)
-    max_dd = max(drawdowns) * 100
-    print(f"\n🎯 Backtest Complete")
-    print(f"CAGR: {cagr:.2%}  |  Sharpe: {sharpe:.2f}  |  Max DD: {max_dd:.1f}%")
-else:
-    print("⚠️ No equity data to compute performance metrics.")
+def train_xgboost_model(X, y):
+    X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=False, test_size=0.2)
+    model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    accuracy = round(accuracy_score(y_test, y_pred), 4)
+    precision = round(precision_score(y_test, y_pred), 4)
+    recall = round(recall_score(y_test, y_pred), 4)
+    clf_report = classification_report(y_test, y_pred, output_dict=True)
+    importance = model.get_booster().get_score(importance_type='weight')
+    importance = dict(sorted(importance.items(), key=lambda item: item[1], reverse=True))
+    return model, accuracy, precision, recall, importance, clf_report
 
-print(f"\nℹ️  Entry Filter Stats:")
-print(f"EMA Passed: {ema_ok}")
-print(f"RSI Passed: {rsi_ok}")
-print(f"AI Score Passed: {ai_ok}")
-print(f"All Conditions Passed: {all_ok}")
+# ================================
+# Reporting Functions
+# ================================
+def extract_trade_stats(trades):
+    df = pd.DataFrame(trades)
+    if df.empty or 'pnl' not in df.columns:
+        return {}
+    df_closed = df[df['type'] == 'SELL']
+    stats = {
+        'Total Trades': len(df_closed),
+        'Winning Trades': (df_closed['pnl'] > 0).sum(),
+        'Losing Trades': (df_closed['pnl'] <= 0).sum(),
+        'Win Rate %': round((df_closed['pnl'] > 0).mean() * 100, 2),
+        'Avg PnL per Trade': round(df_closed['pnl'].mean(), 4),
+        'Best PnL': round(df_closed['pnl'].max(), 4),
+        'Worst PnL': round(df_closed['pnl'].min(), 4),
+        'Avg Trade Duration (days)': round(df_closed['duration'].mean(), 2),
+        'Stop Loss Hits': sum(t['exit_reason']=='Stop Loss' for t in trades if 'exit_reason' in t),
+        'Profit Target Hits': sum(t['exit_reason']=='Profit Target' for t in trades if 'exit_reason' in t),
+        'Trailing Exits': sum('Trailing' in t['exit_reason'] for t in trades if 'exit_reason' in t),
+        'EOD Exits': sum(t['exit_reason']=='EOD Exit' for t in trades if 'exit_reason' in t),
+        'Total PnL': round(df_closed['pnl'].sum(), 4)
+    }
+    return stats
+
+def format_classification_report(report_dict):
+    lines = []
+    for label in ['0', '1', 'accuracy', 'macro avg', 'weighted avg']:
+        if label in report_dict:
+            if label == 'accuracy':
+                lines.append(f"Accuracy: {report_dict[label]:.4f}")
+            else:
+                rec = report_dict[label].get('recall', np.nan)
+                prec = report_dict[label].get('precision', np.nan)
+                f1 = report_dict[label].get('f1-score', np.nan)
+                support = report_dict[label].get('support', np.nan)
+                lines.append(f"{label} -> Precision: {prec:.4f}, Recall: {rec:.4f}, F1-score: {f1:.4f}, Support: {support}")
+    return "\n".join(lines)
+
+def save_detailed_report(filename, title, results_dict, clf_report, trade_stats, ml_metrics, feature_imp):
+    with open(filename, "a") as f:
+        f.write("="*80 + "\n")
+        f.write(f"{title}\n")
+        f.write("="*80 + "\n")
+        f.write("Backtest Trade Stats:\n")
+        for k,v in trade_stats.items():
+            f.write(f"  {k}: {v}\n")
+        f.write("\nML Classification Report:\n")
+        f.write(format_classification_report(clf_report))
+        f.write("\n\nML Metrics:\n")
+        for k,v in ml_metrics.items():
+            f.write(f"  {k}: {v}\n")
+        f.write("\nTop Feature Importances:\n")
+        for feat, imp in feature_imp.items():
+            f.write(f"  {feat}: {imp}\n")
+        f.write("\n\n")
+
+# Helper function to safely drop indicator columns except ema8 and ema20
+def safe_drop(df, keep_cols, drop_prefixes):
+    cols_to_drop = [col for col in df.columns 
+                    if any(col.startswith(p) for p in drop_prefixes) and col not in keep_cols]
+    return df.drop(columns=cols_to_drop, errors='ignore')
+
+# ================================
+# Full Grid Search with Trailing Options
+# ================================
+def full_grid_search(symbols, indicator_combos, stop_loss_params, profit_target_params, trailing_stop_pct_options, initial_capital=100000):
+    results = []
+    report_file = "detailed_summary_report.txt"
+    with open(report_file, "w") as f:
+        f.write("Detailed Backtest and ML Report\n\n")
+
+    for indicators in indicator_combos:
+        indicator_str = ",".join(sorted(indicators))
+        for sl in stop_loss_params:
+            for pt in profit_target_params:
+                for use_trailing in [False, True]:
+                    for trailing_stop_pct in trailing_stop_pct_options:
+                        all_trades, ml_accuracies, ml_precisions, ml_recalls = [], [], [], []
+                        feature_importances_accum = {}
+                        trade_stats_per_symbol = {}
+                        ml_reports_per_symbol = {}
+                        for symbol in symbols:
+                            try:
+                                daily_df, hourly_df, m15_df = prepare_data_for_symbol(symbol)
+                                if len(daily_df) < 100 or len(hourly_df) < 100 or len(m15_df) < 100:
+                                    continue
+                                # Drop unwanted indicator columns safely by preserving ema8 and ema20 columns
+                                if 'daily' not in indicators:
+                                    daily_df = safe_drop(daily_df, keep_cols=['ema8','ema20'], drop_prefixes=['ema','rsi','macd','adx','atr','sar','roc','cmo','bb','adosc','obv'])
+                                if 'hourly' not in indicators:
+                                    hourly_df = safe_drop(hourly_df, keep_cols=['ema8','ema20'], drop_prefixes=['ema','rsi','macd','adx','atr','sar','roc','cmo','bb','adosc','obv'])
+                                if '15minute' not in indicators:
+                                    m15_df = safe_drop(m15_df, keep_cols=['ema8','ema20'], drop_prefixes=['ema','rsi','macd','adx','atr','sar','roc','cmo','bb','adosc','obv'])
+
+                                params = {
+                                    'stop_loss_pct': sl,
+                                    'profit_target_pct': pt,
+                                    'use_trailing_stop': use_trailing,
+                                    'trailing_stop_pct': trailing_stop_pct,
+                                    'use_trailing_tp': False
+                                }
+                                strategy = BacktestStrategy(daily_df, hourly_df, m15_df, initial_capital, params=params)
+                                trades = strategy.run_backtest()
+                                all_trades.extend(trades)
+
+                                X, y = create_ml_features(m15_df, hourly_df)
+                                model, acc, prec, rec, feat_imp, clf_report = train_xgboost_model(X, y)
+                                ml_accuracies.append(acc)
+                                ml_precisions.append(prec)
+                                ml_recalls.append(rec)
+
+                                for k,v in feat_imp.items():
+                                    feature_importances_accum[k] = feature_importances_accum.get(k,0)+v
+                                trade_stats_per_symbol[symbol] = extract_trade_stats(trades)
+                                ml_reports_per_symbol[symbol] = clf_report
+
+                            except Exception as e:
+                                print(f"Error processing {symbol}: {e}")
+
+                        if not all_trades:
+                            continue
+
+                        backtest_metrics = extract_trade_stats(all_trades)
+                        avg_acc = np.mean(ml_accuracies) if ml_accuracies else 0
+                        avg_prec = np.mean(ml_precisions) if ml_precisions else 0
+                        avg_rec = np.mean(ml_recalls) if ml_recalls else 0
+                        ml_metrics = {'Accuracy': avg_acc, 'Precision': avg_prec, 'Recall': avg_rec}
+                        sorted_feat_imp = dict(sorted(feature_importances_accum.items(), key=lambda item: item[1], reverse=True))
+                        result_row = {
+                            'Indicators': indicator_str,
+                            'Stop Loss %': sl,
+                            'Profit Target %': pt,
+                            'Trailing SL Enabled': use_trailing,
+                            'Trailing SL %': trailing_stop_pct if use_trailing else 0,
+                            'Total Trades': backtest_metrics.get('Total Trades', 0),
+                            'Win Rate %': backtest_metrics.get('Win Rate %', 0),
+                            'Profit Factor': (np.sum([t['pnl'] for t in all_trades if 'pnl' in t and t['pnl'] > 0]) /
+                                              -np.sum([t['pnl'] for t in all_trades if 'pnl' in t and t['pnl'] <= 0])
+                                              if np.sum([t['pnl'] for t in all_trades if 'pnl' in t and t['pnl'] <= 0]) < 0 else np.inf),
+                            'Total Return %': (np.sum([t['pnl'] for t in all_trades if 'pnl' in t]) / initial_capital * 100),
+                            'ML Accuracy': round(avg_acc,4),
+                            'ML Precision': round(avg_prec,4),
+                            'ML Recall': round(avg_rec,4),
+                            'Top Features': ", ".join(list(sorted_feat_imp.keys())[:10])
+                        }
+                        results.append(result_row)
+
+                        print(f"Completed: Indicators={indicator_str}, SL={sl}, PT={pt}, Trailing={use_trailing}, TrailingSL%={trailing_stop_pct}, Trades={result_row['Total Trades']}, Return={result_row['Total Return %']:.2f}%")
+
+                        title = (f"Indicator Set: {indicator_str}\n"
+                                 f"Stop Loss: {sl}, Profit Target: {pt}, Trailing SL: {use_trailing}, Trailing SL %: {trailing_stop_pct}\n")
+                        with open(report_file, "a") as f:
+                            f.write("\n" + "="*80 + "\n")
+                            f.write(title)
+                            f.write("="*80 + "\n")
+                            f.write("Overall Backtest Stats:\n")
+                            for k, v in backtest_metrics.items():
+                                f.write(f"{k}: {v}\n")
+                            f.write("\nML Metrics (average over symbols):\n")
+                            for k, v in ml_metrics.items():
+                                f.write(f"{k}: {v:.4f}\n")
+                            f.write("\nTop Feature Importances:\n")
+                            for feat, imp in sorted_feat_imp.items():
+                                f.write(f"{feat}: {imp}\n")
+                            f.write("\nPer-Symbol Trade Stats:\n")
+                            for sym, stats in trade_stats_per_symbol.items():
+                                f.write(f"Symbol: {sym}\n")
+                                for k, v in stats.items():
+                                    f.write(f"  {k}: {v}\n")
+                                f.write("\n")
+                            f.write("\n")
+
+    results_df = pd.DataFrame(results)
+    results_df.to_csv("full_grid_search_results.csv", index=False)
+
+    print("\nAll runs completed. Summary saved to 'full_grid_search_results.csv' and detailed text report.")
+    print_consolidated_report(results_df, save_path="summary_consolidated_report.txt")
+    return results_df
+
+# ================================
+# Consolidated Summary & Export
+# ================================
+def print_consolidated_report(results_df, save_path="summary_consolidated_report.txt"):
+    lines = []
+    lines.append("="*100)
+    lines.append("📊 CONSOLIDATED REPORT")
+    lines.append("="*100)
+    total_runs = len(results_df)
+    lines.append(f"Total Strategies Tested: {total_runs}")
+    if total_runs == 0:
+        lines.append("No results available.")
+    else:
+        best_return = results_df.loc[results_df['Total Return %'].idxmax()]
+        best_winrate = results_df.loc[results_df['Win Rate %'].idxmax()]
+        best_profitfactor = results_df.loc[results_df['Profit Factor'].idxmax()]
+        lines.append("\n🏆 Best Strategies:")
+        lines.append(f"- Highest Return %: {best_return['Total Return %']:.2f} | Indicators={best_return['Indicators']} | SL={best_return['Stop Loss %']} | PT={best_return['Profit Target %']} | TrailingSL={best_return['Trailing SL Enabled']} ({best_return['Trailing SL %']})")
+        lines.append(f"- Highest Win Rate %: {best_winrate['Win Rate %']:.2f} | Indicators={best_winrate['Indicators']} | SL={best_winrate['Stop Loss %']} | PT={best_winrate['Profit Target %']} | TrailingSL={best_winrate['Trailing SL Enabled']} ({best_winrate['Trailing SL %']})")
+        lines.append(f"- Highest Profit Factor: {best_profitfactor['Profit Factor']:.2f} | Indicators={best_profitfactor['Indicators']} | SL={best_profitfactor['Stop Loss %']} | PT={best_profitfactor['Profit Target %']} | TrailingSL={best_profitfactor['Trailing SL Enabled']} ({best_profitfactor['Trailing SL %']})")
+        lines.append("\n🤖 ML Metrics (Average across all runs):")
+        lines.append(f"- Accuracy: {results_df['ML Accuracy'].mean():.4f}")
+        lines.append(f"- Precision: {results_df['ML Precision'].mean():.4f}")
+        lines.append(f"- Recall: {results_df['ML Recall'].mean():.4f}")
+        features_flat = []
+        for feat in results_df['Top Features']:
+            if isinstance(feat, str):
+                features_flat.extend([f.strip() for f in feat.split(",")])
+        common_features = pd.Series(features_flat).value_counts().head(10)
+        lines.append("\n🔥 Top ML Features (most frequently important):")
+        for i, (feat, count) in enumerate(common_features.items(), 1):
+            lines.append(f"{i}. {feat} ({count} times)")
+        lines.append("\n📈 Performance Grouped by Indicator Combo:")
+        group_stats = results_df.groupby("Indicators")[["Total Return %", "Win Rate %", "Profit Factor"]].mean().sort_values("Total Return %", ascending=False)
+        lines.append(group_stats.to_string(float_format=lambda x: f"{x:0.2f}"))
+    lines.append("="*100)
+    report_text = "\n".join(lines)
+    print(report_text)
+    with open(save_path, "w") as f:
+        f.write(report_text)
+    print(f"\n📝 Consolidated report saved to '{save_path}'")
+
+# ================================
+# Main Entry Point
+# ================================
+if __name__ == "__main__":
+    symbols = get_symbols_from_daily_data()
+    indicator_combos = [
+        {'daily','hourly','15minute'}, {'daily','hourly'}, {'daily','15minute'},
+        {'hourly','15minute'}, {'daily'}, {'hourly'}, {'15minute'}
+    ]
+    stop_loss_params = [0.005, 0.0075, 0.01]  # around 1% SL
+    profit_target_params = [0.0125, 0.015, 0.02]  # around 1.5% to 2% TP
+    trailing_stop_pct_options = [0.005, 0.01, 0.015]  # Test 0.5%, 1%, 1.5% trailing stops
+
+    results_df = full_grid_search(symbols, indicator_combos, stop_loss_params, profit_target_params, trailing_stop_pct_options)

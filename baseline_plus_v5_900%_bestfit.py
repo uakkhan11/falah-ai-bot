@@ -5,6 +5,8 @@ import talib
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, classification_report
+from collections import Counter
+
 import warnings
 import json
 
@@ -324,3 +326,81 @@ if __name__ == "__main__":
         comparison_reports[symbol] = compare_fixed_vs_trailing(m15_df, hourly_df, capital=CAPITAL)
     allocations = symbol_allocation_optimization(symbol_stats, total_capital=CAPITAL)
     write_final_report(summary, symbol_stats, allocations, walkforward_results, worstday_results, comparison_reports, filename="full_detailed_report.txt")
+
+
+def generate_consolidated_summary(symbol_stats, comparison_reports, filename="consolidated_summary.txt"):
+    total_symbols = len(symbol_stats)
+    total_trades = 0
+    total_wins = 0
+    total_losses = 0
+    profit_factors = []
+    total_pnl = 0.0
+
+    # Accumulators for ML metrics and features
+    all_accuracies = []
+    all_precisions = []
+    all_recalls = []
+    feature_counter = Counter()
+
+    # Aggregate numeric stats
+    for symbol, stats in symbol_stats.items():
+        total_trades += stats.get('Total Trades', 0)
+        total_wins += stats.get('Winning Trades', 0)
+        total_losses += stats.get('Losing Trades', 0)
+        pf = stats.get('Profit Factor', None)
+        if pf is not None:
+            profit_factors.append(pf)
+        total_pnl += stats.get('Total PnL', 0.0)
+
+        # Add ML metrics and features from comparison reports
+        comp = comparison_reports.get(symbol, {})
+        ml_perf = comp.get('ML Performance', {})
+        if ml_perf:
+            all_accuracies.append(ml_perf.get('accuracy', 0))
+            all_precisions.append(ml_perf.get('precision', 0))
+            all_recalls.append(ml_perf.get('recall', 0))
+            # Count feature importance keys, if any
+            # Assuming ml_perf includes something like 'feature_importance' dict if extended
+            # If not available, consider extending your ML function to provide it
+            # Example: feature_counter.update(ml_perf.get('feature_importance', {}))
+
+    avg_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
+    avg_profit_factor = sum(profit_factors)/len(profit_factors) if profit_factors else 0
+    avg_accuracy = sum(all_accuracies)/len(all_accuracies) if all_accuracies else 0
+    avg_precision = sum(all_precisions)/len(all_precisions) if all_precisions else 0
+    avg_recall = sum(all_recalls)/len(all_recalls) if all_recalls else 0
+
+    with open(filename, "w") as f:
+        f.write("="*80 + "\n")
+        f.write("🚀 CONSOLIDATED SUMMARY REPORT\n")
+        f.write("="*80 + "\n\n")
+
+        f.write(f"Total Symbols Analyzed: {total_symbols}\n")
+        f.write(f"Total Trades Executed: {total_trades}\n")
+        f.write(f"Aggregate Wins: {total_wins} | Losses: {total_losses} | Win Rate: {avg_win_rate:.2f}%\n")
+        f.write(f"Average Profit Factor: {avg_profit_factor:.2f}\n")
+        f.write(f"Total Portfolio PnL: {total_pnl:.2f}\n\n")
+
+        f.write("ML Performance (averaged over symbols):\n")
+        f.write(f"    Accuracy: {avg_accuracy:.4f}\n")
+        f.write(f"    Precision: {avg_precision:.4f}\n")
+        f.write(f"    Recall: {avg_recall:.4f}\n\n")
+
+        if feature_counter:
+            f.write("Top ML Features (aggregated importance):\n")
+            for feat, count in feature_counter.most_common(10):
+                f.write(f"    {feat}: {count}\n")
+            f.write("\n")
+
+        # Optionally add more aggregate info like best symbol, best PF, etc.
+        best_symbol = max(symbol_stats.items(), key=lambda x: x[1].get('Total PnL', float('-inf')))[0] if symbol_stats else None
+        if best_symbol:
+            f.write(f"Top Performing Symbol by PnL: {best_symbol} with PnL: {symbol_stats[best_symbol].get('Total PnL',0):.2f}\n")
+
+        f.write("\nRecommendations:\n")
+        f.write(" - Focus on symbols with strong PnL and consistent win rate.\n")
+        f.write(" - Use ML filtering and trailing stops to enhance risk control.\n")
+        f.write(" - Dynamic position sizing improves portfolio robustness.\n")
+        f.write(" - Continue enhancing features and validating in walk-forward tests.\n")
+
+    print(f"Consolidated summary saved to {filename}")

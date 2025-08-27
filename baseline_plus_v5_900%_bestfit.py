@@ -117,6 +117,89 @@ class BacktestTrailingStrategy:
             self.trades.append({'type': 'SELL', 'date': self.df.iloc[-1]['date'], 'price': self.df.iloc[-1]['close'], 'qty': self.position, 'pnl': pnl, 'exit_reason': "EOD Exit"})
         return self.trades
 
+def run_fixed_stop_backtest(df, initial_capital=CAPITAL, stop_loss_pct=0.01, profit_target_pct=0.015):
+    cash = initial_capital
+    position = 0
+    entry_price = None
+    trades = []
+    for i in range(1, len(df)):
+        row = df.iloc[i]
+        if position == 0:
+            if row.get('ema8') is not None and row.get('ema20') is not None:
+                prev_row = df.iloc[i-1]
+                if prev_row['ema8'] <= prev_row['ema20'] and row['ema8'] > row['ema20']:
+                    qty = int(cash / row['close'])
+                    if qty > 0:
+                        position = qty
+                        entry_price = row['close']
+                        cash -= qty * row['close']
+                        trades.append({'type': 'BUY', 'date': row['date'], 'price': row['close'], 'qty': qty})
+        else:
+            stop_loss = entry_price * (1 - stop_loss_pct)
+            profit_target = entry_price * (1 + profit_target_pct)
+            current_price = row['close']
+            if current_price <= stop_loss:
+                pnl = (current_price - entry_price) * position
+                cash += position * current_price
+                trades.append({'type': 'SELL', 'date': row['date'], 'price': current_price, 'qty': position, 'pnl': pnl, 'exit_reason': 'Stop Loss'})
+                position = 0
+                entry_price = None
+            elif current_price >= profit_target:
+                pnl = (current_price - entry_price) * position
+                cash += position * current_price
+                trades.append({'type': 'SELL', 'date': row['date'], 'price': current_price, 'qty': position, 'pnl': pnl, 'exit_reason': 'Profit Target'})
+                position = 0
+                entry_price = None
+    if position > 0:
+        last_price = df.iloc[-1]['close']
+        pnl = (last_price - entry_price) * position
+        cash += position * last_price
+        trades.append({'type': 'SELL', 'date': df.iloc[-1]['date'], 'price': last_price, 'qty': position, 'pnl': pnl, 'exit_reason': 'EOD Exit'})
+    return trades, cash
+
+def calc_trade_stats(trades):
+    df = pd.DataFrame(trades)
+    if df.empty or 'pnl' not in df.columns:
+        return {}
+    df_closed = df[df['type'] == 'SELL']
+    wins = (df_closed['pnl'] > 0).sum()
+    losses = (df_closed['pnl'] <= 0).sum()
+    profit_factor = df_closed[df_closed['pnl'] > 0]['pnl'].sum() / (-df_closed[df_closed['pnl'] <= 0]['pnl'].sum() + 1e-9)
+    stats = {
+        'Total Trades': len(df_closed),
+        'Winning Trades': wins,
+        'Losing Trades': losses,
+        'Win Rate %': round(100 * wins / len(df_closed), 2) if len(df_closed) > 0 else 0,
+        'Profit Factor': round(profit_factor, 2),
+        'Avg PnL per Trade': round(df_closed['pnl'].mean(), 2),
+        'Total PnL': round(df_closed['pnl'].sum(), 2),
+    }
+    return stats
+
+def write_comparison_report(all_stats, filename="final_comparison_report.txt"):
+    with open(filename, "w") as f:
+        f.write("="*80 + "\nFINAL STOP LOSS STRATEGY COMPARISON REPORT\n" + "="*80 + "\n\n")
+        header = ['Symbol', 'TS Total Trades', 'TS Win Rate %', 'TS Avg PnL/Trade', 'TS Total PnL',
+                  'FS Total Trades', 'FS Win Rate %', 'FS Avg PnL/Trade', 'FS Total PnL']
+        f.write(f"{' | '.join(header)}\n")
+        f.write("-"*len(' | '.join(header)) + "\n")
+        for symbol, stats in all_stats.items():
+            ts = stats.get('TrailingSL', {})
+            fs = stats.get('FixedSL', {})
+            line = [
+                symbol,
+                str(ts.get('Total Trades', 'N/A')),
+                f"{ts.get('Win Rate %', 'N/A')}",
+                f"{ts.get('Avg PnL per Trade', 'N/A')}",
+                f"{ts.get('Total PnL', 'N/A')}",
+                str(fs.get('Total Trades', 'N/A')),
+                f"{fs.get('Win Rate %', 'N/A')}",
+                f"{fs.get('Avg PnL per Trade', 'N/A')}",
+                f"{fs.get('Total PnL', 'N/A')}",
+            ]
+            f.write(" | ".join(line) + "\n")
+    print(f"Comparison report saved to {filename}")
+
 def add_trade_durations(trades):
     enhanced_trades = []
     open_trades = []
@@ -356,68 +439,30 @@ def normalize_trade_dates(trades):
             raise KeyError(f"Trade at index {idx} missing required 'date' key: {t}")
     return trades
 
-def to_dict(trade):
-    if isinstance(trade, dict):
-        return trade
-    elif hasattr(trade, '_asdict'):
-        return trade._asdict()
-    elif hasattr(trade, '__dict__'):
-        return vars(trade)
-    else:
-        raise TypeError(f"Cannot convert trade to dict: type={type(trade)}")
-
 if __name__ == "__main__":
     symbols = get_symbols_from_daily_data()
+    combined_stats = {}
     for symbol in symbols:
         print(f"Processing symbol: {symbol}")
         daily_df, hourly_df, m15_df = prepare_data_for_symbol(symbol)
 
-        # Run backtest
-        bt = BacktestTrailingStrategy(m15_df, initial_capital=CAPITAL, trailing_pct=0.01)
-        trades = bt.run()
+        # Trailing Stop Backtest
+        bt_trailing = BacktestTrailingStrategy(m15_df, initial_capital=CAPITAL, trailing_pct=0.01)
+        trades_trailing = bt_trailing.run()
+        trades_trailing = add_trade_durations(trades_trailing)
+        trades_trailing = normalize_trade_dates(trades_trailing)
+        stats_trailing = calc_trade_stats(trades_trailing)
 
-        # Add duration info to trades
-        trades_with_duration = add_trade_durations(trades)
+        # Fixed Stop Backtest
+        trades_fixed, cash_fixed = run_fixed_stop_backtest(m15_df, initial_capital=CAPITAL, stop_loss_pct=0.01, profit_target_pct=0.015)
+        trades_fixed = add_trade_durations(trades_fixed)
+        trades_fixed = normalize_trade_dates(trades_fixed)
+        stats_fixed = calc_trade_stats(trades_fixed)
 
-        missing_date = [t for t in trades_with_duration if 'date' not in t]
-        if missing_date:
-            print(f"Trades missing 'date' key for symbol {symbol}: {missing_date}")
-        else:
-            print(f"All trades have 'date' for symbol {symbol}")
+        combined_stats[symbol] = {
+            'TrailingSL': stats_trailing,
+            'FixedSL': stats_fixed,
+        }
 
-        # Normalize dates in trades_with_duration before reporting
-        try:
-            trades_with_duration = normalize_trade_dates(trades_with_duration)
-        except Exception as e:
-            print(f"Error normalizing dates in trades for symbol {symbol}: {e}")
-            continue  # Skip this symbol on error
-
-        # Run ML Train and Filter to get ML metrics
-        ml_metrics = ml_train_and_filter(m15_df, hourly_df, threshold=0.7)
-
-        print("Sample trades before report generation:")
-        for t in trades_with_duration[:5]:
-            print(t)
-
-        # Convert all trades to dicts explicitly for pandas compatibility
-        trades_dict_list = []
-        try:
-            for t in trades_with_duration:
-                trades_dict_list.append(to_dict(t))
-        except Exception as e:
-            print(f"Error converting trades to dict for symbol {symbol}: {e}")
-            continue  # Skip this symbol on error
-
-        # Generate report with dict list trades
-        try:
-            generate_full_backtest_report(
-                trades=trades_dict_list,
-                price_series=m15_df.set_index('date')['close'],
-                initial_capital=CAPITAL,
-                strategy_name=f"Trailing Stop Strategy - {symbol}",
-                ml_metrics=ml_metrics,
-                filename=f"backtest_report_{symbol}.txt",
-                commentary="Strategy shows promising returns; consider further validation."
-            )
-        except Exception as e:
-            print(f"Error generating report for symbol {symbol}: {e}")
+    # Write final consolidated comparison report file
+    write_comparison_report(combined_stats)

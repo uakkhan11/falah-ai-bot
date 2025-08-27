@@ -283,6 +283,7 @@ def compare_fixed_vs_trailing(df, hourly_df, capital=CAPITAL, stop_loss_pct=0.01
     }
 # Entry point to batch process all symbols
 if __name__ == "__main__":
+    CAPITAL = 100000
     symbols = get_symbols_from_daily_data()
     summary = {'capital_used': CAPITAL, 'total_profit': 0}
     symbol_stats = {}

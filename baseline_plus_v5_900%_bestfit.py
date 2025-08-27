@@ -342,16 +342,29 @@ def ml_train_and_filter(df, hourly_df, threshold=0.7):
 
 
 def normalize_trade_dates(trades):
-    for t in trades:
-        # Rename if needed
+    for idx, t in enumerate(trades):
+        if not isinstance(t, dict):
+            raise TypeError(f"Trade at index {idx} is not a dict: {t}")
         if 'Date' in t and 'date' not in t:
             t['date'] = t.pop('Date')
-        # Ensure datetime type
         if 'date' in t:
-            t['date'] = pd.to_datetime(t['date'])
+            try:
+                t['date'] = pd.to_datetime(t['date'])
+            except Exception as e:
+                raise ValueError(f"Invalid date format in trade at index {idx}: {t['date']}") from e
         else:
-            raise ValueError("Trade missing 'date' key: " + str(t))
+            raise KeyError(f"Trade at index {idx} missing required 'date' key: {t}")
     return trades
+
+def to_dict(trade):
+    if isinstance(trade, dict):
+        return trade
+    elif hasattr(trade, '_asdict'):
+        return trade._asdict()
+    elif hasattr(trade, '__dict__'):
+        return vars(trade)
+    else:
+        raise TypeError(f"Cannot convert trade to dict: type={type(trade)}")
 
 if __name__ == "__main__":
     symbols = get_symbols_from_daily_data()
@@ -373,7 +386,11 @@ if __name__ == "__main__":
             print(f"All trades have 'date' for symbol {symbol}")
 
         # Normalize dates in trades_with_duration before reporting
-        trades_with_duration = normalize_trade_dates(trades_with_duration)
+        try:
+            trades_with_duration = normalize_trade_dates(trades_with_duration)
+        except Exception as e:
+            print(f"Error normalizing dates in trades for symbol {symbol}: {e}")
+            continue  # Skip this symbol on error
 
         # Run ML Train and Filter to get ML metrics
         ml_metrics = ml_train_and_filter(m15_df, hourly_df, threshold=0.7)
@@ -382,22 +399,25 @@ if __name__ == "__main__":
         for t in trades_with_duration[:5]:
             print(t)
 
-        # Prepare trades list as dicts for compatibility with pandas DataFrame in the report
+        # Convert all trades to dicts explicitly for pandas compatibility
         trades_dict_list = []
-        for t in trades_with_duration:
-            if isinstance(t, dict):
-                trades_dict_list.append(t)
-            else:
-                trades_dict_list.append(t._asdict() if hasattr(t, '_asdict') else t.__dict__)
+        try:
+            for t in trades_with_duration:
+                trades_dict_list.append(to_dict(t))
+        except Exception as e:
+            print(f"Error converting trades to dict for symbol {symbol}: {e}")
+            continue  # Skip this symbol on error
 
         # Generate report with dict list trades
-        generate_full_backtest_report(
-            trades=trades_dict_list,
-            price_series=m15_df.set_index('date')['close'],
-            initial_capital=CAPITAL,
-            strategy_name=f"Trailing Stop Strategy - {symbol}",
-            ml_metrics=ml_metrics,
-            filename=f"backtest_report_{symbol}.txt",
-            commentary="Strategy shows promising returns; consider further validation."
-        )
-
+        try:
+            generate_full_backtest_report(
+                trades=trades_dict_list,
+                price_series=m15_df.set_index('date')['close'],
+                initial_capital=CAPITAL,
+                strategy_name=f"Trailing Stop Strategy - {symbol}",
+                ml_metrics=ml_metrics,
+                filename=f"backtest_report_{symbol}.txt",
+                commentary="Strategy shows promising returns; consider further validation."
+            )
+        except Exception as e:
+            print(f"Error generating report for symbol {symbol}: {e}")

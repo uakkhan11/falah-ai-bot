@@ -183,6 +183,7 @@ def write_final_comparison_report(all_stats, filename="final_comparison_report.t
 
 if __name__ == "__main__":
     symbols = get_symbols_from_local_data()
+    combined_stats = {}
     all_data = load_all_symbols_data(symbols)
     for symbol in symbols:
         print(f"Processing symbol: {symbol}")

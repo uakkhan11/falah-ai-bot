@@ -209,7 +209,7 @@ def generate_full_backtest_report(
     plt.scatter(buy_dates, equity.reindex(buy_dates, method='nearest'), marker='^', color='green', label='Buy')
     plt.scatter(sell_dates, equity.reindex(sell_dates, method='nearest'), marker='v', color='red', label='Sell')
     plt.title(f'Equity Curve - {strategy_name}')
-    plt.xlabel('Date')
+    plt.xlabel('date')
     plt.ylabel('Equity Value')
     plt.legend()
     plt.grid(True)

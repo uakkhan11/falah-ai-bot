@@ -382,9 +382,17 @@ if __name__ == "__main__":
         for t in trades_with_duration[:5]:
             print(t)
 
-        # Generate report
+        # Prepare trades list as dicts for compatibility with pandas DataFrame in the report
+        trades_dict_list = []
+        for t in trades_with_duration:
+            if isinstance(t, dict):
+                trades_dict_list.append(t)
+            else:
+                trades_dict_list.append(t._asdict() if hasattr(t, '_asdict') else t.__dict__)
+
+        # Generate report with dict list trades
         generate_full_backtest_report(
-            trades=trades_with_duration,
+            trades=trades_dict_list,
             price_series=m15_df.set_index('date')['close'],
             initial_capital=CAPITAL,
             strategy_name=f"Trailing Stop Strategy - {symbol}",
@@ -392,3 +400,4 @@ if __name__ == "__main__":
             filename=f"backtest_report_{symbol}.txt",
             commentary="Strategy shows promising returns; consider further validation."
         )
+

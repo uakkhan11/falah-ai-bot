@@ -1,239 +1,215 @@
 import os
 import pandas as pd
 import numpy as np
-import pandas_ta as ta
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+import talib
+import warnings
+warnings.filterwarnings("ignore")
 
-# --- Config ---
 BASE_DIR = "/root/falah-ai-bot"
 DATA_PATHS = {
     'daily': os.path.join(BASE_DIR, "swing_data"),
     '1hour': os.path.join(BASE_DIR, "intraday_swing_data"),
     '15minute': os.path.join(BASE_DIR, "scalping_data"),
 }
-YEARS_BACK = 2
-INITIAL_CAPITAL = 200000
-RISK_PER_TRADE = 0.01 * INITIAL_CAPITAL
-TRANSACTION_COST = 0.001
-SLIPPAGE = 0.0005
-MAX_POSITIONS = 5
-MAX_TRADES = 2000
-ATR_LENGTH = 14
-CHAND_LENGTH = 22
-ATR_MULT = 2.0   # starting stop loss multiple
+CAPITAL = 100000
 
 def get_symbols_from_local_data():
     daily_files = os.listdir(DATA_PATHS['daily'])
     symbols = [os.path.splitext(f)[0] for f in daily_files if f.endswith('.csv')]
     return symbols
 
-def load_data(symbol):
-    path = os.path.join(DATA_DIR_DAILY, f"{symbol}.csv")
-    if not os.path.exists(path):
-        print(f"Warning: Data not found for symbol '{symbol}', skipping.")
-        return None
-    df = pd.read_csv(path, parse_dates=['date']).sort_values('date').reset_index(drop=True)
-    cutoff = pd.Timestamp.now() - pd.Timedelta(days=365 * YEARS_BACK)
-    df = df[df['date'] >= cutoff]
-    return df
+def load_and_prepare_symbol(symbol, years=5):
+    path = os.path.join(DATA_PATHS['daily'], f"{symbol}.csv")
+    df = pd.read_csv(path, parse_dates=['date'])
+    cutoff = pd.Timestamp.utcnow() - pd.Timedelta(days=365 * years)
+    df = df[df['date'] >= cutoff].sort_values('date').reset_index(drop=True)
+    # Compute indicators
+    close = df['close'].astype(float).values
+    df['ema8'] = talib.EMA(close, timeperiod=8)
+    df['ema20'] = talib.EMA(close, timeperiod=20)
+    df.dropna(subset=['ema8', 'ema20'], inplace=True)
+    return df.reset_index(drop=True)
 
-def compute_indicators(df):
-    df = df.copy()
-    df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=ATR_LENGTH)
-    macd = ta.macd(df['close'], fast=12, slow=26, signal=9)
-    df['macd_line'] = macd['MACD_12_26_9']
-    df['macd_signal'] = macd['MACDs_12_26_9']
-    df['rsi_14'] = ta.rsi(df['close'], length=14)
-    bbands = ta.bbands(df['close'], length=20, std=2)
-    df['bb_lower'] = bbands['BBL_20_2.0']
-    df['bb_upper'] = bbands['BBU_20_2.0']
-    st = ta.supertrend(df['high'], df['low'], df['close'], length=10, multiplier=3.0)
-    df['supertrend_direction'] = st['SUPERTd_10_3.0']
-    highest_high = df['high'].rolling(CHAND_LENGTH).max()
-    df['chandelier_exit'] = highest_high - df['atr'] * ATR_MULT
-    df.dropna(inplace=True)
-    df.reset_index(drop=True, inplace=True)
-    return df
-
-def bullish_entry_filter(row):
-    return (
-        row['macd_line'] > 0 and
-        row['macd_signal'] > 0 and
-        40 <= row['rsi_14'] <= 70 and
-        row['close'] >= row['bb_lower']
-    )
-
-def exit_signal(row):
-    rsi_exit = (row['rsi_14'] < 70) and (row['close'] < row['bb_upper'])
-    trend_exit = row['supertrend_direction'] < 0
-    return rsi_exit or trend_exit
-
-def backtest_portfolio(symbols):
-    data = {}
-    for sym in symbols:
-        df = load_data(sym)
-        if df is None or len(df) < 50:
-            continue
-        data[sym] = compute_indicators(df)
-
-    all_dates = sorted(set().union(*[set(df['date']) for df in data.values()]))
-    if not all_dates:
-        print("No data available for backtest")
-        return [], []
-
-    cash = INITIAL_CAPITAL
-    positions = {}  # symbol -> {entry_date, entry_price, shares}
+def backtest_trailing_stop(df, initial_capital, trailing_pct=0.01):
+    cash = initial_capital
+    position = 0
+    entry_price = None
+    highest_price = None
     trades = []
-    equity_curve = []
-    trade_count = 0
+    for i in range(1, len(df)):
+        row = df.iloc[i]
+        if position == 0:
+            if row['ema8'] > row['ema20'] and df.iloc[i-1]['ema8'] <= df.iloc[i-1]['ema20']:
+                qty = int(cash / row['close'])
+                if qty > 0:
+                    position = qty
+                    entry_price = row['close']
+                    highest_price = row['close']
+                    cash -= qty * row['close']
+                    trades.append({'type': 'BUY', 'date': row['date'], 'price': row['close'], 'qty': qty})
+        else:
+            highest_price = max(highest_price, row['close'])
+            trailing_stop = highest_price * (1 - trailing_pct)
+            if row['close'] <= trailing_stop:
+                pnl = (row['close'] - entry_price) * position
+                cash += position * row['close']
+                trades.append({'type': 'SELL', 'date': row['date'], 'price': row['close'], 'qty': position, 'pnl': pnl, 'exit_reason': 'Trailing Stop'})
+                position = 0
+                entry_price = None
+    if position > 0:
+        pnl = (df.iloc[-1]['close'] - entry_price) * position
+        cash += position * df.iloc[-1]['close']
+        trades.append({'type': 'SELL', 'date': df.iloc[-1]['date'], 'price': df.iloc[-1]['close'], 'qty': position, 'pnl': pnl, 'exit_reason': 'EOD Exit'})
+    return trades
 
-    for date in all_dates:
-        daily_rows = {}
-        for sym, df in data.items():
-            row = df[df['date'] == date]
-            if not row.empty:
-                daily_rows[sym] = row.iloc[0]
+def backtest_fixed_stop(df, initial_capital, stop_loss_pct=0.01, profit_target_pct=0.015):
+    cash = initial_capital
+    position = 0
+    entry_price = None
+    trades = []
+    for i in range(1, len(df)):
+        row = df.iloc[i]
+        if position == 0:
+            if row['ema8'] > row['ema20'] and df.iloc[i-1]['ema8'] <= df.iloc[i-1]['ema20']:
+                qty = int(cash / row['close'])
+                if qty > 0:
+                    position = qty
+                    entry_price = row['close']
+                    cash -= qty * row['close']
+                    trades.append({'type': 'BUY', 'date': row['date'], 'price': row['close'], 'qty': qty})
+        else:
+            stop_loss = entry_price * (1 - stop_loss_pct)
+            profit_target = entry_price * (1 + profit_target_pct)
+            current_price = row['close']
+            if current_price <= stop_loss:
+                pnl = (current_price - entry_price) * position
+                cash += position * current_price
+                trades.append({'type': 'SELL', 'date': row['date'], 'price': current_price, 'qty': position, 'pnl': pnl, 'exit_reason': 'Stop Loss'})
+                position = 0
+                entry_price = None
+            elif current_price >= profit_target:
+                pnl = (current_price - entry_price) * position
+                cash += position * current_price
+                trades.append({'type': 'SELL', 'date': row['date'], 'price': current_price, 'qty': position, 'pnl': pnl, 'exit_reason': 'Profit Target'})
+                position = 0
+                entry_price = None
+    if position > 0:
+        pnl = (df.iloc[-1]['close'] - entry_price) * position
+        cash += position * df.iloc[-1]['close']
+        trades.append({'type': 'SELL', 'date': df.iloc[-1]['date'], 'price': df.iloc[-1]['close'], 'qty': position, 'pnl': pnl, 'exit_reason': 'EOD Exit'})
+    return trades
 
-        # Exit checks
-        positions_to_remove = []
-        for sym, pos in positions.items():
-            if sym not in daily_rows:
-                continue
-            row = daily_rows[sym]
-            entry_price = pos['entry_price']
-            shares = pos['shares']
-            chand_sl = row['chandelier_exit']
-            atr_sl = entry_price - ATR_MULT * row['atr']
-            dynamic_sl = max(chand_sl, atr_sl)
-            stop_loss_hit = row['low'] <= dynamic_sl
-            forced_exit = exit_signal(row)
-            if stop_loss_hit or forced_exit:
-                exit_price = dynamic_sl if stop_loss_hit else row['close']
-                pnl = (exit_price - entry_price) * shares
-                pnl -= abs(entry_price * shares) * (TRANSACTION_COST + SLIPPAGE)
-                pnl -= abs(exit_price * shares) * (TRANSACTION_COST + SLIPPAGE)
-                cash += exit_price * shares * (1 - TRANSACTION_COST - SLIPPAGE)
-                trades.append({
-                    'symbol': sym,
-                    'entry_date': pos['entry_date'],
-                    'exit_date': date,
-                    'pnl': pnl,
-                    'entry_price': entry_price,
-                    'exit_price': exit_price,
-                    'exit_reason': 'StopLoss' if stop_loss_hit else 'SignalExit'
-                })
-                positions_to_remove.append(sym)
-                trade_count += 1
-                if trade_count >= MAX_TRADES:
-                    break
+def calc_trade_stats(trades):
+    df = pd.DataFrame(trades)
+    if df.empty or 'pnl' not in df.columns:
+        return {}
+    df_closed = df[df['type']=='SELL']
+    wins = (df_closed['pnl'] > 0).sum()
+    losses = (df_closed['pnl'] <= 0).sum()
+    profit_factor = df_closed[df_closed['pnl'] > 0]['pnl'].sum() / (-df_closed[df_closed['pnl'] <= 0]['pnl'].sum() + 1e-9)
+    stats = {
+        'Total Trades': len(df_closed),
+        'Winning Trades': wins,
+        'Losing Trades': losses,
+        'Win Rate %': round(100 * wins / len(df_closed), 2),
+        'Profit Factor': round(profit_factor, 2),
+        'Avg PnL per Trade': round(df_closed['pnl'].mean(), 2),
+        'Total PnL': round(df_closed['pnl'].sum(), 2)
+    }
+    return stats
 
-        for sym in positions_to_remove:
-            del positions[sym]
+def write_strategy_report(strategy_name, trades, stats, filename):
+    with open(filename, "w") as f:
+        f.write(f"Strategy: {strategy_name}\n")
+        f.write(f"Total Trades: {stats.get('Total Trades', 0)}\n")
+        f.write(f"Winning Trades: {stats.get('Winning Trades', 0)}\n")
+        f.write(f"Losing Trades: {stats.get('Losing Trades', 0)}\n")
+        f.write(f"Win Rate (%): {stats.get('Win Rate %', 0)}\n")
+        f.write(f"Profit Factor: {stats.get('Profit Factor', 0)}\n")
+        f.write(f"Average PnL per Trade: {stats.get('Avg PnL per Trade', 0)}\n")
+        f.write(f"Total PnL: {stats.get('Total PnL', 0)}\n\n")
+        f.write("Trade Log:\n")
+        f.write("Entry Date | Exit Date | Entry Price | Exit Price | Qty | PnL | Exit Reason\n")
+        df = pd.DataFrame(trades)
+        for idx, row in df.iterrows():
+            if row['type'] == 'SELL':
+                buy_rows = df[(df['type']=='BUY') & (df['date'] < row['date'])]
+                if not buy_rows.empty:
+                    buy = buy_rows.iloc[-1]
+                    f.write(f"{buy['date'].date()} | {row['date'].date()} | {buy['price']} | {row['price']} | {row['qty']} | {row.get('pnl',0):.2f} | {row.get('exit_reason','')}\n")
 
-        if trade_count >= MAX_TRADES:
-            break
+def load_all_symbols_data(symbols, years=5):
+    all_data = {}
+    for sym in symbols:
+        df = load_and_prepare_symbol(sym, years)
+        if df is not None and not df.empty:
+            all_data[sym] = df
+    return all_data
 
-        # Entry checks
-        for sym, row in daily_rows.items():
-            if len(positions) >= MAX_POSITIONS:
-                break
-            if sym in positions:
-                continue
-            if bullish_entry_filter(row) and cash > 0:
-                risk_per_share = ATR_MULT * row['atr']
-                position_size = RISK_PER_TRADE / risk_per_share
-                shares = int(min(cash // row['close'], position_size))
-                if shares >= 1:
-                    cost = shares * row['close'] * (1 + TRANSACTION_COST + SLIPPAGE)
-                    cash -= cost
-                    positions[sym] = {
-                        'entry_date': date,
-                        'entry_price': row['close'],
-                        'shares': shares
-                    }
+def run_portfolio_backtest(all_data, backtest_func, initial_capital):
+    total_trades = []
+    total_cash = initial_capital * len(all_data)  # approximate sum capital across symbols
+    for sym, df in all_data.items():
+        trades = backtest_func(df, initial_capital)
+        total_trades.extend(trades)
+    return total_trades, total_cash
 
-        # Compute current portfolio value
-        pos_value = 0
-        for sym, pos in positions.items():
-            if sym in daily_rows:
-                row = daily_rows[sym]
-                pos_value += (row['close'] - pos['entry_price']) * pos['shares'] + pos['shares'] * pos['entry_price']
-        equity_curve.append(cash + pos_value)
-
-    # Liquidate remaining positions at the end
-    if positions:
-        final_date = all_dates[-1]
-        for sym, pos in positions.items():
-            df = data[sym]
-            final_row = df[df['date'] == final_date]
-            if final_row.empty:
-                continue
-            final_row = final_row.iloc[0]
-            final_close = final_row['close']
-            pnl = (final_close - pos['entry_price']) * pos['shares']
-            pnl -= abs(pos['entry_price'] * pos['shares']) * (TRANSACTION_COST + SLIPPAGE)
-            pnl -= abs(final_close * pos['shares']) * (TRANSACTION_COST + SLIPPAGE)
-            cash += final_close * pos['shares'] * (1 - TRANSACTION_COST - SLIPPAGE)
-            trades.append({
-                'symbol': sym,
-                'entry_date': pos['entry_date'],
-                'exit_date': final_date,
-                'pnl': pnl,
-                'entry_price': pos['entry_price'],
-                'exit_price': final_close,
-                'exit_reason': 'EOD Exit'
-            })
-        equity_curve.append(cash)
-
-    return trades, equity_curve
-
-def overall_report(trades, equity_curve):
+def aggregate_trade_stats(trades):
     df = pd.DataFrame(trades)
     if df.empty:
-        print("No trades executed!")
-        return
-    total_trades = len(df)
-    wins = df[df['pnl'] > 0]
-    losses = df[df['pnl'] <= 0]
-    win_rate = 100 * len(wins) / total_trades if total_trades else 0
-    profit_factor = wins['pnl'].sum() / abs(losses['pnl'].sum()) if len(losses) else np.inf
-    expectancy = df['pnl'].mean()
-    best_trade = df['pnl'].max()
-    worst_trade = df['pnl'].min()
-    durations = (df['exit_date'] - df['entry_date']).dt.days
-    avg_duration = durations.mean() if len(durations) else 0
-    exit_counts = df['exit_reason'].value_counts().to_dict()
-    equity_array = np.array(equity_curve)
-    total_return = (equity_array[-1] - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
-    running_max = np.maximum.accumulate(equity_array)
-    dd = (running_max - equity_array) / running_max
-    max_dd = dd.max() * 100 if dd.size else 0
-    n_years = len(equity_array) / 252
-    CAGR = ((equity_array[-1] / INITIAL_CAPITAL) ** (1 / n_years) - 1) * 100 if n_years > 0 else 0
-    daily_returns = pd.Series(equity_array).pct_change().dropna()
-    sharpe = (daily_returns.mean() / daily_returns.std()) * np.sqrt(252) if not daily_returns.empty else 0
+        return {}
+    df_sells = df[df['type'] == 'SELL']
+    wins = (df_sells['pnl'] > 0).sum()
+    losses = (df_sells['pnl'] <= 0).sum()
+    total_trades = len(df_sells)
+    win_rate = 100 * wins / total_trades if total_trades > 0 else 0
+    total_pnl = df_sells['pnl'].sum()
+    return {
+        'Total Trades': total_trades,
+        'Winning Trades': wins,
+        'Losing Trades': losses,
+        'Win Rate %': round(win_rate, 2),
+        'Total PnL': round(total_pnl, 2)
+    }
 
-    print("\n=== OVERALL PORTFOLIO BACKTEST SUMMARY ===")
-    print(f"Total Trades Taken     : {total_trades}")
-    print(f"Winning Trades         : {len(wins)}")
-    print(f"Losing Trades          : {len(losses)}")
-    print(f"Win Rate               : {win_rate:.2f}%")
-    print(f"Profit Factor          : {profit_factor:.2f}")
-    print(f"Expectancy (per trade) : {expectancy:.2f}")
-    print(f"Best Trade (PnL)       : {best_trade:.2f}")
-    print(f"Worst Trade (PnL)      : {worst_trade:.2f}")
-    print(f"Avg Trade Duration     : {avg_duration:.2f} days")
-    print(f"Exit Reasons           : {exit_counts}")
-    print("---- Equity Summary ----")
-    print(f"Total Return           : {total_return:.2f}%")
-    print(f"CAGR                   : {CAGR:.2f}%")
-    print(f"Max Drawdown           : {max_dd:.2f}%")
-    print(f"Sharpe Ratio           : {sharpe:.2f}")
-    print("===========================================\n")
+def write_final_comparison_report(all_stats, filename="final_comparison_report.txt"):
+    with open(filename, "w") as f:
+        f.write("Symbol | Strategy | Total Trades | Win Rate % | Avg PnL per Trade | Total PnL\n")
+        f.write("--------------------------------------------------------------------------\n")
+        for sym, stats in all_stats.items():
+            for strat, s in stats.items():
+                f.write(f"{sym} | {strat} | {s.get('Total Trades','N/A')} | {s.get('Win Rate %','N/A')} | {s.get('Avg PnL per Trade','N/A')} | {s.get('Total PnL','N/A')}\n")
 
 if __name__ == "__main__":
     symbols = get_symbols_from_local_data()
-    trades, equity_curve = backtest_portfolio(symbols)
-    overall_report(trades, equity_curve)
+    all_data = load_all_symbols_data(symbols)
+    combined_stats = {}
+    for symbol in symbols:
+        print(f"Processing symbol: {symbol}")
+        df = load_and_prepare_symbol(symbol)
+        
+        # Trailing Stop Backtest
+        trades_trailing = backtest_trailing_stop(df, CAPITAL)
+        stats_trailing = calc_trade_stats(trades_trailing)
+        write_strategy_report(f"Trailing Stop - {symbol}", trades_trailing, stats_trailing, f"report_trailing_{symbol}.txt")
+        
+        # Fixed Stop Backtest
+        trades_fixed = backtest_fixed_stop(df, CAPITAL)
+        stats_fixed = calc_trade_stats(trades_fixed)
+        write_strategy_report(f"Fixed Stop - {symbol}", trades_fixed, stats_fixed, f"report_fixed_{symbol}.txt")
+        
+        combined_stats[symbol] = {
+            "Trailing Stop": stats_trailing,
+            "Fixed Stop": stats_fixed
+        }
+
+        print("Portfolio Level Summary")
+        print("------------------------")
+        print("Trailing Stop Strategy:")
+        for k,v in trailing_stats.items():
+            print(f"{k}: {v}")
+        print("\nFixed Stop Strategy:")
+        for k,v in fixed_stats.items():
+            print(f"{k}: {v}")
+    write_final_comparison_report(combined_stats)
+    print("All reports generated.")

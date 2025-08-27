@@ -21,7 +21,8 @@ def get_symbols_from_local_data():
 def load_and_prepare_symbol(symbol, years=5):
     path = os.path.join(DATA_PATHS['daily'], f"{symbol}.csv")
     df = pd.read_csv(path, parse_dates=['date'])
-    cutoff = pd.Timestamp.utcnow() - pd.Timedelta(days=365 * years)
+    # Make cutoff timezone naive to match df['date'] dtype and avoid comparison issues
+    cutoff = pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=365 * years)
     df = df[df['date'] >= cutoff].sort_values('date').reset_index(drop=True)
     # Compute indicators
     close = df['close'].astype(float).values
@@ -29,7 +30,7 @@ def load_and_prepare_symbol(symbol, years=5):
     df['ema20'] = talib.EMA(close, timeperiod=20)
     df.dropna(subset=['ema8', 'ema20'], inplace=True)
     return df.reset_index(drop=True)
-
+    
 def backtest_trailing_stop(df, initial_capital, trailing_pct=0.01):
     cash = initial_capital
     position = 0
@@ -183,7 +184,6 @@ def write_final_comparison_report(all_stats, filename="final_comparison_report.t
 if __name__ == "__main__":
     symbols = get_symbols_from_local_data()
     all_data = load_all_symbols_data(symbols)
-    combined_stats = {}
     for symbol in symbols:
         print(f"Processing symbol: {symbol}")
         df = load_and_prepare_symbol(symbol)

@@ -4,10 +4,10 @@ import numpy as np
 import talib
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, precision_score, recall_score, classification_report
+from sklearn.metrics import accuracy_score, precision_score, recall_score
 from collections import Counter
-
 import warnings
+import matplotlib.pyplot as plt
 import json
 
 warnings.filterwarnings("ignore")
@@ -114,6 +114,42 @@ class BacktestTrailingStrategy:
             self.cash += self.position * self.df.iloc[-1]['close']
             self.trades.append({'type': 'SELL', 'date': self.df.iloc[-1]['date'], 'price': self.df.iloc[-1]['close'], 'qty': self.position, 'pnl': pnl, 'exit_reason': "EOD Exit"})
         return self.trades
+
+def add_trade_durations(trades):
+    # trades is a list of dicts with 'type', 'date', 'price', etc.
+    enhanced_trades = []
+    open_trades = []
+
+    for t in trades:
+        t = t.copy()
+        # Convert date to pandas Timestamp if not already
+        if not isinstance(t['date'], pd.Timestamp):
+            t['date'] = pd.to_datetime(t['date'])
+        if t['type'] == 'BUY':
+            open_trades.append(t)
+        elif t['type'] == 'SELL' and open_trades:
+            # Match this sell to the last open buy
+            entry = open_trades.pop(0)
+            duration_days = (t['date'] - entry['date']).days
+            t['duration'] = duration_days
+            # Append both entry and exit trades with duration info
+            # Add duration also to entry for reporting
+            entry['duration'] = duration_days
+            enhanced_trades.append(entry)
+            enhanced_trades.append(t)
+        else:
+            # SELL without matching BUY, no duration
+            t['duration'] = None
+            enhanced_trades.append(t)
+    # Append any unmatched open trades as is (no duration)
+    for t in open_trades:
+        t['duration'] = None
+        enhanced_trades.append(t)
+
+    # Sort by date after duration assignment
+    enhanced_trades.sort(key=lambda x: x['date'])
+    return enhanced_trades
+
 
 def run_fixed_stop_backtest(df, initial_capital=CAPITAL, stop_loss_pct=0.01, profit_target_pct=0.015):
     cash = initial_capital
@@ -290,211 +326,114 @@ def compare_fixed_vs_trailing(df, hourly_df, capital=CAPITAL, stop_loss_pct=0.01
 
 if __name__ == "__main__":
     symbols = get_symbols_from_daily_data()
-    summary = {'capital_used': CAPITAL, 'total_profit': 0}
-    symbol_stats = {}
-    walkforward_results = {}
-    worstday_results = {}
-    comparison_reports = {}
-
     for symbol in symbols:
         print(f"Processing symbol: {symbol}")
         daily_df, hourly_df, m15_df = prepare_data_for_symbol(symbol)
+
+        # Run backtest
         bt = BacktestTrailingStrategy(m15_df, initial_capital=CAPITAL, trailing_pct=0.01)
         trades = bt.run()
-        total_pnl = sum(t.get('pnl', 0) for t in trades if 'pnl' in t)
-        wins = sum(t.get('pnl', 0) > 0 for t in trades if t.get('type', '') == "SELL")
-        losses = sum(t.get('pnl', 0) <= 0 for t in trades if t.get('type', '') == "SELL")
-        profit_factor = sum(t.get('pnl', 0) for t in trades if t.get('pnl', 0) > 0) / (-sum(t.get('pnl', 0) for t in trades if t.get('pnl', 0) <= 0) + 1e-6)
-        symbol_stats[symbol] = {
-            'Total Trades': len([t for t in trades if t.get('type', '') == "SELL"]),
-            'Winning Trades': wins,
-            'Losing Trades': losses,
-            'Win Rate %': 100.0 * wins / (wins + losses + 1e-6),
-            'Profit Factor': profit_factor,
-            'Total PnL': total_pnl
-        }
-        summary['total_profit'] += total_pnl
-        walkforward_results[symbol] = walk_forward_test_symbol(symbol, window_days=180, test_days=30, trailing_pct=0.01)
-        worst_days = get_worst_market_periods(daily_df)
-        if not worst_days.empty:
-            wd_df = m15_df[m15_df['date'].isin(worst_days['date'])]
-            trades_worst = BacktestTrailingStrategy(wd_df, trailing_pct=0.01).run()
-            worst_pnl = sum(t.get('pnl', 0) for t in trades_worst if 'pnl' in t)
-            worstday_results[symbol] = {'Trades': len(trades_worst), 'PnL': worst_pnl}
-        else:
-            worstday_results[symbol] = {}
-        comparison_reports[symbol] = compare_fixed_vs_trailing(m15_df, hourly_df, capital=CAPITAL)
-    allocations = symbol_allocation_optimization(symbol_stats, total_capital=CAPITAL)
-    write_final_report(summary, symbol_stats, allocations, walkforward_results, worstday_results, comparison_reports, filename="full_detailed_report.txt")
+
+        # Add duration info to trades
+        trades_with_duration = add_trade_durations(trades)
+
+        # Optionally create ML features and train/filter
+        # ml_metrics = ml_train_and_filter(m15_df, hourly_df, threshold=0.7)
+        ml_metrics = None  # replace with actual call if desired
+
+        # Generate report
+        generate_full_backtest_report(
+            trades=trades_with_duration,
+            price_series=m15_df.set_index('date')['close'],
+            initial_capital=CAPITAL,
+            strategy_name=f"Trailing Stop Strategy - {symbol}",
+            ml_metrics=ml_metrics,
+            filename=f"backtest_report_{symbol}.txt",
+            commentary="Strategy shows promising returns; consider further validation."
+        )
 
 
-def generate_consolidated_summary(symbol_stats, comparison_reports, filename="consolidated_summary.txt"):
-    total_symbols = len(symbol_stats)
-    total_trades = 0
-    total_wins = 0
-    total_losses = 0
-    profit_factors = []
-    total_pnl = 0.0
-
-    # Accumulators for ML metrics and features
-    all_accuracies = []
-    all_precisions = []
-    all_recalls = []
-    feature_counter = Counter()
-
-    # Aggregate numeric stats
-    for symbol, stats in symbol_stats.items():
-        total_trades += stats.get('Total Trades', 0)
-        total_wins += stats.get('Winning Trades', 0)
-        total_losses += stats.get('Losing Trades', 0)
-        pf = stats.get('Profit Factor', None)
-        if pf is not None:
-            profit_factors.append(pf)
-        total_pnl += stats.get('Total PnL', 0.0)
-
-        # Add ML metrics and features from comparison reports
-        comp = comparison_reports.get(symbol, {})
-        ml_perf = comp.get('ML Performance', {})
-        if ml_perf:
-            all_accuracies.append(ml_perf.get('accuracy', 0))
-            all_precisions.append(ml_perf.get('precision', 0))
-            all_recalls.append(ml_perf.get('recall', 0))
-            # Count feature importance keys, if any
-            # Assuming ml_perf includes something like 'feature_importance' dict if extended
-            # If not available, consider extending your ML function to provide it
-            # Example: feature_counter.update(ml_perf.get('feature_importance', {}))
-
-    avg_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
-    avg_profit_factor = sum(profit_factors)/len(profit_factors) if profit_factors else 0
-    avg_accuracy = sum(all_accuracies)/len(all_accuracies) if all_accuracies else 0
-    avg_precision = sum(all_precisions)/len(all_precisions) if all_precisions else 0
-    avg_recall = sum(all_recalls)/len(all_recalls) if all_recalls else 0
-
-    with open(filename, "w") as f:
-        f.write("="*80 + "\n")
-        f.write("🚀 CONSOLIDATED SUMMARY REPORT\n")
-        f.write("="*80 + "\n\n")
-
-        f.write(f"Total Symbols Analyzed: {total_symbols}\n")
-        f.write(f"Total Trades Executed: {total_trades}\n")
-        f.write(f"Aggregate Wins: {total_wins} | Losses: {total_losses} | Win Rate: {avg_win_rate:.2f}%\n")
-        f.write(f"Average Profit Factor: {avg_profit_factor:.2f}\n")
-        f.write(f"Total Portfolio PnL: {total_pnl:.2f}\n\n")
-
-        f.write("ML Performance (averaged over symbols):\n")
-        f.write(f"    Accuracy: {avg_accuracy:.4f}\n")
-        f.write(f"    Precision: {avg_precision:.4f}\n")
-        f.write(f"    Recall: {avg_recall:.4f}\n\n")
-
-        if feature_counter:
-            f.write("Top ML Features (aggregated importance):\n")
-            for feat, count in feature_counter.most_common(10):
-                f.write(f"    {feat}: {count}\n")
-            f.write("\n")
-
-        # Optionally add more aggregate info like best symbol, best PF, etc.
-        best_symbol = max(symbol_stats.items(), key=lambda x: x[1].get('Total PnL', float('-inf')))[0] if symbol_stats else None
-        if best_symbol:
-            f.write(f"Top Performing Symbol by PnL: {best_symbol} with PnL: {symbol_stats[best_symbol].get('Total PnL',0):.2f}\n")
-
-        f.write("\nRecommendations:\n")
-        f.write(" - Focus on symbols with strong PnL and consistent win rate.\n")
-        f.write(" - Use ML filtering and trailing stops to enhance risk control.\n")
-        f.write(" - Dynamic position sizing improves portfolio robustness.\n")
-        f.write(" - Continue enhancing features and validating in walk-forward tests.\n")
-
-    print(f"Consolidated summary saved to {filename}")
-
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def generate_detailed_backtest_report(
-    trades, price_series, initial_capital, 
-    ml_metrics=None, ml_feature_importance=None, 
-    filename="backtest_report.txt"
+def generate_full_backtest_report(
+    trades, price_series, initial_capital,
+    strategy_name="Custom Strategy",
+    ml_metrics=None,
+    ml_feature_importance=None,
+    transaction_costs=0.0,
+    slippage_impact=0.0,
+    commentary="",
+    filename="detailed_backtest_report.txt"
 ):
-    df = pd.DataFrame(trades)
-    df_closed = df[df['type'] == 'SELL']
+    df = pd.DataFrame(trades).sort_values('date')
+    df_trades = df[df['type'] == 'SELL']
 
-    # 1. Summary Overview
-    total_trades = len(df_closed)
-    wins = (df_closed['pnl'] > 0).sum()
+    total_trades = len(df_trades)
+    wins = (df_trades['pnl'] > 0).sum()
     losses = total_trades - wins
     win_pct = 100 * wins / total_trades if total_trades > 0 else 0
-    net_profit = df_closed['pnl'].sum()
+    net_profit = df_trades['pnl'].sum()
     roi = (net_profit / initial_capital) * 100
 
-    # Equity for all dates, assuming starting capital
     equity = (price_series / price_series.iloc[0]) * initial_capital
     daily_returns = equity.pct_change().dropna()
-    days = (price_series.index[-1] - price_series.index[0]).days
     trading_days_per_year = 252
 
-    annualized_return = (equity.iloc[-1] / equity.iloc[0]) ** (trading_days_per_year / len(daily_returns)) - 1
+    annualized_return = (equity.iloc[-1]/equity.iloc[0])**(trading_days_per_year / len(daily_returns)) - 1
 
     rolling_max = equity.cummax()
     drawdown = (equity - rolling_max) / rolling_max
     max_drawdown = drawdown.min() * 100
 
     sharpe_ratio = np.sqrt(trading_days_per_year) * daily_returns.mean() / daily_returns.std()
-    downside_returns = daily_returns[daily_returns < 0]
-    sortino_ratio = np.sqrt(trading_days_per_year) * daily_returns.mean() / downside_returns.std() if not downside_returns.empty else np.nan
 
-    gross_profit = df_closed[df_closed['pnl'] > 0]['pnl'].sum()
-    gross_loss = -df_closed[df_closed['pnl'] <= 0]['pnl'].sum()
+    downside_returns = daily_returns[daily_returns < 0]
+    sortino_ratio = (np.sqrt(trading_days_per_year) * daily_returns.mean() / downside_returns.std()
+                     if not downside_returns.empty else np.nan)
+
+    gross_profit = df_trades[df_trades['pnl'] > 0]['pnl'].sum()
+    gross_loss = -df_trades[df_trades['pnl'] <= 0]['pnl'].sum()
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else np.inf
 
-    avg_duration = df_closed['duration'].mean() if 'duration' in df_closed else np.nan
+    avg_duration = df_trades['duration'].mean() if 'duration' in df_trades else np.nan
 
-    # Consecutive wins/losses
-    def max_consecutive_wins_losses(series):
-        max_wins = max_losses = current_streak = 0
-        prev_win = None
-        for val in series:
-            if val > 0:
-                if prev_win == True:
-                    current_streak += 1
-                else:
-                    current_streak = 1
-                max_wins = max(max_wins, current_streak)
-                prev_win = True
+    def max_consecutive(series):
+        max_count = count = 0
+        last = None
+        for v in series:
+            is_win = v > 0
+            if is_win == last:
+                count += 1
             else:
-                if prev_win == False:
-                    current_streak += 1
-                else:
-                    current_streak = 1
-                max_losses = max(max_losses, current_streak)
-                prev_win = False
-        return max_wins, max_losses
+                count = 1
+                last = is_win
+            if count > max_count:
+                max_count = count
+        return max_count
 
-    max_wins, max_losses = max_consecutive_wins_losses(df_closed['pnl'])
+    max_consec_wins = max_consecutive(df_trades['pnl'])
+    max_consec_losses = max_consecutive(-df_trades['pnl'])
 
-    avg_win = df_closed[df_closed['pnl'] > 0]['pnl'].mean() if wins > 0 else 0
-    avg_loss = df_closed[df_closed['pnl'] <= 0]['pnl'].mean() if losses > 0 else 0
+    avg_win = df_trades[df_trades['pnl'] > 0]['pnl'].mean() if wins > 0 else 0
+    avg_loss = df_trades[df_trades['pnl'] <= 0]['pnl'].mean() if losses > 0 else 0
 
-    # 2. Equity Curve Visualization (save plot)
-    try:
-        plt.figure(figsize=(10,6))
-        plt.plot(equity.index, equity.values, label='Equity Curve')
-        buy_dates = df[df['type']=='BUY']['date']
-        sell_dates = df[df['type']=='SELL']['date']
-        plt.scatter(buy_dates, equity.reindex(buy_dates, method='nearest'), marker='^', color='g', label='Buy')
-        plt.scatter(sell_dates, equity.reindex(sell_dates, method='nearest'), marker='v', color='r', label='Sell')
-        plt.title("Equity Curve with Trade Markers")
-        plt.legend()
-        plt.grid(True)
-        plot_filename = filename.replace('.txt','.png')
-        plt.savefig(plot_filename)
-        plt.close()
-    except Exception as e:
-        plot_filename = None
+    # Equity Curve Plot
+    plt.figure(figsize=(12,6))
+    plt.plot(equity.index, equity.values, label='Equity Curve')
+    buy_dates = df[df['type']=='BUY']['date']
+    sell_dates = df[df['type']=='SELL']['date']
+    plt.scatter(buy_dates, equity.reindex(buy_dates, method='nearest'), marker='^', color='green', label='Buy')
+    plt.scatter(sell_dates, equity.reindex(sell_dates, method='nearest'), marker='v', color='red', label='Sell')
+    plt.title(f'Equity Curve - {strategy_name}')
+    plt.xlabel('Date')
+    plt.ylabel('Equity Value')
+    plt.legend()
+    plt.grid(True)
+    plot_filename = filename.replace('.txt', '_equity.png')
+    plt.savefig(plot_filename)
+    plt.close()
 
-    # Write report text
     with open(filename, 'w') as f:
-        f.write("=== Backtest Detailed Report ===\n\n")
-        f.write("1. Summary Overview\n")
-        f.write(f"Strategy Name: Custom Strategy\n")
+        f.write("=== 1. Summary Overview ===\n")
+        f.write(f"Strategy Name: {strategy_name}\n")
         f.write(f"Backtest Period: {price_series.index[0].date()} - {price_series.index[-1].date()}\n")
         f.write(f"Initial Capital: {initial_capital}\n")
         f.write(f"Total Trades Executed: {total_trades}\n")
@@ -504,50 +443,69 @@ def generate_detailed_backtest_report(
         f.write(f"Return on Investment (ROI %): {roi:.2f}%\n")
         f.write(f"Annualized Return: {annualized_return*100:.2f}%\n")
         f.write(f"Max Drawdown (%): {max_drawdown:.2f}%\n")
-        f.write(f"Sharpe Ratio: {sharpe_ratio:.4f}\n")
-        f.write(f"Sortino Ratio: {sortino_ratio:.4f}\n")
-        f.write(f"Profit Factor: {profit_factor:.2f}\n")
+        f.write(f"Sharpe Ratio: {sharpe_ratio:.3f}\n")
+        f.write(f"Sortino Ratio: {sortino_ratio:.3f}\n")
+        f.write(f"Profit Factor: {profit_factor:.3f}\n")
         f.write(f"Average Trade Duration (days): {avg_duration:.2f}\n\n")
 
+        f.write("=== 2. Equity Curve Visualization ===\n")
         f.write(f"Equity curve plot saved as: {plot_filename}\n\n")
 
-        f.write("3. Performance Metrics\n")
-        f.write(f"Total Net Profit: {net_profit:.2f}\n")
-        f.write(f"Annualized Return (%): {annualized_return*100:.2f}\n")
-        f.write(f"Max Drawdown (%): {max_drawdown:.2f}\n")
-        f.write(f"Sharpe Ratio: {sharpe_ratio:.4f}\n")
-        f.write(f"Sortino Ratio: {sortino_ratio:.4f}\n")
-        f.write(f"Win Rate (%): {win_pct:.2f}\n")
-        f.write(f"Average Win (%): {avg_win:.2f}\n")
-        f.write(f"Average Loss (%): {avg_loss:.2f}\n")
-        f.write(f"Profit Factor: {profit_factor:.2f}\n")
-        f.write(f"Max Consecutive Wins: {max_wins}\n")
-        f.write(f"Max Consecutive Losses: {max_losses}\n")
-        f.write(f"Average Trade Duration: {avg_duration:.2f}\n\n")
+        f.write("=== 3. Performance Metrics ===\n")
+        f.write(f"{'Metric':<20} {'Value':<15} Description\n")
+        f.write(f"{'-'*65}\n")
+        f.write(f"{'Total Net Profit':<20} {net_profit:<15.2f} Total profit or loss over the period\n")
+        f.write(f"{'Annualized Return (%)':<20} {annualized_return*100:<15.2f} Return normalized per year\n")
+        f.write(f"{'Max Drawdown (%)':<20} {max_drawdown:<15.2f} Largest peak-to-trough loss\n")
+        f.write(f"{'Sharpe Ratio':<20} {sharpe_ratio:<15.2f} Risk-adjusted return\n")
+        f.write(f"{'Sortino Ratio':<20} {sortino_ratio:<15.2f} Downside risk risk-adjusted return\n")
+        f.write(f"{'Win Rate (%)':<20} {win_pct:<15.2f} Percentage of winning trades\n")
+        f.write(f"{'Average Win (%)':<20} {avg_win:<15.2f} Average return on winning trades\n")
+        f.write(f"{'Average Loss (%)':<20} {avg_loss:<15.2f} Average loss on losing trades\n")
+        f.write(f"{'Profit Factor':<20} {profit_factor:<15.2f} Ratio of gross profit to gross loss\n")
+        f.write(f"{'Max Consecutive Wins':<20} {max_consec_wins:<15d} Longest winning streak\n")
+        f.write(f"{'Max Consecutive Losses':<20} {max_consec_losses:<15d} Longest losing streak\n")
+        f.write(f"{'Avg. Trade Duration':<20} {avg_duration:<15.2f} Average holding time per trade\n\n")
 
-        f.write("4. Trade Log\n")
+        f.write("=== 4. Trade Log ===\n")
         f.write("Trade # | Entry Date | Exit Date | Entry Price | Exit Price | P&L (%) | Duration (days) | Notes\n")
-        for idx, trade in enumerate(df_closed.itertuples(), start=1):
-            entry = df[(df['date'] < trade.date) & (df['type']=='BUY')].iloc[-1] if not df[(df['date'] < trade.date) & (df['type']=='BUY')].empty else None
+        for i, trade in enumerate(df_trades.itertuples(), 1):
+            entry_trades = df[(df['date'] < trade.date) & (df['type'] == 'BUY')]
+            entry_trade = entry_trades.iloc[-1] if not entry_trades.empty else None
             notes = getattr(trade, 'exit_reason', '')
-            f.write(f"{idx} | {entry['date'].date() if entry is not None else 'N/A'} | {trade.date.date()} | {entry['price'] if entry is not None else 'N/A'} | {trade.price} | {trade.pnl:.2f} | {trade.duration if hasattr(trade, 'duration') else 'N/A'} | {notes}\n")
+            entry_date = entry_trade.date.date() if entry_trade is not None else 'N/A'
+            entry_price = entry_trade.price if entry_trade is not None else 'N/A'
+            duration = getattr(trade, 'duration', 'N/A')
+            f.write(f"{i:<7} | {entry_date} | {trade.date.date()} | {entry_price:<11} | {trade.price:<10} | {trade.pnl:<8.2f} | {duration:<15} | {notes}\n")
+        f.write("\n")
 
-        if ml_metrics is not None:
-            f.write("\n5. Indicator / ML Performance Details\n")
-            for metric_name, val in ml_metrics.items():
-                if metric_name != 'model':
-                    f.write(f"{metric_name}: {val:.4f}\n")
+        if ml_metrics:
+            f.write("=== 5. Indicator / ML Performance Details ===\n")
+            for k,v in ml_metrics.items():
+                if k != "model":
+                    f.write(f"{k}: {v:.4f}\n")
+            f.write("\n")
 
-        if ml_feature_importance is not None:
+        if ml_feature_importance:
             f.write("Feature Importance:\n")
-            for feat, imp in ml_feature_importance.items():
-                f.write(f"  {feat}: {imp}\n")
+            for feat, val in sorted(ml_feature_importance.items(), key=lambda x: -x[1])[:20]:
+                f.write(f"{feat}: {val:.5f}\n")
+            f.write("\n")
 
-        # Sections 6-8 would require more inputs and can be added similarly
+        f.write("=== 6. Risk and Exposure Analysis ===\n")
+        f.write(f"Max Drawdown (%): {max_drawdown:.2f}\n")
+        f.write(f"Volatility (Std Dev of daily returns): {daily_returns.std():.6f}\n")
+        f.write("Exposure, recovery time, and additional risk metrics to be added here.\n\n")
 
-        f.write("\n=== End of Report ===\n")
+        f.write("=== 7. Transaction Costs and Slippage Impact ===\n")
+        f.write(f"Transaction costs deducted: {transaction_costs}\n")
+        f.write(f"Slippage impact estimated: {slippage_impact}\n\n")
 
-    # Print report to terminal (optional)
-    with open(filename, 'r') as f:
+        f.write("=== 8. Commentary and Insights ===\n")
+        f.write(commentary if commentary else "No commentary provided.\n")
+
+    print(f"Detailed backtest report saved to {filename}")
+    with open(filename) as f:
         print(f.read())
+
 

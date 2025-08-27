@@ -225,6 +225,8 @@ def walk_forward_test_symbol(symbol, window_days=180, test_days=30, trailing_pct
         start_idx += test_days
     return results
 
+CAPITAL = 100000
+
 def symbol_allocation_optimization(symbol_stats, total_capital=CAPITAL):
     total_pf = sum(max(stats.get('Profit Factor', 0.01), 0.01) for stats in symbol_stats.values())
     allocs = {}

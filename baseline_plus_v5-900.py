@@ -189,28 +189,21 @@ if __name__ == "__main__":
         print(f"Processing symbol: {symbol}")
         df = load_and_prepare_symbol(symbol)
         
-        # Trailing Stop Backtest
-        trades_trailing = backtest_trailing_stop(df, CAPITAL)
-        stats_trailing = calc_trade_stats(trades_trailing)
-        write_strategy_report(f"Trailing Stop - {symbol}", trades_trailing, stats_trailing, f"report_trailing_{symbol}.txt")
-        
-        # Fixed Stop Backtest
-        trades_fixed = backtest_fixed_stop(df, CAPITAL)
-        stats_fixed = calc_trade_stats(trades_fixed)
-        write_strategy_report(f"Fixed Stop - {symbol}", trades_fixed, stats_fixed, f"report_fixed_{symbol}.txt")
-        
+      
+        ttrailing_stats = calc_trade_stats(trades_trailing)
+        fixed_stats = calc_trade_stats(trades_fixed)
         combined_stats[symbol] = {
-            "Trailing Stop": stats_trailing,
-            "Fixed Stop": stats_fixed
+        "Trailing Stop": trailing_stats,
+        "Fixed Stop": fixed_stats
         }
-
+        
         print("Portfolio Level Summary")
         print("------------------------")
-        print("Trailing Stop Strategy:")
-        for k,v in trailing_stats.items():
+        print(f"Stats for {symbol} - Trailing Stop:")
+        for k, v in trailing_stats.items():
             print(f"{k}: {v}")
-        print("\nFixed Stop Strategy:")
-        for k,v in fixed_stats.items():
+        print(f"Stats for {symbol} - Fixed Stop:")
+        for k, v in fixed_stats.items():
             print(f"{k}: {v}")
     write_final_comparison_report(combined_stats)
     print("All reports generated.")

@@ -369,10 +369,10 @@ def full_grid_search(symbols, indicator_combos, stop_loss_params, profit_target_
                                             'ML Recall': round(avg_rec, 4),
                                             'Top Features': ", ".join(list(sorted_feat_imp.keys())[:10])
                                         }
-                                        results_df.append(result_row)
+                                        results.append(result_row)
                                         print(f"Completed: Trade Count={result_row['Total Trades']}, Return={result_row['Total Return %']:.2f}%, Win Rate={result_row['Win Rate %']:.2f}%")
     # Save final results summary CSV and consolidated report
-    results_df = pd.DataFrame(results_df)
+    results_df = pd.DataFrame(results)
     results_df.to_csv("focused_backtest_results.csv", index=False)
     print("\nSaved focused backtest results to 'focused_backtest_results.csv'")
 

@@ -35,6 +35,7 @@ def compute_indicators(df):
     high = df['high'].values.astype(np.float64)
     low = df['low'].values.astype(np.float64)
     volume = df['volume'].values.astype(np.float64)
+
     df['ema8'] = talib.EMA(close, timeperiod=8)
     df['ema20'] = talib.EMA(close, timeperiod=20)
     df['rsi_14'] = talib.RSI(close, timeperiod=14)
@@ -48,6 +49,13 @@ def compute_indicators(df):
     df['bb_upper'], df['bb_middle'], df['bb_lower'] = upperband, middleband, lowerband
     df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
     df['obv'] = talib.OBV(close, volume)
+
+    # ATR and Chandelier Exit calculation
+    df['atr14'] = talib.ATR(high, low, close, timeperiod=14)
+    df['highest_high_22'] = df['high'].rolling(window=22).max()
+    chandelier_atr_mult = 3  # default multiplier
+    df['chandelier_exit_long'] = df['highest_high_22'] - (df['atr14'] * chandelier_atr_mult)
+
     df = df.fillna(method='ffill').fillna(method='bfill')
     return df
 
@@ -70,7 +78,7 @@ def prepare_data_for_symbol(symbol, years=5):
     return daily_df, hourly_df, m15_df
 
 # ================================
-# Backtesting Strategy Class with Trailing SL and TP
+# Backtesting Strategy Class with Trailing SL and TP plus Chandelier Exit option
 # ================================
 class BacktestStrategy:
     def __init__(self, daily_df, hourly_df, m15_df, initial_capital=100000, params=None):
@@ -83,7 +91,7 @@ class BacktestStrategy:
         self.entry_price = 0
         self.entry_date = None
         self.trades = []
-        self.exit_reasons = {'StopLoss':0, 'ProfitTarget':0, 'Trailing Stop':0, 'Trailing Profit':0, 'EOD Exit':0}
+        self.exit_reasons = {'StopLoss':0, 'ProfitTarget':0, 'Trailing Stop':0, 'Trailing Profit':0, 'Chandelier Exit':0, 'EOD Exit':0}
         self.params = params or {
             'stop_loss_pct': 0.01,
             'profit_target_pct': 0.02,
@@ -91,6 +99,9 @@ class BacktestStrategy:
             'trailing_stop_pct': 0.01,
             'use_trailing_tp': True,
             'trailing_tp_pct': 0.01,
+            'use_chandelier_exit': False,
+            'chandelier_atr_mult': 3,
+            'chandelier_lookback': 22,
         }
         self.highest_price = 0
         self.trailing_stop_price = None
@@ -135,35 +146,37 @@ class BacktestStrategy:
     def _manage_trade(self, curr):
         current_price = curr['close']
         self.highest_price = max(self.highest_price, current_price)
-
         static_stop_loss = self.entry_price * (1 - self.params['stop_loss_pct'])
         static_profit_target = self.entry_price * (1 + self.params['profit_target_pct'])
+        stop_loss = static_stop_loss
 
-        # Trailing stop loss
-        if self.params.get('use_trailing_stop', False):
-            self.trailing_stop_price = self.highest_price * (1 - self.params['trailing_stop_pct'])
-            stop_loss = max(static_stop_loss, self.trailing_stop_price)
-        else:
-            stop_loss = static_stop_loss
+        if self.params.get('use_chandelier_exit', False):
+            if 'chandelier_exit_long' in curr:
+                chandelier_stop = curr['chandelier_exit_long']
+                stop_loss = max(static_stop_loss, chandelier_stop)
+            else:
+                stop_loss = static_stop_loss
 
-        # Trailing take profit
+        if self.params.get('use_trailing_stop', False) and not self.params.get('use_chandelier_exit', False):
+            trailing_stop_price = self.highest_price * (1 - self.params['trailing_stop_pct'])
+            stop_loss = max(static_stop_loss, trailing_stop_price)
+
         if self.params.get('use_trailing_tp', False):
-            self.trailing_profit_exit_price = self.highest_price * (1 - self.params['trailing_tp_pct'])
+            trailing_profit_exit_price = self.highest_price * (1 - self.params['trailing_tp_pct'])
             profit_target = None
         else:
             profit_target = static_profit_target
-            self.trailing_profit_exit_price = None
 
-        # Exit conditions
         if current_price <= stop_loss:
             pnl = (current_price - self.entry_price) * self.position
-            self.exit_reasons['Trailing Stop'] += 1
-            self._exit_trade(current_price, pnl, curr['date'], "Trailing Stop Loss")
+            exit_reason = "Chandelier Exit" if self.params.get('use_chandelier_exit', False) else "Trailing Stop Loss"
+            self.exit_reasons[exit_reason] = self.exit_reasons.get(exit_reason, 0) + 1
+            self._exit_trade(current_price, pnl, curr['date'], exit_reason)
         elif profit_target is not None and current_price >= profit_target:
             pnl = (current_price - self.entry_price) * self.position
             self.exit_reasons['ProfitTarget'] += 1
             self._exit_trade(current_price, pnl, curr['date'], "Profit Target")
-        elif self.trailing_profit_exit_price is not None and current_price < self.trailing_profit_exit_price:
+        elif self.params.get('use_trailing_tp', False) and current_price < trailing_profit_exit_price:
             pnl = (current_price - self.entry_price) * self.position
             self.exit_reasons['Trailing Profit'] += 1
             self._exit_trade(current_price, pnl, curr['date'], "Trailing Take Profit Exit")
@@ -230,6 +243,7 @@ def extract_trade_stats(trades):
         'Profit Target Hits': sum(t['exit_reason']=='Profit Target' for t in trades if 'exit_reason' in t),
         'Trailing Stop Hits': sum(t['exit_reason']=='Trailing Stop Loss' for t in trades if 'exit_reason' in t),
         'Trailing Profit Hits': sum(t['exit_reason']=='Trailing Take Profit Exit' for t in trades if 'exit_reason' in t),
+        'Chandelier Exit Hits': sum(t['exit_reason']=='Chandelier Exit' for t in trades if 'exit_reason' in t),
         'EOD Exits': sum(t['exit_reason']=='EOD Exit' for t in trades if 'exit_reason' in t),
         'Total PnL': round(df_closed['pnl'].sum(), 4)
     }
@@ -273,14 +287,16 @@ def safe_drop(df, keep_cols, drop_prefixes):
     return df.drop(columns=cols_to_drop, errors='ignore')
 
 # ================================
-# Full Grid Search with Trailing options
+# Full Grid Search with Trailing and Chandelier options
 # ================================
-def full_grid_search(symbols, indicator_combos, stop_loss_params, profit_target_params, trailing_stop_pct_options, trailing_tp_pct_options, initial_capital=100000):
+def full_grid_search(symbols, indicator_combos, stop_loss_params, profit_target_params,
+                     trailing_stop_pct_options, trailing_tp_pct_options,
+                     chandelier_exit_options, chandelier_atr_mult_options,
+                     initial_capital=100000):
     results = []
     report_file = "detailed_summary_report.txt"
     with open(report_file, "w") as f:
         f.write("Detailed Backtest and ML Report\n\n")
-
     for indicators in indicator_combos:
         indicator_str = ",".join(sorted(indicators))
         for sl in stop_loss_params:
@@ -289,89 +305,95 @@ def full_grid_search(symbols, indicator_combos, stop_loss_params, profit_target_
                     for trailing_sl_pct in trailing_stop_pct_options:
                         for use_trailing_tp in [False, True]:
                             for trailing_tp_pct in trailing_tp_pct_options:
-                                all_trades, ml_accuracies, ml_precisions, ml_recalls = [], [], [], []
-                                feature_importances_accum = {}
-                                trade_stats_per_symbol = {}
-                                ml_reports_per_symbol = {}
-                                for symbol in symbols:
-                                    try:
-                                        daily_df, hourly_df, m15_df = prepare_data_for_symbol(symbol)
-                                        if len(daily_df) < 100 or len(hourly_df) < 100 or len(m15_df) < 100:
+                                for use_chandelier in chandelier_exit_options:
+                                    for chand_mult in chandelier_atr_mult_options:
+                                        all_trades, ml_accuracies, ml_precisions, ml_recalls = [], [], [], []
+                                        feature_importances_accum = {}
+                                        trade_stats_per_symbol = {}
+                                        ml_reports_per_symbol = {}
+                                        for symbol in symbols:
+                                            try:
+                                                daily_df, hourly_df, m15_df = prepare_data_for_symbol(symbol)
+                                                if len(daily_df) < 100 or len(hourly_df) < 100 or len(m15_df) < 100:
+                                                    continue
+                                                if 'daily' not in indicators:
+                                                    daily_df = safe_drop(daily_df, keep_cols=['ema8','ema20'],
+                                                                        drop_prefixes=['ema','rsi','macd',
+                                                                                        'adx','atr','sar','roc',
+                                                                                        'cmo','bb','adosc','obv'])
+                                                if 'hourly' not in indicators:
+                                                    hourly_df = safe_drop(hourly_df, keep_cols=['ema8','ema20'],
+                                                                         drop_prefixes=['ema','rsi','macd',
+                                                                                         'adx','atr','sar','roc',
+                                                                                         'cmo','bb','adosc','obv'])
+                                                if '15minute' not in indicators:
+                                                    m15_df = safe_drop(m15_df, keep_cols=['ema8','ema20'],
+                                                                       drop_prefixes=['ema','rsi','macd',
+                                                                                       'adx','atr','sar','roc',
+                                                                                       'cmo','bb','adosc','obv'])
+                                                params = {
+                                                    'stop_loss_pct': sl,
+                                                    'profit_target_pct': pt,
+                                                    'use_trailing_stop': not use_chandelier,
+                                                    'trailing_stop_pct': trailing_sl_pct,
+                                                    'use_trailing_tp': use_trailing_tp,
+                                                    'trailing_tp_pct': trailing_tp_pct,
+                                                    'use_chandelier_exit': use_chandelier,
+                                                    'chandelier_atr_mult': chand_mult,
+                                                }
+                                                strategy = BacktestStrategy(daily_df, hourly_df, m15_df, initial_capital, params=params)
+                                                trades = strategy.run_backtest()
+                                                all_trades.extend(trades)
+                                                X, y = create_ml_features(m15_df, hourly_df)
+                                                model, acc, prec, rec, feat_imp, clf_report = train_xgboost_model(X, y)
+                                                ml_accuracies.append(acc)
+                                                ml_precisions.append(prec)
+                                                ml_recalls.append(rec)
+                                                for k,v in feat_imp.items():
+                                                    feature_importances_accum[k] = feature_importances_accum.get(k,0)+v
+                                                trade_stats_per_symbol[symbol] = extract_trade_stats(trades)
+                                                ml_reports_per_symbol[symbol] = clf_report
+                                            except Exception as e:
+                                                print(f"Error processing {symbol}: {e}")
+                                        if not all_trades:
                                             continue
-                                        if 'daily' not in indicators:
-                                            daily_df = safe_drop(daily_df, keep_cols=['ema8','ema20'], drop_prefixes=['ema','rsi','macd','adx','atr','sar','roc','cmo','bb','adosc','obv'])
-                                        if 'hourly' not in indicators:
-                                            hourly_df = safe_drop(hourly_df, keep_cols=['ema8','ema20'], drop_prefixes=['ema','rsi','macd','adx','atr','sar','roc','cmo','bb','adosc','obv'])
-                                        if '15minute' not in indicators:
-                                            m15_df = safe_drop(m15_df, keep_cols=['ema8','ema20'], drop_prefixes=['ema','rsi','macd','adx','atr','sar','roc','cmo','bb','adosc','obv'])
-
-                                        params = {
-                                            'stop_loss_pct': sl,
-                                            'profit_target_pct': pt,
-                                            'use_trailing_stop': use_trailing_sl,
-                                            'trailing_stop_pct': trailing_sl_pct,
-                                            'use_trailing_tp': use_trailing_tp,
-                                            'trailing_tp_pct': trailing_tp_pct
+                                        backtest_metrics = extract_trade_stats(all_trades)
+                                        avg_acc = np.mean(ml_accuracies) if ml_accuracies else 0
+                                        avg_prec = np.mean(ml_precisions) if ml_precisions else 0
+                                        avg_rec = np.mean(ml_recalls) if ml_recalls else 0
+                                        ml_metrics = {'Accuracy': avg_acc, 'Precision': avg_prec, 'Recall': avg_rec}
+                                        sorted_feat_imp = dict(sorted(feature_importances_accum.items(), key=lambda item: item[1], reverse=True))
+                                        result_row = {
+                                            'Indicators': indicator_str,
+                                            'Stop Loss %': sl,
+                                            'Profit Target %': pt,
+                                            'Trailing SL Enabled': use_trailing_sl,
+                                            'Trailing SL %': trailing_sl_pct if use_trailing_sl else 0,
+                                            'Trailing TP Enabled': use_trailing_tp,
+                                            'Trailing TP %': trailing_tp_pct if use_trailing_tp else 0,
+                                            'Chandelier Exit Enabled': use_chandelier,
+                                            'Chandelier ATR Mult': chand_mult if use_chandelier else None,
+                                            'Total Trades': backtest_metrics.get('Total Trades', 0),
+                                            'Win Rate %': backtest_metrics.get('Win Rate %', 0),
+                                            'Profit Factor': (np.sum([t['pnl'] for t in all_trades if 'pnl' in t and t['pnl'] > 0]) /
+                                                              -np.sum([t['pnl'] for t in all_trades if 'pnl' in t and t['pnl'] <= 0])
+                                                              if np.sum([t['pnl'] for t in all_trades if 'pnl' in t and t['pnl'] <= 0]) < 0 else np.inf),
+                                            'Total Return %': (np.sum([t['pnl'] for t in all_trades if 'pnl' in t]) / initial_capital * 100),
+                                            'ML Accuracy': round(avg_acc,4),
+                                            'ML Precision': round(avg_prec,4),
+                                            'ML Recall': round(avg_rec,4),
+                                            'Top Features': ", ".join(list(sorted_feat_imp.keys())[:10])
                                         }
-                                        strategy = BacktestStrategy(daily_df, hourly_df, m15_df, initial_capital, params=params)
-                                        trades = strategy.run_backtest()
-                                        all_trades.extend(trades)
-
-                                        X, y = create_ml_features(m15_df, hourly_df)
-                                        model, acc, prec, rec, feat_imp, clf_report = train_xgboost_model(X, y)
-                                        ml_accuracies.append(acc)
-                                        ml_precisions.append(prec)
-                                        ml_recalls.append(rec)
-
-                                        for k,v in feat_imp.items():
-                                            feature_importances_accum[k] = feature_importances_accum.get(k,0)+v
-                                        trade_stats_per_symbol[symbol] = extract_trade_stats(trades)
-                                        ml_reports_per_symbol[symbol] = clf_report
-
-                                    except Exception as e:
-                                        print(f"Error processing {symbol}: {e}")
-
-                                if not all_trades:
-                                    continue
-
-                                backtest_metrics = extract_trade_stats(all_trades)
-                                avg_acc = np.mean(ml_accuracies) if ml_accuracies else 0
-                                avg_prec = np.mean(ml_precisions) if ml_precisions else 0
-                                avg_rec = np.mean(ml_recalls) if ml_recalls else 0
-                                ml_metrics = {'Accuracy': avg_acc, 'Precision': avg_prec, 'Recall': avg_rec}
-                                sorted_feat_imp = dict(sorted(feature_importances_accum.items(), key=lambda item: item[1], reverse=True))
-                                result_row = {
-                                    'Indicators': indicator_str,
-                                    'Stop Loss %': sl,
-                                    'Profit Target %': pt,
-                                    'Trailing SL Enabled': use_trailing_sl,
-                                    'Trailing SL %': trailing_sl_pct if use_trailing_sl else 0,
-                                    'Trailing TP Enabled': use_trailing_tp,
-                                    'Trailing TP %': trailing_tp_pct if use_trailing_tp else 0,
-                                    'Total Trades': backtest_metrics.get('Total Trades', 0),
-                                    'Win Rate %': backtest_metrics.get('Win Rate %', 0),
-                                    'Profit Factor': (np.sum([t['pnl'] for t in all_trades if 'pnl' in t and t['pnl'] > 0]) /
-                                                      -np.sum([t['pnl'] for t in all_trades if 'pnl' in t and t['pnl'] <= 0])
-                                                      if np.sum([t['pnl'] for t in all_trades if 'pnl' in t and t['pnl'] <= 0]) < 0 else np.inf),
-                                    'Total Return %': (np.sum([t['pnl'] for t in all_trades if 'pnl' in t]) / initial_capital * 100),
-                                    'ML Accuracy': round(avg_acc,4),
-                                    'ML Precision': round(avg_prec,4),
-                                    'ML Recall': round(avg_rec,4),
-                                    'Top Features': ", ".join(list(sorted_feat_imp.keys())[:10])
-                                }
-                                results.append(result_row)
-
-                                print(f"Completed: Indicators={indicator_str}, SL={sl}, PT={pt}, TLSL={use_trailing_sl}, TLSL%={trailing_sl_pct}, TLTP={use_trailing_tp}, TLTP%={trailing_tp_pct}, Trades={result_row['Total Trades']}, Return={result_row['Total Return %']:.2f}%")
-
-                                title = (f"Indicator Set: {indicator_str}\n"
-                                         f"Stop Loss: {sl}, Profit Target: {pt}\n"
-                                         f"Trailing SL: {use_trailing_sl}, Trailing SL %: {trailing_sl_pct}\n"
-                                         f"Trailing TP: {use_trailing_tp}, Trailing TP %: {trailing_tp_pct}\n")
-                                save_detailed_report(report_file, title, clf_report, backtest_metrics, ml_metrics, sorted_feat_imp)
-
+                                        results.append(result_row)
+                                        print(f"Completed: Indicators={indicator_str}, SL={sl}, PT={pt}, TLSL={use_trailing_sl}, TLSL%={trailing_sl_pct}, TLTP={use_trailing_tp}, TLTP%={trailing_tp_pct}, ChandEL={use_chandelier}, ChandMult={chand_mult}, Trades={result_row['Total Trades']}, Return={result_row['Total Return %']:.2f}%")
+                                        title = (f"Indicator Set: {indicator_str}\n"
+                                                 f"Stop Loss: {sl}, Profit Target: {pt}\n"
+                                                 f"Trailing SL: {use_trailing_sl}, Trailing SL %: {trailing_sl_pct}\n"
+                                                 f"Trailing TP: {use_trailing_tp}, Trailing TP %: {trailing_tp_pct}\n"
+                                                 f"Chandelier Exit: {use_chandelier}, Chandelier Mult: {chand_mult}\n")
+                                        save_detailed_report(report_file, title, clf_report, backtest_metrics, ml_metrics, sorted_feat_imp)
     results_df = pd.DataFrame(results)
     results_df.to_csv("full_grid_search_results.csv", index=False)
-
     print("\nAll runs completed. Summary saved to 'full_grid_search_results.csv' and detailed text report.")
     print_consolidated_report(results_df, save_path="summary_consolidated_report.txt")
     return results_df
@@ -393,9 +415,9 @@ def print_consolidated_report(results_df, save_path="summary_consolidated_report
         best_winrate = results_df.loc[results_df['Win Rate %'].idxmax()]
         best_profitfactor = results_df.loc[results_df['Profit Factor'].idxmax()]
         lines.append("\n🏆 Best Strategies:")
-        lines.append(f"- Highest Return %: {best_return['Total Return %']:.2f} | Indicators={best_return['Indicators']} | SL={best_return['Stop Loss %']} | PT={best_return['Profit Target %']} | TLSL={best_return['Trailing SL Enabled']} ({best_return['Trailing SL %']}) | TLTP={best_return['Trailing TP Enabled']} ({best_return['Trailing TP %']})")
-        lines.append(f"- Highest Win Rate %: {best_winrate['Win Rate %']:.2f} | Indicators={best_winrate['Indicators']} | SL={best_winrate['Stop Loss %']} | PT={best_winrate['Profit Target %']} | TLSL={best_winrate['Trailing SL Enabled']} ({best_winrate['Trailing SL %']}) | TLTP={best_winrate['Trailing TP Enabled']} ({best_winrate['Trailing TP %']})")
-        lines.append(f"- Highest Profit Factor: {best_profitfactor['Profit Factor']:.2f} | Indicators={best_profitfactor['Indicators']} | SL={best_profitfactor['Stop Loss %']} | PT={best_profitfactor['Profit Target %']} | TLSL={best_profitfactor['Trailing SL Enabled']} ({best_profitfactor['Trailing SL %']}) | TLTP={best_profitfactor['Trailing TP Enabled']} ({best_profitfactor['Trailing TP %']})")
+        lines.append(f"- Highest Return %: {best_return['Total Return %']:.2f} | Indicators={best_return['Indicators']} | SL={best_return['Stop Loss %']} | PT={best_return['Profit Target %']} | TLSL={best_return['Trailing SL Enabled']} ({best_return['Trailing SL %']}) | TLTP={best_return['Trailing TP Enabled']} ({best_return['Trailing TP %']}) | ChandEL={best_return['Chandelier Exit Enabled']} ({best_return['Chandelier ATR Mult']})")
+        lines.append(f"- Highest Win Rate %: {best_winrate['Win Rate %']:.2f} | Indicators={best_winrate['Indicators']} | SL={best_winrate['Stop Loss %']} | PT={best_winrate['Profit Target %']} | TLSL={best_winrate['Trailing SL Enabled']} ({best_winrate['Trailing SL %']}) | TLTP={best_winrate['Trailing TP Enabled']} ({best_winrate['Trailing TP %']}) | ChandEL={best_winrate['Chandelier Exit Enabled']} ({best_winrate['Chandelier ATR Mult']})")
+        lines.append(f"- Highest Profit Factor: {best_profitfactor['Profit Factor']:.2f} | Indicators={best_profitfactor['Indicators']} | SL={best_profitfactor['Stop Loss %']} | PT={best_profitfactor['Profit Target %']} | TLSL={best_profitfactor['Trailing SL Enabled']} ({best_profitfactor['Trailing SL %']}) | TLTP={best_profitfactor['Trailing TP Enabled']} ({best_profitfactor['Trailing TP %']}) | ChandEL={best_profitfactor['Chandelier Exit Enabled']} ({best_profitfactor['Chandelier ATR Mult']})")
         lines.append("\n🤖 ML Metrics (Average across all runs):")
         lines.append(f"- Accuracy: {results_df['ML Accuracy'].mean():.4f}")
         lines.append(f"- Precision: {results_df['ML Precision'].mean():.4f}")
@@ -427,12 +449,15 @@ if __name__ == "__main__":
         {'daily','hourly','15minute'}, {'daily','hourly'}, {'daily','15minute'},
         {'hourly','15minute'}, {'daily'}, {'hourly'}, {'15minute'}
     ]
-    stop_loss_params = [0.005, 0.0075, 0.01]  # around 1% SL
-    profit_target_params = [0.0125, 0.015, 0.02]  # around 1.5% to 2% TP
-    trailing_stop_pct_options = [0.005, 0.01, 0.015]  # 0.5%, 1%, 1.5%
-    trailing_tp_pct_options = [0.005, 0.01, 0.015]    # 0.5%, 1%, 1.5% trailing TP
+    stop_loss_params = [0.005, 0.0075, 0.01]
+    profit_target_params = [0.0125, 0.015, 0.02]
+    trailing_stop_pct_options = [0.005, 0.01, 0.015]
+    trailing_tp_pct_options = [0.005, 0.01, 0.015]
+    chandelier_exit_options = [False, True]
+    chandelier_atr_mult_options = [2, 3, 4]
 
     results_df = full_grid_search(
         symbols, indicator_combos, stop_loss_params,
         profit_target_params, trailing_stop_pct_options,
-        trailing_tp_pct_options)
+        trailing_tp_pct_options, chandelier_exit_options,
+        chandelier_atr_mult_options)

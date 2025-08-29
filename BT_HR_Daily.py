@@ -183,6 +183,26 @@ class Backtest2025Next:
         self.entry_price = 0
         self.highest_price = 0
 
+def extract_trade_stats(trades):
+    import pandas as pd
+    df = pd.DataFrame(trades)
+    if df.empty or 'type' not in df.columns or 'pnl' not in df.columns:
+        return {}
+    closed = df[df['type'] == 'SELL']
+    if closed.empty:
+        return {}
+    stats = {
+        'Total Trades': len(closed),
+        'Winning Trades': (closed['pnl'] > 0).sum(),
+        'Losing Trades': (closed['pnl'] <= 0).sum(),
+        'Win Rate %': round((closed['pnl'] > 0).mean() * 100, 2),
+        'Avg PnL per Trade': round(closed['pnl'].mean(), 2),
+        'Best PnL': round(closed['pnl'].max(), 2),
+        'Worst PnL': round(closed['pnl'].min(), 2),
+        'Total PnL': round(closed['pnl'].sum(), 2)
+    }
+    return stats
+
 if __name__ == "__main__":
     def get_symbols_from_data():
         daily_files = os.listdir(DATA_PATHS['daily'])

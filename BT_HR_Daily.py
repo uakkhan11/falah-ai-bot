@@ -37,6 +37,36 @@ def load_and_filter_2025(symbol):
     daily, hourly, m15 = filter_year(daily), filter_year(hourly), filter_year(m15)
     return daily, hourly, m15
 
+def add_ichimoku(df):
+    high = df['high']
+    low = df['low']
+    close = df['close']
+
+    period9_high = high.rolling(window=9).max()
+    period9_low = low.rolling(window=9).min()
+    df['tenkan_sen'] = (period9_high + period9_low) / 2
+
+    period26_high = high.rolling(window=26).max()
+    period26_low = low.rolling(window=26).min()
+    df['kijun_sen'] = (period26_high + period26_low) / 2
+
+    df['senkou_span_a'] = ((df['tenkan_sen'] + df['kijun_sen']) / 2).shift(26)
+
+    period52_high = high.rolling(window=52).max()
+    period52_low = low.rolling(window=52).min()
+    df['senkou_span_b'] = ((period52_high + period52_low) / 2).shift(26)
+
+    df['chikou_span'] = close.shift(-26)
+
+    df['cloud_thickness'] = abs(df['senkou_span_a'] - df['senkou_span_b'])
+
+    df.fillna(method='ffill', inplace=True)
+    df.fillna(method='bfill', inplace=True)
+
+    df = add_ichimoku(df)
+    
+    return df
+
 def compute_indicators(df):
     df = df.copy()
     df['close'] = pd.to_numeric(df['close'], errors='coerce').ffill()
@@ -227,29 +257,47 @@ def extract_trade_stats(trades):
     return stats
 
 def analyze_ichimoku_trades(trades_df):
-    # Preprocess trades_df: ensure 'in_cloud', 'tenkan_above_kijun', 'pnl' columns exist
+    if trades_df.empty:
+        return "No trades to analyze.\n"
+
     trades_df['win'] = trades_df['pnl'] > 0
+    report = ""
 
-    # Win rate by in_cloud
-    win_rate_cloud = trades_df.groupby('in_cloud')['win'].mean()
-    sns.barplot(x=win_rate_cloud.index, y=win_rate_cloud.values)
-    plt.title("Win Rate by Ichimoku Cloud Presence")
-    plt.ylabel("Win Rate")
-    plt.xlabel("Trade Entry Inside Cloud")
-    plt.show()
-    
-    # Win rate by Tenkan-Kijun relation
-    win_rate_tk = trades_df.groupby('tenkan_above_kijun')['win'].mean()
-    sns.barplot(x=win_rate_tk.index, y=win_rate_tk.values)
-    plt.title("Win Rate by Tenkan > Kijun")
-    plt.ylabel("Win Rate")
-    plt.xlabel("Tenkan Above Kijun at Entry")
-    plt.show()
+    if 'in_cloud' in trades_df.columns:
+        win_rate_cloud = trades_df.groupby('in_cloud')['win'].mean()
+        report += "Win Rate by Ichimoku Cloud Presence:\n"
+        for val, rate in win_rate_cloud.items():
+            report += f"  In Cloud: {val} -> Win Rate: {rate:.2%}\n"
 
-    # Profit distributions
+        sns.barplot(x=win_rate_cloud.index.astype(str), y=win_rate_cloud.values)
+        plt.title("Win Rate by Ichimoku Cloud Presence")
+        plt.ylabel("Win Rate")
+        plt.xlabel("Trade Entry Inside Cloud")
+        plt.savefig("win_rate_by_ichimoku_cloud.png")
+        plt.close()
+
+    if 'tenkan_above_kijun' in trades_df.columns:
+        win_rate_tk = trades_df.groupby('tenkan_above_kijun')['win'].mean()
+        report += "Win Rate by Tenkan > Kijun:\n"
+        for val, rate in win_rate_tk.items():
+            report += f"  Tenkan above Kijun: {val} -> Win Rate: {rate:.2%}\n"
+
+        sns.barplot(x=win_rate_tk.index.astype(str), y=win_rate_tk.values)
+        plt.title("Win Rate by Tenkan > Kijun")
+        plt.ylabel("Win Rate")
+        plt.xlabel("Tenkan Above Kijun at Entry")
+        plt.savefig("win_rate_by_tenkan_kijun.png")
+        plt.close()
+
+    report += "\nTrade PnL distribution saved as histogram plot.\n"
+
     sns.histplot(data=trades_df, x="pnl", bins=30, kde=True)
     plt.title("Distribution of Trade PnL")
-    plt.show()
+    plt.savefig("trade_pnl_distribution.png")
+    plt.close()
+
+    return report
+
 
 if __name__ == "__main__":
     def get_symbols_from_data():
@@ -285,8 +333,10 @@ if __name__ == "__main__":
     df = pd.DataFrame(all_stats)
     df.to_csv("2025_backtest_next_summary.csv", index=False)
 
-    with open("2025_detailed_next_report.txt", "w") as f:
-        f.writelines(report_lines)
+    with open("2025_detailed_next_report.txt", "a") as f:  # Append mode
+        ichimoku_report = analyze_ichimoku_trades(all_trades_df)
+        f.write("\n=== Ichimoku Indicator Trade Analysis ===\n")
+        f.write(ichimoku_report)
 
     print(df)
     print("\nNext phase backtest complete. Summary saved.")

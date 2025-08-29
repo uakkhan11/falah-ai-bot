@@ -37,10 +37,10 @@ def compute_indicators(df):
     df['low'] = pd.to_numeric(df['low'], errors='coerce').ffill()
     df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
 
-    close = df['close'].values
-    high = df['high'].values
-    low = df['low'].values
-    volume = df['volume'].values
+    close = df['close'].values.astype(np.float64)
+    high = df['high'].values.astype(np.float64)
+    low = df['low'].values.astype(np.float64)
+    volume = df['volume'].values.astype(np.float64)
 
     df['ema8'] = talib.EMA(close, timeperiod=8)
     df['ema20'] = talib.EMA(close, timeperiod=20)

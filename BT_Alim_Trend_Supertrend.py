@@ -12,9 +12,9 @@ def get_symbols_from_15min_data():
     return [os.path.splitext(f)[0] for f in files if f.endswith('.csv')]
 
 def atr(df, period=1):
-    high_low = df['High'] - df['Low']
-    high_close = np.abs(df['High'] - df['Close'].shift())
-    low_close = np.abs(df['Low'] - df['Close'].shift())
+    high_low = df['high'] - df['low']
+    high_close = np.abs(df['high'] - df['close'].shift())
+    low_close = np.abs(df['low'] - df['close'].shift())
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     atr = tr.rolling(window=period, min_periods=1).mean()
     return atr
@@ -35,7 +35,7 @@ def rsi(series, period=12):
 def supertrend(df, atr_len=1, factor=4, ema_len=100):
     df = df.copy()
     df['ATR'] = atr(df, period=atr_len)
-    hl2 = (df['High'] + df['Low']) / 2
+    hl2 = (df['high'] + df['low']) / 2
     df['EMA100'] = ema(df['Close'], ema_len)
     df['Upper Basic Band'] = hl2 + (factor * df['ATR'])
     df['Lower Basic Band'] = hl2 - (factor * df['ATR'])
@@ -76,7 +76,7 @@ def supertrend(df, atr_len=1, factor=4, ema_len=100):
 
 def rstmtf_histo_signal(df, period=12):
     df = df.copy()
-    df['RSI'] = rsi(df['Close'], period)
+    df['RSI'] = rsi(df['close'], period)
     df['HistoSignal'] = df['RSI'] > 50
     return df
 
@@ -92,9 +92,9 @@ def backtest_strategy(df):
 
     for i in range(1, len(df)):
         if position is None:
-            if df['Supertrend'].iloc[i] and df['HistoSignal'].iloc[i] and df['Close'].iloc[i] > df['Open'].iloc[i]:
+            if df['Supertrend'].iloc[i] and df['HistoSignal'].iloc[i] and df['close'].iloc[i] > df['open'].iloc[i]:
                 entry_price = df['Close'].iloc[i]
-                prev_low = df['Low'].iloc[:i].min() if i > 0 else df['Low'].iloc[i]
+                prev_low = df['low'].iloc[:i].min() if i > 0 else df['low'].iloc[i]
                 stop_loss = prev_low
                 risk = entry_price - stop_loss
                 if risk <= 0:
@@ -105,8 +105,8 @@ def backtest_strategy(df):
                                'TakeProfit': take_profit, 'ExitIndex': None, 'ExitPrice': None, 'Result': None})
 
         elif position == 'long':
-            low = df['Low'].iloc[i]
-            high = df['High'].iloc[i]
+            low = df['low'].iloc[i]
+            high = df['high'].iloc[i]
 
             if low <= stop_loss:
                 trades[-1]['ExitIndex'] = i

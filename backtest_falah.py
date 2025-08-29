@@ -198,10 +198,16 @@ def extract_trade_stats(trades):
 #################
 if __name__ == "__main__":
     def get_symbols_from_data():
+        daily_files = os.listdir(DATA_PATHS['daily'])
+        # Return symbol names (filename without .csv)
+        return [os.path.splitext(f)[0] for f in daily_files if f.endswith('.csv')]
+
     symbols = get_symbols_from_data()
+
     all_stats = []
     ml_all_metrics = []
     report_lines = []
+
     for symbol in symbols:
         daily, hourly, m15 = prepare_data_2025(symbol)
         if m15.empty or len(m15) < 30:
@@ -211,20 +217,20 @@ if __name__ == "__main__":
         trades = bt.run()
         stats = extract_trade_stats(trades)
         stats['Symbol'] = symbol
-        stats['ML Accuracy'] = round(ml_metrics['accuracy'],4)
-        stats['ML Precision'] = round(ml_metrics['precision'],4)
-        stats['ML Recall'] = round(ml_metrics['recall'],4)
+        stats['ML Accuracy'] = round(ml_metrics['accuracy'], 4)
+        stats['ML Precision'] = round(ml_metrics['precision'], 4)
+        stats['ML Recall'] = round(ml_metrics['recall'], 4)
         all_stats.append(stats)
+
         report_lines.append(
             f"\n=== {symbol} ===\n"
             + "\n".join([f"{k}: {v}" for k, v in stats.items()])
-            + f"\nML Classification Report:\n{ml_metrics['clf_report']}"
-            + "\n")
+            + f"\nML Classification Report:\n{ml_metrics['clf_report']}\n"
+        )
 
     df = pd.DataFrame(all_stats)
-    df.to_csv(f"2025_backtest_summary.csv", index=False)
+    df.to_csv("2025_backtest_summary.csv", index=False)
 
-    # Print and save detailed text summary
     with open("2025_detailed_report.txt", "w") as f:
         f.writelines(report_lines)
 

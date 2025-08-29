@@ -36,7 +36,7 @@ def supertrend(df, atr_len=1, factor=4, ema_len=100):
     df = df.copy()
     df['ATR'] = atr(df, period=atr_len)
     hl2 = (df['high'] + df['low']) / 2
-    df['EMA100'] = ema(df['Close'], ema_len)
+    df['EMA100'] = ema(df['close'], ema_len)
     df['Upper Basic Band'] = hl2 + (factor * df['ATR'])
     df['Lower Basic Band'] = hl2 - (factor * df['ATR'])
 

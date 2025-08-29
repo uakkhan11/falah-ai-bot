@@ -265,7 +265,7 @@ if __name__ == "__main__":
         daily, hourly, m15 = prepare_data_2025(symbol)
         if m15.empty or len(m15) < 30:
             continue
-        ml_model, ml_metrics, ml_index, ml_proba = ml_trade_filter(m15, hourly)
+        ml_model, ml_metrics, ml_index, ml_proba = ml_trade_filter_tuned(m15, hourly)
         bt = Backtest2025Next(daily, hourly, m15, ml_model, ml_proba, ml_index)
         trades = bt.run()
         # Collect trades for later analysis

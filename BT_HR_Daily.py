@@ -331,17 +331,15 @@ if __name__ == "__main__":
         )
 
     df = pd.DataFrame(all_stats)
-    df.to_csv("2025_backtest_next_summary.csv", index=False)
+df.to_csv("2025_backtest_next_summary.csv", index=False)
 
-    with open("2025_detailed_next_report.txt", "a") as f:  # Append mode
-        ichimoku_report = analyze_ichimoku_trades(all_trades_df)
-        f.write("\n=== Ichimoku Indicator Trade Analysis ===\n")
-        f.write(ichimoku_report)
+all_trades_df = pd.DataFrame(all_trades)  # Create DataFrame after collecting all trades
 
-    print(df)
-    print("\nNext phase backtest complete. Summary saved.")
+with open("2025_detailed_next_report.txt", "a") as f:  # Append Ichimoku summary text
+    ichimoku_report = analyze_ichimoku_trades(all_trades_df)
+    f.write("\n=== Ichimoku Indicator Trade Analysis ===\n")
+    f.write(ichimoku_report)
 
-    # Now analyze Ichimoku trades after all backtests done
-    all_trades_df = pd.DataFrame(all_trades)
-    analyze_ichimoku_trades(all_trades_df)
+print(df)
+print("\nNext phase backtest complete. Summary saved.")
 

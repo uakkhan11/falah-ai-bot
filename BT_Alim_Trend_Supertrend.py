@@ -45,7 +45,7 @@ def supertrend(df, atr_len=1, factor=4, ema_len=100):
 
     supertrend = [True]  # True means uptrend, False downtrend
     for i in range(1, len(df)):
-        curr_close = df['Close'].iloc[i]
+        curr_close = df['close'].iloc[i]
         prev_st = supertrend[-1]
         prev_upper_band = df['Upper Band'].iloc[i-1]
         prev_lower_band = df['Lower Band'].iloc[i-1]
@@ -93,7 +93,7 @@ def backtest_strategy(df):
     for i in range(1, len(df)):
         if position is None:
             if df['Supertrend'].iloc[i] and df['HistoSignal'].iloc[i] and df['close'].iloc[i] > df['open'].iloc[i]:
-                entry_price = df['Close'].iloc[i]
+                entry_price = df['close'].iloc[i]
                 prev_low = df['low'].iloc[:i].min() if i > 0 else df['low'].iloc[i]
                 stop_loss = prev_low
                 risk = entry_price - stop_loss

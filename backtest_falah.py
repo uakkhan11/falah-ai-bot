@@ -197,7 +197,8 @@ def extract_trade_stats(trades):
 # Run for all symbols, print/save summary!
 #################
 if __name__ == "__main__":
-    symbols = get_symbols_from_daily_data()
+    def get_symbols_from_data():
+    symbols = get_symbols_from_data()
     all_stats = []
     ml_all_metrics = []
     report_lines = []

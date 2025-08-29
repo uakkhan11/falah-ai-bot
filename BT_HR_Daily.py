@@ -14,11 +14,10 @@ DATA_PATHS = {
     '1hour': os.path.join(BASE_DIR, "intraday_swing_data"),
     '15minute': os.path.join(BASE_DIR, "scalping_data"),
 }
-
 YEAR_FILTER = 2025
 
-# Paste Configurable Parameters HERE
-ML_PROBA_THRESHOLD = 0.5       # lower to increase trade frequency
+# CONFIGURABLE PARAMETERS
+ML_PROBA_THRESHOLD = 0.5       # Lower to increase trade frequency
 MIN_TRADE_SIZE = 1
 TRADE_SIZE_SCALING = True
 
@@ -59,9 +58,9 @@ def compute_indicators(df):
     df['volume_sma'] = df['volume'].rolling(14).mean()
     df['volume_ratio'] = df['volume'] / df['volume_sma']
     df['hour_adx'] = df['adx'] if 'adx' in df else np.nan
-
     df['highest_high_22'] = df['high'].rolling(window=22).max()
     df['chandelier_exit'] = df['highest_high_22'] - 3 * df['atr']
+
     df.fillna(method='ffill', inplace=True)
     df.fillna(method='bfill', inplace=True)
     return df
@@ -90,8 +89,10 @@ def ml_trade_filter(m15_df, hourly_df):
     X = m15_df[FEATURES]
     y = m15_df['label']
     X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=False, test_size=0.2)
+
     model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
     model.fit(X_train, y_train)
+
     y_pred = model.predict(X_test)
     metrics = {
         'accuracy': accuracy_score(y_test, y_pred),
@@ -103,7 +104,7 @@ def ml_trade_filter(m15_df, hourly_df):
     return model, metrics, m15_df.index, proba_all
 
 #################
-# Core: "Live-style" backtest for 2025
+# Core: "Live-style" backtest for 2025 with ML trade confidence scaling
 #################
 class Backtest2025Next:
     def __init__(self, daily_df, hourly_df, m15_df, ml_model, ml_proba, ml_index, init_cap=100000):
@@ -121,6 +122,7 @@ class Backtest2025Next:
     def run(self):
         if self.m15_df.empty:
             return []
+
         for i in range(1, len(self.m15_df)):
             prev = self.m15_df.iloc[i-1]
             curr = self.m15_df.iloc[i]
@@ -140,7 +142,6 @@ class Backtest2025Next:
                         qty = max(int(max_qty * trade_ml_prob), MIN_TRADE_SIZE)
                     if qty > 0 and qty <= max_qty:
                         self._enter_trade(curr, qty)
-
             elif self.position > 0:
                 self._manage_trade(curr)
 
@@ -184,7 +185,6 @@ class Backtest2025Next:
         self.highest_price = 0
 
 def extract_trade_stats(trades):
-    import pandas as pd
     df = pd.DataFrame(trades)
     if df.empty or 'type' not in df.columns or 'pnl' not in df.columns:
         return {}
@@ -225,7 +225,6 @@ if __name__ == "__main__":
         stats['ML Precision'] = round(ml_metrics['precision'], 4)
         stats['ML Recall'] = round(ml_metrics['recall'], 4)
         all_stats.append(stats)
-
         report_lines.append(
             f"\n=== {symbol} ===\n"
             + "\n".join([f"{k}: {v}" for k, v in stats.items()])

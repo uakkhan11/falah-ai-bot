@@ -18,9 +18,9 @@ DATA_PATHS = {
 YEAR_FILTER = 2025
 
 # Paste Configurable Parameters HERE
-ML_PROBA_THRESHOLD = 0.55        # lower to increase trade frequency
-REQUIRED_TIMEFRAMES = ['hourly', 'daily']  # relax from ['15minute','hourly','daily']
+ML_PROBA_THRESHOLD = 0.5       # lower to increase trade frequency
 MIN_TRADE_SIZE = 1
+TRADE_SIZE_SCALING = True
 
 #############################
 # Data Load: Year 2025 only
@@ -105,7 +105,7 @@ def ml_trade_filter(m15_df, hourly_df):
 #################
 # Core: "Live-style" backtest for 2025
 #################
-class Backtest2025Enhanced:
+class Backtest2025Next:
     def __init__(self, daily_df, hourly_df, m15_df, ml_model, ml_proba, ml_index, init_cap=100000):
         self.daily_df = daily_df
         self.hourly_df = hourly_df
@@ -128,19 +128,19 @@ class Backtest2025Enhanced:
 
             trade_ml_prob = self.ml_proba.get(curr_idx, 0)
 
-            # Relaxed multi-timeframe confirmation: must satisfy EMA8>EMA20 in all required frames
-            # Check daily EMA condition
-            daily_ok = (self.daily_df['ema8'].iloc[-1] > self.daily_df['ema20'].iloc[-1]) if 'daily' in REQUIRED_TIMEFRAMES else True
-            hourly_ok = (self.hourly_df['ema8'].iloc[-1] > self.hourly_df['ema20'].iloc[-1]) if 'hourly' in REQUIRED_TIMEFRAMES else True
-            # 15-minute timeframe condition disabled or optional based on REQUIRED_TIMEFRAMES
-            m15_ok = (prev['ema8'] <= prev['ema20'] and curr['ema8'] > curr['ema20']) if '15minute' in REQUIRED_TIMEFRAMES else True
+            # Relaxed timeframe confirmation: only daily & hourly EMA check
+            daily_ok = (self.daily_df['ema8'].iloc[-1] > self.daily_df['ema20'].iloc[-1])
+            hourly_ok = (self.hourly_df['ema8'].iloc[-1] > self.hourly_df['ema20'].iloc[-1])
 
             if self.position == 0:
-                if daily_ok and hourly_ok and m15_ok and curr['adx'] > 20 and trade_ml_prob > ML_PROBA_THRESHOLD:
+                if daily_ok and hourly_ok and curr['adx'] > 20 and trade_ml_prob > ML_PROBA_THRESHOLD:
                     max_qty = int(self.cash / curr['close'])
-                    qty = max(int(max_qty * trade_ml_prob), MIN_TRADE_SIZE)  # size scaled by confidence
+                    qty = MIN_TRADE_SIZE
+                    if TRADE_SIZE_SCALING:
+                        qty = max(int(max_qty * trade_ml_prob), MIN_TRADE_SIZE)
                     if qty > 0 and qty <= max_qty:
                         self._enter_trade(curr, qty)
+
             elif self.position > 0:
                 self._manage_trade(curr)
 
@@ -148,6 +148,7 @@ class Backtest2025Enhanced:
             pnl = (self.m15_df.iloc[-1]['close'] - self.entry_price) * self.position
             self._exit_trade(self.m15_df.iloc[-1]['close'], pnl, self.m15_df.index[-1], "EOD Exit")
 
+        print(f"Trades taken: {len(self.trades)//2} | Final cash: {self.cash:.2f}")
         return self.trades
 
     def _enter_trade(self, curr, qty):
@@ -156,6 +157,7 @@ class Backtest2025Enhanced:
         self.cash -= qty * self.entry_price
         self.highest_price = self.entry_price
         self.trades.append({'type': 'BUY', 'date': curr.name, 'price': self.entry_price, 'qty': qty})
+        print(f"Entered trade: {curr.name} Qty: {qty} Price: {self.entry_price}")
 
     def _manage_trade(self, curr):
         price = curr['close']
@@ -164,7 +166,7 @@ class Backtest2025Enhanced:
         tp = self.entry_price * 1.02
         trailing_sl = self.highest_price * 0.99
         chand_exit = curr['chandelier_exit']
-        stop_loss = max(sl, trailing_sl, chand_exit)  # strictest stop
+        stop_loss = max(sl, trailing_sl, chand_exit) 
 
         if price <= stop_loss:
             pnl = (price - self.entry_price) * self.position
@@ -176,32 +178,11 @@ class Backtest2025Enhanced:
     def _exit_trade(self, price, pnl, date, reason):
         self.cash += self.position * price
         self.trades.append({'type': 'SELL', 'date': date, 'price': price, 'qty': self.position, 'pnl': pnl, 'exit_reason': reason})
+        print(f"Exited trade: {date} Qty: {self.position} Price: {price} PnL: {pnl:.2f} Reason: {reason}")
         self.position = 0
         self.entry_price = 0
         self.highest_price = 0
 
-def extract_trade_stats(trades):
-    df = pd.DataFrame(trades)
-    if df.empty or 'type' not in df.columns or 'pnl' not in df.columns:
-        return {}
-    closed = df[df['type'] == 'SELL']
-    if closed.empty:
-        return {}
-    stats = {
-        'Total Trades': len(closed),
-        'Winning Trades': (closed['pnl'] > 0).sum(),
-        'Losing Trades': (closed['pnl'] <= 0).sum(),
-        'Win Rate %': round((closed['pnl'] > 0).mean() * 100, 2),
-        'Avg PnL per Trade': round(closed['pnl'].mean(), 2),
-        'Best PnL': round(closed['pnl'].max(), 2),
-        'Worst PnL': round(closed['pnl'].min(), 2),
-        'Total PnL': round(closed['pnl'].sum(), 2)
-    }
-    return stats
-
-#################
-# Run for all symbols, print/save summary!
-#################
 if __name__ == "__main__":
     def get_symbols_from_data():
         daily_files = os.listdir(DATA_PATHS['daily'])
@@ -216,7 +197,7 @@ if __name__ == "__main__":
         if m15.empty or len(m15) < 30:
             continue
         ml_model, ml_metrics, ml_index, ml_proba = ml_trade_filter(m15, hourly)
-        bt = Backtest2025Enhanced(daily, hourly, m15, ml_model, ml_proba, ml_index)
+        bt = Backtest2025Next(daily, hourly, m15, ml_model, ml_proba, ml_index)
         trades = bt.run()
         stats = extract_trade_stats(trades)
         stats['Symbol'] = symbol
@@ -232,10 +213,10 @@ if __name__ == "__main__":
         )
 
     df = pd.DataFrame(all_stats)
-    df.to_csv("2025_backtest_enhanced_summary.csv", index=False)
+    df.to_csv("2025_backtest_next_summary.csv", index=False)
 
-    with open("2025_detailed_enhanced_report.txt", "w") as f:
+    with open("2025_detailed_next_report.txt", "w") as f:
         f.writelines(report_lines)
 
     print(df)
-    print("\nEnhanced backtest summary written to files.")
+    print("\nNext phase backtest complete. Summary saved.")

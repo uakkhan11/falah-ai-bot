@@ -1,5 +1,7 @@
 import os
 import pandas as pd
+df = pd.read_csv('/root/falah-ai-bot/scalping_data/your_file.csv')
+print(df.columns)
 import numpy as np
 
 BASE_DIR = "/root/falah-ai-bot"

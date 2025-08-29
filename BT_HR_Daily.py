@@ -2,8 +2,11 @@ import os
 import pandas as pd
 import numpy as np
 import talib
+import matplotlib.pyplot as plt
+import seaborn as sns
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import accuracy_score, precision_score, recall_score, classification_report
 import warnings
 warnings.filterwarnings("ignore")
@@ -78,11 +81,11 @@ def prepare_data_2025(symbol):
 #####################
 FEATURES = ["adx", "atr", "volume_ratio", "adosc", "hour_adx", "volume_sma", "macd_hist", "vwap", "roc", "obv"]
 
-def ml_trade_filter(m15_df, hourly_df):
+def ml_trade_filter_tuned(m15_df, hourly_df):
     hourly_df = hourly_df.set_index('date')
     m15_df = m15_df.set_index('date')
-    for col in set(['adx','atr','macd_hist']) & set(hourly_df.columns):
-        m15_df['hour_'+col] = hourly_df[col].reindex(m15_df.index, method='ffill')
+    for col in set(['adx', 'atr', 'macd_hist']) & set(hourly_df.columns):
+        m15_df['hour_' + col] = hourly_df[col].reindex(m15_df.index, method='ffill')
     m15_df['future_return'] = m15_df['close'].shift(-10) / m15_df['close'] - 1
     m15_df['label'] = (m15_df['future_return'] > 0.01).astype(int)
     m15_df.dropna(subset=FEATURES + ['label'], inplace=True)
@@ -90,18 +93,28 @@ def ml_trade_filter(m15_df, hourly_df):
     y = m15_df['label']
     X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=False, test_size=0.2)
 
-    model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
-    model.fit(X_train, y_train)
+    param_grid = {
+        'max_depth': [3, 5, 7],
+        'n_estimators': [50, 100, 200],
+        'scale_pos_weight': [1, 5, 10],  # handle imbalance by weighting positive class
+        'learning_rate': [0.01, 0.1]
+    }
 
-    y_pred = model.predict(X_test)
+    model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
+    grid = GridSearchCV(model, param_grid, scoring='recall', cv=3, n_jobs=-1)
+    grid.fit(X_train, y_train)
+
+    best_model = grid.best_estimator_
+    y_pred = best_model.predict(X_test)
     metrics = {
         'accuracy': accuracy_score(y_test, y_pred),
         'precision': precision_score(y_test, y_pred, zero_division=0),
         'recall': recall_score(y_test, y_pred, zero_division=0),
-        'clf_report': classification_report(y_test, y_pred, output_dict=True)
+        'clf_report': classification_report(y_test, y_pred, output_dict=True),
+        'best_params': grid.best_params_
     }
-    proba_all = model.predict_proba(X)[:,1]
-    return model, metrics, m15_df.index, proba_all
+    proba_all = best_model.predict_proba(X)[:, 1]
+    return best_model, metrics, m15_df.index, proba_all
 
 #################
 # Core: "Live-style" backtest for 2025 with ML trade confidence scaling
@@ -153,12 +166,22 @@ class Backtest2025Next:
         return self.trades
 
     def _enter_trade(self, curr, qty):
+        in_cloud = (curr['close'] > min(curr['senkou_span_a'], curr['senkou_span_b']) and
+                    curr['close'] < max(curr['senkou_span_a'], curr['senkou_span_b']))
+        tenkan_above_kijun = curr['tenkan_sen'] > curr['kijun_sen']
         self.position = qty
         self.entry_price = curr['close']
         self.cash -= qty * self.entry_price
         self.highest_price = self.entry_price
-        self.trades.append({'type': 'BUY', 'date': curr.name, 'price': self.entry_price, 'qty': qty})
-        print(f"Entered trade: {curr.name} Qty: {qty} Price: {self.entry_price}")
+        self.trades.append({
+            'type': 'BUY',
+            'date': curr.name,
+            'price': self.entry_price,
+            'qty': qty,
+            'in_cloud': in_cloud,
+            'tenkan_above_kijun': tenkan_above_kijun
+        })
+        print(f"Entered trade: {curr.name} Qty: {qty} Price: {self.entry_price} InCloud: {in_cloud} TenkanAboveKijun: {tenkan_above_kijun}")
 
     def _manage_trade(self, curr):
         price = curr['close']
@@ -203,6 +226,31 @@ def extract_trade_stats(trades):
     }
     return stats
 
+def analyze_ichimoku_trades(trades_df):
+    # Preprocess trades_df: ensure 'in_cloud', 'tenkan_above_kijun', 'pnl' columns exist
+    trades_df['win'] = trades_df['pnl'] > 0
+
+    # Win rate by in_cloud
+    win_rate_cloud = trades_df.groupby('in_cloud')['win'].mean()
+    sns.barplot(x=win_rate_cloud.index, y=win_rate_cloud.values)
+    plt.title("Win Rate by Ichimoku Cloud Presence")
+    plt.ylabel("Win Rate")
+    plt.xlabel("Trade Entry Inside Cloud")
+    plt.show()
+    
+    # Win rate by Tenkan-Kijun relation
+    win_rate_tk = trades_df.groupby('tenkan_above_kijun')['win'].mean()
+    sns.barplot(x=win_rate_tk.index, y=win_rate_tk.values)
+    plt.title("Win Rate by Tenkan > Kijun")
+    plt.ylabel("Win Rate")
+    plt.xlabel("Tenkan Above Kijun at Entry")
+    plt.show()
+
+    # Profit distributions
+    sns.histplot(data=trades_df, x="pnl", bins=30, kde=True)
+    plt.title("Distribution of Trade PnL")
+    plt.show()
+
 if __name__ == "__main__":
     def get_symbols_from_data():
         daily_files = os.listdir(DATA_PATHS['daily'])
@@ -229,6 +277,7 @@ if __name__ == "__main__":
             f"\n=== {symbol} ===\n"
             + "\n".join([f"{k}: {v}" for k, v in stats.items()])
             + f"\nML Classification Report:\n{ml_metrics['clf_report']}\n"
+        analyze_ichimoku_trades(all_trades_df)    
         )
 
     df = pd.DataFrame(all_stats)

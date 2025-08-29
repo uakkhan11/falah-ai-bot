@@ -259,6 +259,7 @@ if __name__ == "__main__":
     symbols = get_symbols_from_data()
     all_stats = []
     report_lines = []
+    all_trades = []  # Collect trades from all symbols
 
     for symbol in symbols:
         daily, hourly, m15 = prepare_data_2025(symbol)
@@ -267,6 +268,8 @@ if __name__ == "__main__":
         ml_model, ml_metrics, ml_index, ml_proba = ml_trade_filter(m15, hourly)
         bt = Backtest2025Next(daily, hourly, m15, ml_model, ml_proba, ml_index)
         trades = bt.run()
+        # Collect trades for later analysis
+        all_trades.extend(trades)
         stats = extract_trade_stats(trades)
         stats['Symbol'] = symbol
         stats['ML Accuracy'] = round(ml_metrics['accuracy'], 4)
@@ -277,7 +280,6 @@ if __name__ == "__main__":
             f"\n=== {symbol} ===\n"
             + "\n".join([f"{k}: {v}" for k, v in stats.items()])
             + f"\nML Classification Report:\n{ml_metrics['clf_report']}\n"
-        analyze_ichimoku_trades(all_trades_df)    
         )
 
     df = pd.DataFrame(all_stats)
@@ -288,3 +290,8 @@ if __name__ == "__main__":
 
     print(df)
     print("\nNext phase backtest complete. Summary saved.")
+
+    # Now analyze Ichimoku trades after all backtests done
+    all_trades_df = pd.DataFrame(all_trades)
+    analyze_ichimoku_trades(all_trades_df)
+

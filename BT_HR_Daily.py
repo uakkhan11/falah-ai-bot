@@ -99,6 +99,8 @@ def compute_indicators(df):
     df.fillna(method='ffill', inplace=True)
     df.fillna(method='bfill', inplace=True)
 
+    df = add_ichimoku(df)
+
     return df
 
 def prepare_data_2025(symbol):

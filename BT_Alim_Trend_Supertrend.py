@@ -1,7 +1,5 @@
 import os
 import pandas as pd
-df = pd.read_csv('/root/falah-ai-bot/scalping_data/AEGISVOPAK.csv')
-print(df.columns)
 import numpy as np
 
 BASE_DIR = "/root/falah-ai-bot"
@@ -165,7 +163,7 @@ if __name__ == "__main__":
         # Load the first symbol for testing
         df = pd.read_csv(os.path.join(DATA_PATHS['15minute'], symbols[0] + '.csv'))
         # Make sure Date column is parsed as datetime
-        df['Date'] = pd.to_datetime(df['Date'])
+        df['Date'] = pd.to_datetime(df['date'])
         
         trades = backtest_strategy(df)
         summary = performance_summary(trades, df)

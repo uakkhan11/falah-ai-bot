@@ -152,6 +152,25 @@ def performance_summary(trades, df):
     }
     return summary
 
+if __name__ == "__main__":
+    import os
+    import pandas as pd
+
+    symbols = get_symbols_from_15min_data()
+    if not symbols:
+        print("No data files found in the directory.")
+    else:
+        # Load the first symbol for testing
+        df = pd.read_csv(os.path.join(DATA_PATHS['15minute'], symbols[0] + '.csv'))
+        # Make sure Date column is parsed as datetime
+        df['Date'] = pd.to_datetime(df['Date'])
+        
+        trades = backtest_strategy(df)
+        summary = performance_summary(trades, df)
+        print("Performance Summary:")
+        for k, v in summary.items():
+            print(f"{k}: {v}")
+
 # Example usage:
 # symbols = get_symbols_from_15min_data()
 # df = pd.read_csv(os.path.join(DATA_PATHS['15minute'], symbols[0] + '.csv'))

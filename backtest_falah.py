@@ -178,6 +178,8 @@ class Backtest2025:
 
 def extract_trade_stats(trades):
     df = pd.DataFrame(trades)
+    if df.empty or 'type' not in df.columns or 'pnl' not in df.columns:
+        return {}
     closed = df[df['type'] == 'SELL']
     if closed.empty:
         return {}

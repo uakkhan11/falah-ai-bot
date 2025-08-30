@@ -53,6 +53,7 @@ def compute_indicators(df):
     df['volume_sma'] = df['volume'].rolling(14).mean()
     df['volume_ratio'] = df['volume'] / df['volume_sma']
     df['volume_spike'] = df['volume'] > 2 * df['volume_sma']
+
     df['hour_adx'] = df['adx'] if 'adx' in df else np.nan
     df['highest_high_22'] = df['high'].rolling(window=22).max()
     df['chandelier_exit'] = df['highest_high_22'] - 3 * df['atr']
@@ -64,9 +65,9 @@ def compute_indicators(df):
 def prepare_data_2025(symbol):
     daily, hourly, m15 = load_and_filter_2025(symbol)
     daily, hourly, m15 = compute_indicators(daily), compute_indicators(hourly), compute_indicators(m15)
-    daily.dropna(subset=['ema8','ema20'], inplace=True)
-    hourly.dropna(subset=['ema8','ema20'], inplace=True)
-    m15.dropna(subset=['ema8','ema20'], inplace=True)
+    daily.dropna(subset=['ema8', 'ema20'], inplace=True)
+    hourly.dropna(subset=['ema8', 'ema20'], inplace=True)
+    m15.dropna(subset=['ema8', 'ema20'], inplace=True)
     return daily, hourly, m15
 
 FEATURES = ["adx", "atr", "volume_ratio", "adosc", "hour_adx", "volume_sma",
@@ -75,7 +76,7 @@ FEATURES = ["adx", "atr", "volume_ratio", "adosc", "hour_adx", "volume_sma",
 def ml_trade_filter(m15_df, hourly_df):
     hourly_df = hourly_df.set_index('date')
     m15_df = m15_df.set_index('date')
-    for col in set(['adx','atr','macd_hist']) & set(hourly_df.columns):
+    for col in set(['adx', 'atr', 'macd_hist']) & set(hourly_df.columns):
         m15_df['hour_' + col] = hourly_df[col].reindex(m15_df.index, method='ffill')
     m15_df['future_return'] = m15_df['close'].shift(-10) / m15_df['close'] - 1
     m15_df['label'] = (m15_df['future_return'] > 0.01).astype(int)
@@ -92,12 +93,12 @@ def ml_trade_filter(m15_df, hourly_df):
         'recall': recall_score(y_test, y_pred, zero_division=0),
         'clf_report': classification_report(y_test, y_pred, output_dict=True)
     }
-    proba_all = model.predict_proba(X)[:,1]
+    proba_all = model.predict_proba(X)[:, 1]
     return model, metrics, m15_df.index, proba_all
 
 class Backtest2025Next:
     def __init__(self, daily_df, hourly_df, m15_df, ml_model=None, ml_proba=None, ml_index=None, init_cap=100000,
-                 mode='ml_all'):
+                 mode='ml_all', volume_spike_size_factor=0.3):
         self.daily_df = daily_df
         self.hourly_df = hourly_df
         self.m15_df = m15_df
@@ -109,6 +110,7 @@ class Backtest2025Next:
         self.trades = []
         self.highest_price = 0
         self.mode = mode
+        self.volume_spike_size_factor = volume_spike_size_factor  # if volume spike only, size reduction factor
 
     def run(self):
         if self.m15_df.empty:
@@ -117,37 +119,58 @@ class Backtest2025Next:
             curr = self.m15_df.iloc[i]
             curr_idx = curr.name
 
-            if self.mode == 'ml_all':
-                trade_ml_prob = self.ml_proba.get(curr_idx, 0)
-                daily_ok = (self.daily_df['ema8'].iloc[-1] > self.daily_df['ema20'].iloc[-1])
-                hourly_ok = (self.hourly_df['ema8'].iloc[-1] > self.hourly_df['ema20'].iloc[-1])
-                can_enter = daily_ok and hourly_ok and curr['adx'] > 20 and trade_ml_prob > ML_PROBA_THRESHOLD
-            elif self.mode == 'breakout':
-                can_enter = curr['breakout'] == True
-            elif self.mode == 'pullback':
-                can_enter = curr['pullback'] == True
-            elif self.mode == 'volume_spike':
-                can_enter = curr['volume_spike'] == True
-            else:
-                can_enter = False
+            # Check if ML signals trade
+            daily_ok = (self.daily_df['ema8'].iloc[-1] > self.daily_df['ema20'].iloc[-1])
+            hourly_ok = (self.hourly_df['ema8'].iloc[-1] > self.hourly_df['ema20'].iloc[-1])
+            trade_ml_prob = self.ml_proba.get(curr_idx, 0) if self.ml_proba is not None else 0
+            ml_signal = daily_ok and hourly_ok and curr['adx'] > 20 and trade_ml_prob > ML_PROBA_THRESHOLD
+
+            # Check volume spike
+            volume_spike_signal = curr['volume_spike']
+
+            can_enter = False
+            qty = MIN_TRADE_SIZE
 
             if self.position == 0:
-                if can_enter:
-                    max_qty = int(self.cash / curr['close'])
-                    qty = MIN_TRADE_SIZE
-                    if TRADE_SIZE_SCALING and self.mode == 'ml_all':
-                        qty = max(int(max_qty * trade_ml_prob), MIN_TRADE_SIZE)
-                    else:
-                        qty = max(MIN_TRADE_SIZE, qty)
-                    if qty > 0 and qty <= max_qty:
-                        self._enter_trade(curr, qty)
+                # Hybrid logic: ML takes priority
+                if self.mode == 'hybrid':
+                    if ml_signal:
+                        max_qty = int(self.cash / curr['close'])
+                        if TRADE_SIZE_SCALING:
+                            qty = max(int(max_qty * trade_ml_prob), MIN_TRADE_SIZE)
+                        else:
+                            qty = MIN_TRADE_SIZE
+                        can_enter = True
+                    elif volume_spike_signal:
+                        max_qty = int(self.cash / curr['close'])
+                        qty = max(int(max_qty * self.volume_spike_size_factor), MIN_TRADE_SIZE)
+                        can_enter = True
+                elif self.mode == 'ml_all':
+                    if ml_signal:
+                        max_qty = int(self.cash / curr['close'])
+                        if TRADE_SIZE_SCALING:
+                            qty = max(int(max_qty * trade_ml_prob), MIN_TRADE_SIZE)
+                        can_enter = True
+                elif self.mode == 'volume_spike':
+                    if volume_spike_signal:
+                        max_qty = int(self.cash / curr['close'])
+                        qty = max(int(max_qty * self.volume_spike_size_factor), MIN_TRADE_SIZE)
+                        can_enter = True
+                else:
+                    # fallback no enter
+                    can_enter = False
+
+                if can_enter and qty <= max_qty and qty > 0:
+                    self._enter_trade(curr, qty)
+
             elif self.position > 0:
                 self._manage_trade(curr)
 
         if self.position > 0:
             pnl = (self.m15_df.iloc[-1]['close'] - self.entry_price) * self.position
             self._exit_trade(self.m15_df.iloc[-1]['close'], pnl, self.m15_df.index[-1], "EOD Exit")
-        print(f"Trades taken: {len(self.trades)//2} | Final cash: {self.cash:.2f} | Mode: {self.mode}")
+
+        print(f"Trades taken: {len(self.trades) // 2} | Final cash: {self.cash:.2f} | Mode: {self.mode}")
         return self.trades
 
     def _enter_trade(self, curr, qty):
@@ -156,7 +179,7 @@ class Backtest2025Next:
         self.cash -= qty * self.entry_price
         self.highest_price = self.entry_price
         self.trades.append({'type': 'BUY', 'date': curr.name, 'price': self.entry_price, 'qty': qty})
-        print(f"Entered trade: {curr.name} Qty: {qty} Price: {self.entry_price}")
+        print(f"Entered trade: {curr.name} Qty: {qty} Price: {self.entry_price} Mode: {self.mode}")
 
     def _manage_trade(self, curr):
         price = curr['close']
@@ -176,7 +199,7 @@ class Backtest2025Next:
     def _exit_trade(self, price, pnl, date, reason):
         self.cash += self.position * price
         self.trades.append({'type': 'SELL', 'date': date, 'price': price, 'qty': self.position, 'pnl': pnl, 'exit_reason': reason})
-        print(f"Exited trade: {date} Qty: {self.position} Price: {price} PnL: {pnl:.2f} Reason: {reason}")
+        print(f"Exited trade: {date} Qty: {self.position} Price: {price} PnL: {pnl:.2f} Mode: {self.mode} Reason: {reason}")
         self.position = 0
         self.entry_price = 0
         self.highest_price = 0
@@ -200,6 +223,31 @@ def extract_trade_stats(trades):
     }
     return stats
 
+def summarize_strategy_performance(df):
+    strategies = df['Strategy'].unique()
+    summary = []
+    for strat in strategies:
+        strat_df = df[df['Strategy'] == strat]
+        traded_symbols = strat_df['Symbol'].nunique()
+        profitable_symbols = strat_df[strat_df['Total PnL'] > 0]['Symbol'].nunique()
+        losing_symbols = strat_df[strat_df['Total PnL'] <= 0]['Symbol'].nunique()
+        avg_win_rate = strat_df['Win Rate %'].mean()
+        total_pnl = strat_df['Total PnL'].sum()
+        summary.append({
+            'Strategy': strat,
+            'Symbols Traded': traded_symbols,
+            'Profitable Symbols': profitable_symbols,
+            'Losing Symbols': losing_symbols,
+            'Average Win Rate %': round(avg_win_rate, 2),
+            'Total PnL': round(total_pnl, 2)
+        })
+
+    summary_df = pd.DataFrame(summary)
+    print("\n--- Strategy Performance Summary ---")
+    print(summary_df)
+    return summary_df
+
+
 if __name__ == "__main__":
     def get_symbols_from_data():
         daily_files = os.listdir(DATA_PATHS['daily'])
@@ -213,8 +261,9 @@ if __name__ == "__main__":
         if m15.empty or len(m15) < 30:
             continue
 
-        # ML model + all features
         ml_model, ml_metrics, ml_index, ml_proba = ml_trade_filter(m15, hourly)
+
+        # Backtest ML only
         bt_ml = Backtest2025Next(daily, hourly, m15, ml_model, ml_proba, ml_index, mode='ml_all')
         trades_ml = bt_ml.run()
         stats_ml = extract_trade_stats(trades_ml)
@@ -224,13 +273,23 @@ if __name__ == "__main__":
                          'ML Recall': round(ml_metrics['recall'], 4)})
         all_stats.append(stats_ml)
 
-        # Volume Spike only
+        # Backtest Volume Spike only
         bt_vs = Backtest2025Next(daily, hourly, m15, mode='volume_spike')
         trades_vs = bt_vs.run()
         stats_vs = extract_trade_stats(trades_vs)
         stats_vs.update({'Symbol': symbol, 'Strategy': 'Volume Spike Only'})
         all_stats.append(stats_vs)
 
+        # Backtest combined hybrid strategy (ML + volume spike non-overlapping)
+        bt_hybrid = Backtest2025Next(daily, hourly, m15, ml_model, ml_proba, ml_index, mode='hybrid',
+                                    volume_spike_size_factor=0.3)
+        trades_hybrid = bt_hybrid.run()
+        stats_hybrid = extract_trade_stats(trades_hybrid)
+        stats_hybrid.update({'Symbol': symbol, 'Strategy': 'Hybrid ML + Volume Spike'})
+        all_stats.append(stats_hybrid)
+
     df = pd.DataFrame(all_stats)
-    df.to_csv("2025_backtest_volume_spike_summary.csv", index=False)
-    print(df)
+    df.to_csv("2025_backtest_hybrid_summary.csv", index=False)
+
+    # Print summary counts & aggregate PnL by strategy
+    summarize_strategy_performance(df)

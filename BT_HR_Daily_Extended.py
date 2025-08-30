@@ -25,6 +25,7 @@ PROFIT_TARGET = 0.02
 TRAIL_TRIGGER = 0.005
 MAX_TRADES = 500
 MAX_POSITIONS = 5
+MIN_TRADE_SIZE = 1
 INITIAL_CAPITAL = 100000
 
 FEATURES = ["adx", "atr", "volume_ratio", "adosc", "hour_adx", "volume_sma",

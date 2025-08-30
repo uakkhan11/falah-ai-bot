@@ -16,10 +16,9 @@ DATA_PATHS = {
 }
 YEAR_FILTER = 2025
 
-# CONFIGURABLE PARAMETERS
-ML_PROBA_THRESHOLD = 0.5       # Lower to increase trade frequency
-MIN_TRADE_SIZE = 1
-TRADE_SIZE_SCALING = True
+ML_PROBA_THRESHOLD = 0.5        # Slightly lower than before for more trades
+MIN_TRADE_SIZE = 1              # Minimum one unit position
+TRADE_SIZE_SCALING = True       # Enable position sizing by ML confidence
 
 #############################
 # Data Load: Year 2025 only
@@ -33,7 +32,7 @@ def load_and_filter_2025(symbol):
     m15 = pd.read_csv(os.path.join(DATA_PATHS['15minute'], f"{symbol}.csv"))
     daily, hourly, m15 = filter_year(daily), filter_year(hourly), filter_year(m15)
     return daily, hourly, m15
-
+    
 def compute_indicators(df):
     df = df.copy()
     df['close'] = pd.to_numeric(df['close'], errors='coerce').ffill()
@@ -60,9 +59,10 @@ def compute_indicators(df):
     df['hour_adx'] = df['adx'] if 'adx' in df else np.nan
     df['highest_high_22'] = df['high'].rolling(window=22).max()
     df['chandelier_exit'] = df['highest_high_22'] - 3 * df['atr']
- 
+    df.fillna(method='ffill', inplace=True)
+    df.fillna(method='bfill', inplace=True)
     return df
-
+    
 def prepare_data_2025(symbol):
     daily, hourly, m15 = load_and_filter_2025(symbol)
     daily, hourly, m15 = compute_indicators(daily), compute_indicators(hourly), compute_indicators(m15)
@@ -70,50 +70,39 @@ def prepare_data_2025(symbol):
     hourly.dropna(subset=['ema8','ema20'], inplace=True)
     m15.dropna(subset=['ema8','ema20'], inplace=True)
     return daily, hourly, m15
-
+    
 #####################
 # ML filter - only best features
 #####################
-FEATURES = ["adx", "atr", "volume_ratio", "adosc", "hour_adx", "volume_sma", "macd_hist", "vwap", "roc", "obv"]
 
-def ml_trade_filter_tuned(m15_df, hourly_df):
+FEATURES = ["adx", "atr", "volume_ratio", "adosc", "hour_adx", "volume_sma", "macd_hist", "vwap", "roc", "obv"]
+def ml_trade_filter(m15_df, hourly_df):
     hourly_df = hourly_df.set_index('date')
     m15_df = m15_df.set_index('date')
-    for col in set(['adx', 'atr', 'macd_hist']) & set(hourly_df.columns):
-        m15_df['hour_' + col] = hourly_df[col].reindex(m15_df.index, method='ffill')
+    for col in set(['adx','atr','macd_hist']) & set(hourly_df.columns):
+        m15_df['hour_'+col] = hourly_df[col].reindex(m15_df.index, method='ffill')
     m15_df['future_return'] = m15_df['close'].shift(-10) / m15_df['close'] - 1
     m15_df['label'] = (m15_df['future_return'] > 0.01).astype(int)
     m15_df.dropna(subset=FEATURES + ['label'], inplace=True)
     X = m15_df[FEATURES]
     y = m15_df['label']
     X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=False, test_size=0.2)
-
-    param_grid = {
-        'max_depth': [3, 5, 7],
-        'n_estimators': [50, 100, 200],
-        'scale_pos_weight': [1, 5, 10],  # handle imbalance by weighting positive class
-        'learning_rate': [0.01, 0.1]
-    }
-
     model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
-    grid = GridSearchCV(model, param_grid, scoring='recall', cv=3, n_jobs=-1)
-    grid.fit(X_train, y_train)
-
-    best_model = grid.best_estimator_
-    y_pred = best_model.predict(X_test)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
     metrics = {
         'accuracy': accuracy_score(y_test, y_pred),
         'precision': precision_score(y_test, y_pred, zero_division=0),
         'recall': recall_score(y_test, y_pred, zero_division=0),
-        'clf_report': classification_report(y_test, y_pred, output_dict=True),
-        'best_params': grid.best_params_
+        'clf_report': classification_report(y_test, y_pred, output_dict=True)
     }
-    proba_all = best_model.predict_proba(X)[:, 1]
-    return best_model, metrics, m15_df.index, proba_all
+    proba_all = model.predict_proba(X)[:,1]
+    return model, metrics, m15_df.index, proba_all
+    
+#################
+# Core: "Live-style" backtest for 2025
+#################
 
-#################
-# Core: "Live-style" backtest for 2025 with ML trade confidence scaling
-#################
 class Backtest2025Next:
     def __init__(self, daily_df, hourly_df, m15_df, ml_model, ml_proba, ml_index, init_cap=100000):
         self.daily_df = daily_df
@@ -191,7 +180,7 @@ class Backtest2025Next:
         self.position = 0
         self.entry_price = 0
         self.highest_price = 0
-
+        
 def extract_trade_stats(trades):
     import pandas as pd
     df = pd.DataFrame(trades)
@@ -211,8 +200,9 @@ def extract_trade_stats(trades):
         'Total PnL': round(closed['pnl'].sum(), 2)
     }
     return stats
-
-
+#################
+# Run for all symbols, print/save summary!
+#################
 if __name__ == "__main__":
     def get_symbols_from_data():
         daily_files = os.listdir(DATA_PATHS['daily'])
@@ -226,7 +216,7 @@ if __name__ == "__main__":
         daily, hourly, m15 = prepare_data_2025(symbol)
         if m15.empty or len(m15) < 30:
             continue
-        ml_model, ml_metrics, ml_index, ml_proba = ml_trade_filter_tuned(m15, hourly)
+        ml_model, ml_metrics, ml_index, ml_proba = ml_trade_filter(m15, hourly)
         bt = Backtest2025Next(daily, hourly, m15, ml_model, ml_proba, ml_index)
         trades = bt.run()
         stats = extract_trade_stats(trades)

@@ -7,6 +7,7 @@ from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, classification_report
 import warnings
+
 warnings.filterwarnings("ignore")
 
 BASE_DIR = "/root/falah-ai-bot"
@@ -49,23 +50,22 @@ def add_indicators(df):
     if 'date' in df.columns: df = df.sort_values('date')
 
     df_weekly = df.set_index('date').resample('W-MON').agg({
-        'open':'first','high':'max','low':'min','close':'last','volume':'sum'
+        'open':'first', 'high':'max', 'low':'min', 'close':'last', 'volume':'sum'
     }).dropna().reset_index()
 
-    df_weekly['weekly_donchian_high'] = df_weekly['high'].rolling(20,1).max()
-    df['weekly_donchian_high'] = df_weekly.set_index('date')['weekly_donchian_high']\
-        .reindex(df['date'], method='ffill').values
+    df_weekly['weekly_donchian_high'] = df_weekly['high'].rolling(20, 1).max()
+    df['weekly_donchian_high'] = df_weekly.set_index('date')['weekly_donchian_high'].reindex(df['date'], method='ffill').values
 
-    df['donchian_high'] = df['high'].rolling(20,1).max()
+    df['donchian_high'] = df['high'].rolling(20, 1).max()
     df['ema200'] = ta.trend.ema_indicator(df['close'], window=200)
 
     try:
         adx_df = ta.trend.ADXIndicator(df['high'], df['low'], df['close'], window=14)
         df['adx'] = adx_df.adx()
-    except: df['adx'] = np.nan
+    except:
+        df['adx'] = np.nan
 
-    df['vol_sma20'] = df['volume'].rolling(20,1).mean()
-
+    df['vol_sma20'] = df['volume'].rolling(20, 1).mean()
     bb = ta.volatility.BollingerBands(df['close'], window=20, window_dev=2)
     df['bb_upper'] = bb.bollinger_hband()
     df['bb_lower'] = bb.bollinger_lband()
@@ -76,7 +76,7 @@ def add_indicators(df):
 
     df['atr'] = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=ATR_PERIOD).average_true_range()
     atr_ce = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=22).average_true_range()
-    high20 = df['high'].rolling(22,1).max()
+    high20 = df['high'].rolling(22, 1).max()
     df['chandelier_exit'] = high20 - 3.0 * atr_ce
 
     try:
@@ -87,7 +87,6 @@ def add_indicators(df):
         df['supertrend'] = np.nan
         df['supertrend_dir'] = 0
 
-    # Additional ML features using TA-Lib
     close = df['close'].values.astype(float)
     high = df['high'].values.astype(float)
     low = df['low'].values.astype(float)
@@ -98,7 +97,6 @@ def add_indicators(df):
     df['obv'] = talib.OBV(close, volume)
     df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
 
-    # Volume ratio and VWAP
     df['volume_ratio'] = df['volume'] / df['vol_sma20']
     df['vwap'] = (df['close'] * df['volume']).cumsum() / df['volume'].cumsum()
 
@@ -116,17 +114,13 @@ def add_hourly_features_to_m15(m15_df, hourly_df):
 def ml_trade_filter(m15_df, hourly_df):
     hourly_df = hourly_df.set_index('date')
     m15_df = m15_df.set_index('date')
-
     for col in set(['adx','atr','macd_hist']) & set(hourly_df.columns):
         m15_df['hour_' + col] = hourly_df[col].reindex(m15_df.index, method='ffill')
-
     m15_df['future_return'] = m15_df['close'].shift(-10) / m15_df['close'] - 1
     m15_df['label'] = (m15_df['future_return'] > 0.01).astype(int)
-
     m15_df.dropna(subset=FEATURES + ['label'], inplace=True)
     X = m15_df[FEATURES]
     y = m15_df['label']
-
     X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=False, test_size=0.2)
     model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
     model.fit(X_train, y_train)
@@ -140,54 +134,47 @@ def ml_trade_filter(m15_df, hourly_df):
     proba_all = model.predict_proba(X)[:, 1]
     return model, metrics, m15_df.index, proba_all
 
-def prepare_data_2025(symbol):
-    daily, hourly, m15 = load_and_filter_2025(symbol)
-    daily = add_indicators(daily)
-    hourly = add_indicators(hourly)
-    m15 = add_indicators(m15)
-    m15 = add_hourly_features_to_m15(m15, hourly)
-    daily.dropna(subset=['ema200'], inplace=True)
-    hourly.dropna(subset=['ema200'], inplace=True)
-    m15.dropna(subset=['ema200'], inplace=True)
-    return daily, hourly, m15
-
-def load_and_filter_2025(symbol):
-    def filter_year(df):
-        df['date'] = pd.to_datetime(df['date'])
-        return df[df['date'].dt.year == YEAR_FILTER].reset_index(drop=True)
-    daily = pd.read_csv(os.path.join(DATA_PATHS['daily'], f"{symbol}.csv"))
-    hourly = pd.read_csv(os.path.join(DATA_PATHS['1hour'], f"{symbol}.csv"))
-    m15 = pd.read_csv(os.path.join(DATA_PATHS['15minute'], f"{symbol}.csv"))
-    daily, hourly, m15 = filter_year(daily), filter_year(hourly), filter_year(m15)
-    return daily, hourly, m15
-    
-symbols = get_symbols_from_data()
-
-for symbol in symbols:    
-daily, hourly, m15 = load_and_filter_2025(symbol)
-m15 = add_indicators(m15)
-hourly = add_indicators(hourly)
-m15 = add_hourly_features_to_m15(m15, hourly)
-
-# Generate the entry signals needed by apply_ml_filter
-m15 = breakout_signal(m15)
-m15 = bb_breakout_signal(m15)
-m15 = bb_pullback_signal(m15)
-m15 = combine_signals(m15)
-
-m15 = apply_ml_filter(m15, ml_model)
-
 def apply_ml_filter(df, model):
     if not USE_ML_CONFIRM or model is None:
         df['ml_signal'] = 1
         return df
-
     features = FEATURES
     df = df.dropna(subset=features).reset_index(drop=True)
     if df.empty:
         return df
     df['ml_signal'] = model.predict(df[features])
     df['entry_signal'] = np.where((df['entry_signal'] == 1) & (df['ml_signal'] == 1), 1, 0)
+    return df
+
+def breakout_signal(df):
+    cond_d = df['close'] > df['donchian_high'].shift(1)
+    cond_v = df['volume'] > VOLUME_MULT_BREAKOUT * df['vol_sma20']
+    cond_w = df['close'] > df['weekly_donchian_high'].shift(1)
+    df['breakout_signal'] = (cond_d & cond_v & cond_w).astype(int)
+    return df
+
+def bb_breakout_signal(df):
+    df['bb_breakout_signal'] = ((df['close'] > df['bb_upper']) & (df['volume'] > VOLUME_MULT_BREAKOUT * df['vol_sma20'])).astype(int)
+    return df
+
+def bb_pullback_signal(df):
+    cond_pull = df['close'] < df['bb_lower']
+    cond_resume = df['close'] > df['bb_lower'].shift(1)
+    df['bb_pullback_signal'] = (cond_pull.shift(1) & cond_resume).astype(int)
+    return df
+
+def combine_signals(df):
+    chand_or_st = (df['close'] > df['chandelier_exit']) | (df['supertrend_dir'] == 1)
+    regime_breakout = (df['close'] > df['ema200']) & (df['adx'] > ADX_THRESHOLD_BREAKOUT)
+    regime_default = (df['close'] > df['ema200']) & (df['adx'] > ADX_THRESHOLD_DEFAULT)
+    df['entry_signal'] = 0
+    df['entry_type'] = ''
+    df.loc[(df['breakout_signal'] == 1) & chand_or_st & regime_breakout,
+           ['entry_signal', 'entry_type']] = [1, 'Breakout']
+    df.loc[(df['bb_breakout_signal'] == 1) & chand_or_st & regime_breakout & (df['entry_signal'] == 0),
+           ['entry_signal', 'entry_type']] = [1, 'BB_Breakout']
+    df.loc[(df['bb_pullback_signal'] == 1) & chand_or_st & regime_default & (df['entry_signal'] == 0),
+           ['entry_signal', 'entry_type']] = [1, 'BB_Pullback']
     return df
 
 def backtest(df, symbol):
@@ -197,12 +184,10 @@ def backtest(df, symbol):
     trades = []
     trade_count = 0
     regime_fail_count = {}
-
     for i in range(1, len(df)):
         row = df.iloc[i]
         date, price, sig, sigtype = row['date'], row['close'], row['entry_signal'], row['entry_type']
         regime_ok = (row['close'] > row['ema200']) and (row['adx'] > ADX_THRESHOLD_DEFAULT)
-
         # EXIT logic
         to_close = []
         for pid, pos in positions.items():
@@ -215,7 +200,6 @@ def backtest(df, symbol):
                 pos['trail_stop'] = row['chandelier_exit']
             if pos['trail_active'] and row['chandelier_exit'] > pos['trail_stop']:
                 pos['trail_stop'] = row['chandelier_exit']
-
             if ret >= PROFIT_TARGET:
                 reason = 'Profit Target'
             elif price <= atr_stop:
@@ -232,11 +216,10 @@ def backtest(df, symbol):
                     reason = 'Regime Exit'
                 else:
                     reason = None
-
             if reason:
                 buy_val = pos['shares'] * pos['entry_price']
                 sell_val = pos['shares'] * price
-                charges = 0.0005 * (buy_val + sell_val)  # Simple fee model
+                charges = 0.0005 * (buy_val + sell_val)
                 pnl = sell_val - buy_val - charges
                 trades.append({'symbol': symbol, 'entry_date': pos['entry_date'], 'exit_date': date,
                                'pnl': pnl, 'entry_type': pos['entry_type'], 'exit_reason': reason})
@@ -247,18 +230,15 @@ def backtest(df, symbol):
                     break
         for pid in to_close:
             positions.pop(pid)
-
         if trade_count >= MAX_TRADES:
             break
-
         # ENTRY logic
         if sig == 1 and len(positions) < MAX_POSITIONS and cash >= POSITION_SIZE:
             shares = POSITION_SIZE / price
             positions[len(positions) + 1] = {'entry_date': date, 'entry_price': price,
                                            'shares': shares, 'high': price, 'trail_active': False,
                                            'trail_stop': 0, 'entry_atr': row['atr'], 'entry_type': sigtype}
-            cash -= POSITION_SIZE  # Deduct full position size
-
+            cash -= POSITION_SIZE
     return trades
 
 def extract_trade_stats(trades):
@@ -322,7 +302,6 @@ if __name__ == "__main__":
             'ML Recall': round(ml_metrics['recall'], 4)
         })
         all_stats.append(stats_ml)
-
     df_summary = pd.DataFrame(all_stats)
     df_summary.to_csv("final_ml_only_backtest_report.csv", index=False)
     summarize_strategy_performance(df_summary)

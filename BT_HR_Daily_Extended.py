@@ -32,6 +32,33 @@ POSITION_SIZE = 10000  # Fixed size per trade
 USE_ML_CONFIRM = True
 ATR_PERIOD = 14
 
+FEATURES = ["adx", "atr", "volume_ratio", "adosc", "hour_adx", "volume_sma",
+            "macd_hist", "vwap", "roc", "obv"]
+
+def ml_trade_filter(m15_df, hourly_df):
+    hourly_df = hourly_df.set_index('date')
+    m15_df = m15_df.set_index('date')
+    # Forward-fill hourly features into m15 timeframe
+    for col in set(['adx','atr','macd_hist']) & set(hourly_df.columns):
+        m15_df['hour_' + col] = hourly_df[col].reindex(m15_df.index, method='ffill')
+    m15_df['future_return'] = m15_df['close'].shift(-10) / m15_df['close'] - 1
+    m15_df['label'] = (m15_df['future_return'] > 0.01).astype(int)
+    m15_df.dropna(subset=FEATURES + ['label'], inplace=True)
+    X = m15_df[FEATURES]
+    y = m15_df['label']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=False, test_size=0.2)
+    model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    metrics = {
+        'accuracy': accuracy_score(y_test, y_pred),
+        'precision': precision_score(y_test, y_pred, zero_division=0),
+        'recall': recall_score(y_test, y_pred, zero_division=0),
+        'clf_report': classification_report(y_test, y_pred, output_dict=True)
+    }
+    proba_all = model.predict_proba(X)[:, 1]
+    return model, metrics, m15_df.index, proba_all
+
 def prepare_data_2025(symbol):
     daily, hourly, m15 = load_and_filter_2025(symbol)
     daily = add_indicators(daily)

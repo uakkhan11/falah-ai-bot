@@ -301,7 +301,13 @@ if __name__ == "__main__":
     all_stats = []
     for symbol in symbols:
         daily, hourly, m15 = prepare_data_2025(symbol)
+        m15 = breakout_signal(m15)
+        m15 = bb_breakout_signal(m15)
+        m15 = bb_pullback_signal(m15)
+        m15 = combine_signals(m15)
+        
         ml_model, ml_metrics, ml_index, ml_proba = ml_trade_filter(m15, hourly)
+        
         m15 = apply_ml_filter(m15, ml_model)
         trades_ml = backtest(m15, symbol)
         stats_ml = extract_trade_stats(trades_ml)

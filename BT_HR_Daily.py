@@ -52,13 +52,10 @@ def compute_indicators(df):
     df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
     df['volume_sma'] = df['volume'].rolling(14).mean()
     df['volume_ratio'] = df['volume'] / df['volume_sma']
+    df['volume_spike'] = df['volume'] > 2 * df['volume_sma']
     df['hour_adx'] = df['adx'] if 'adx' in df else np.nan
     df['highest_high_22'] = df['high'].rolling(window=22).max()
     df['chandelier_exit'] = df['highest_high_22'] - 3 * df['atr']
-
-    # Breakout & Pullback flags
-    df['breakout'] = df['close'] > df['high'].rolling(window=20).max().shift(1)
-    df['pullback'] = (df['close'] < df['ema20']) & (df['ema8'] > df['ema20'])
 
     df.fillna(method='ffill', inplace=True)
     df.fillna(method='bfill', inplace=True)
@@ -101,12 +98,6 @@ def ml_trade_filter(m15_df, hourly_df):
 class Backtest2025Next:
     def __init__(self, daily_df, hourly_df, m15_df, ml_model=None, ml_proba=None, ml_index=None, init_cap=100000,
                  mode='ml_all'):
-        """
-        mode options:
-        - 'ml_all'   : use ML + indicator logic (original)
-        - 'breakout' : only enter trades flagged breakout==True
-        - 'pullback' : only enter trades flagged pullback==True
-        """
         self.daily_df = daily_df
         self.hourly_df = hourly_df
         self.m15_df = m15_df
@@ -135,6 +126,8 @@ class Backtest2025Next:
                 can_enter = curr['breakout'] == True
             elif self.mode == 'pullback':
                 can_enter = curr['pullback'] == True
+            elif self.mode == 'volume_spike':
+                can_enter = curr['volume_spike'] == True
             else:
                 can_enter = False
 
@@ -144,7 +137,7 @@ class Backtest2025Next:
                     qty = MIN_TRADE_SIZE
                     if TRADE_SIZE_SCALING and self.mode == 'ml_all':
                         qty = max(int(max_qty * trade_ml_prob), MIN_TRADE_SIZE)
-                    elif TRADE_SIZE_SCALING:
+                    else:
                         qty = max(MIN_TRADE_SIZE, qty)
                     if qty > 0 and qty <= max_qty:
                         self._enter_trade(curr, qty)
@@ -211,13 +204,16 @@ if __name__ == "__main__":
     def get_symbols_from_data():
         daily_files = os.listdir(DATA_PATHS['daily'])
         return [os.path.splitext(f)[0] for f in daily_files if f.endswith('.csv')]
+
     symbols = get_symbols_from_data()
     all_stats = []
+
     for symbol in symbols:
         daily, hourly, m15 = prepare_data_2025(symbol)
         if m15.empty or len(m15) < 30:
             continue
-        # Baseline full ML strategy
+
+        # ML model + all features
         ml_model, ml_metrics, ml_index, ml_proba = ml_trade_filter(m15, hourly)
         bt_ml = Backtest2025Next(daily, hourly, m15, ml_model, ml_proba, ml_index, mode='ml_all')
         trades_ml = bt_ml.run()
@@ -227,19 +223,14 @@ if __name__ == "__main__":
                          'ML Precision': round(ml_metrics['precision'], 4),
                          'ML Recall': round(ml_metrics['recall'], 4)})
         all_stats.append(stats_ml)
-        # Breakout only
-        bt_bo = Backtest2025Next(daily, hourly, m15, mode='breakout')
-        trades_bo = bt_bo.run()
-        stats_bo = extract_trade_stats(trades_bo)
-        stats_bo.update({'Symbol': symbol, 'Strategy': 'Breakout Only'})
-        all_stats.append(stats_bo)
-        # Pullback only
-        bt_pb = Backtest2025Next(daily, hourly, m15, mode='pullback')
-        trades_pb = bt_pb.run()
-        stats_pb = extract_trade_stats(trades_pb)
-        stats_pb.update({'Symbol': symbol, 'Strategy': 'Pullback Only'})
-        all_stats.append(stats_pb)
+
+        # Volume Spike only
+        bt_vs = Backtest2025Next(daily, hourly, m15, mode='volume_spike')
+        trades_vs = bt_vs.run()
+        stats_vs = extract_trade_stats(trades_vs)
+        stats_vs.update({'Symbol': symbol, 'Strategy': 'Volume Spike Only'})
+        all_stats.append(stats_vs)
 
     df = pd.DataFrame(all_stats)
-    df.to_csv("2025_backtest_multi_strategy_summary.csv", index=False)
+    df.to_csv("2025_backtest_volume_spike_summary.csv", index=False)
     print(df)

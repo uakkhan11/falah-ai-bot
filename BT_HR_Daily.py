@@ -15,14 +15,10 @@ DATA_PATHS = {
     '15minute': os.path.join(BASE_DIR, "scalping_data"),
 }
 YEAR_FILTER = 2025
+ML_PROBA_THRESHOLD = 0.5
+MIN_TRADE_SIZE = 1
+TRADE_SIZE_SCALING = True
 
-ML_PROBA_THRESHOLD = 0.5        # Slightly lower than before for more trades
-MIN_TRADE_SIZE = 1              # Minimum one unit position
-TRADE_SIZE_SCALING = True       # Enable position sizing by ML confidence
-
-#############################
-# Data Load: Year 2025 only
-#############################
 def load_and_filter_2025(symbol):
     def filter_year(df):
         df['date'] = pd.to_datetime(df['date'])
@@ -32,7 +28,7 @@ def load_and_filter_2025(symbol):
     m15 = pd.read_csv(os.path.join(DATA_PATHS['15minute'], f"{symbol}.csv"))
     daily, hourly, m15 = filter_year(daily), filter_year(hourly), filter_year(m15)
     return daily, hourly, m15
-    
+
 def compute_indicators(df):
     df = df.copy()
     df['close'] = pd.to_numeric(df['close'], errors='coerce').ffill()
@@ -60,16 +56,14 @@ def compute_indicators(df):
     df['highest_high_22'] = df['high'].rolling(window=22).max()
     df['chandelier_exit'] = df['highest_high_22'] - 3 * df['atr']
 
-    # NEW: Breakout when close > previous 20-bar high
+    # Breakout & Pullback flags
     df['breakout'] = df['close'] > df['high'].rolling(window=20).max().shift(1)
-
-    # NEW: Pullback - price below ema20 in uptrend (ema8>ema20)
     df['pullback'] = (df['close'] < df['ema20']) & (df['ema8'] > df['ema20'])
 
     df.fillna(method='ffill', inplace=True)
     df.fillna(method='bfill', inplace=True)
     return df
-    
+
 def prepare_data_2025(symbol):
     daily, hourly, m15 = load_and_filter_2025(symbol)
     daily, hourly, m15 = compute_indicators(daily), compute_indicators(hourly), compute_indicators(m15)
@@ -77,17 +71,15 @@ def prepare_data_2025(symbol):
     hourly.dropna(subset=['ema8','ema20'], inplace=True)
     m15.dropna(subset=['ema8','ema20'], inplace=True)
     return daily, hourly, m15
-    
-#####################
-# ML filter - only best features
-#####################
 
-FEATURES = ["adx", "atr", "volume_ratio", "adosc", "hour_adx", "volume_sma", "macd_hist", "vwap", "roc", "obv"]
+FEATURES = ["adx", "atr", "volume_ratio", "adosc", "hour_adx", "volume_sma",
+            "macd_hist", "vwap", "roc", "obv"]
+
 def ml_trade_filter(m15_df, hourly_df):
     hourly_df = hourly_df.set_index('date')
     m15_df = m15_df.set_index('date')
     for col in set(['adx','atr','macd_hist']) & set(hourly_df.columns):
-        m15_df['hour_'+col] = hourly_df[col].reindex(m15_df.index, method='ffill')
+        m15_df['hour_' + col] = hourly_df[col].reindex(m15_df.index, method='ffill')
     m15_df['future_return'] = m15_df['close'].shift(-10) / m15_df['close'] - 1
     m15_df['label'] = (m15_df['future_return'] > 0.01).astype(int)
     m15_df.dropna(subset=FEATURES + ['label'], inplace=True)
@@ -105,55 +97,64 @@ def ml_trade_filter(m15_df, hourly_df):
     }
     proba_all = model.predict_proba(X)[:,1]
     return model, metrics, m15_df.index, proba_all
-    
-#################
-# Core: "Live-style" backtest for 2025
-#################
 
 class Backtest2025Next:
-    def __init__(self, daily_df, hourly_df, m15_df, ml_model, ml_proba, ml_index, init_cap=100000):
+    def __init__(self, daily_df, hourly_df, m15_df, ml_model=None, ml_proba=None, ml_index=None, init_cap=100000,
+                 mode='ml_all'):
+        """
+        mode options:
+        - 'ml_all'   : use ML + indicator logic (original)
+        - 'breakout' : only enter trades flagged breakout==True
+        - 'pullback' : only enter trades flagged pullback==True
+        """
         self.daily_df = daily_df
         self.hourly_df = hourly_df
         self.m15_df = m15_df
         self.ml_model = ml_model
-        self.ml_proba = pd.Series(ml_proba, index=ml_index)
+        self.ml_proba = pd.Series(ml_proba, index=ml_index) if ml_proba is not None else None
         self.cash = init_cap
         self.position = 0
         self.entry_price = 0
         self.trades = []
         self.highest_price = 0
+        self.mode = mode
 
     def run(self):
         if self.m15_df.empty:
             return []
         for i in range(1, len(self.m15_df)):
-            prev = self.m15_df.iloc[i-1]
             curr = self.m15_df.iloc[i]
             curr_idx = curr.name
 
-            trade_ml_prob = self.ml_proba.get(curr_idx, 0)
-
-            # Relaxed timeframe confirmation: only daily & hourly EMA check
-            daily_ok = (self.daily_df['ema8'].iloc[-1] > self.daily_df['ema20'].iloc[-1])
-            hourly_ok = (self.hourly_df['ema8'].iloc[-1] > self.hourly_df['ema20'].iloc[-1])
+            if self.mode == 'ml_all':
+                trade_ml_prob = self.ml_proba.get(curr_idx, 0)
+                daily_ok = (self.daily_df['ema8'].iloc[-1] > self.daily_df['ema20'].iloc[-1])
+                hourly_ok = (self.hourly_df['ema8'].iloc[-1] > self.hourly_df['ema20'].iloc[-1])
+                can_enter = daily_ok and hourly_ok and curr['adx'] > 20 and trade_ml_prob > ML_PROBA_THRESHOLD
+            elif self.mode == 'breakout':
+                can_enter = curr['breakout'] == True
+            elif self.mode == 'pullback':
+                can_enter = curr['pullback'] == True
+            else:
+                can_enter = False
 
             if self.position == 0:
-                if daily_ok and hourly_ok and curr['adx'] > 20 and trade_ml_prob > ML_PROBA_THRESHOLD:
+                if can_enter:
                     max_qty = int(self.cash / curr['close'])
                     qty = MIN_TRADE_SIZE
-                    if TRADE_SIZE_SCALING:
+                    if TRADE_SIZE_SCALING and self.mode == 'ml_all':
                         qty = max(int(max_qty * trade_ml_prob), MIN_TRADE_SIZE)
+                    elif TRADE_SIZE_SCALING:
+                        qty = max(MIN_TRADE_SIZE, qty)
                     if qty > 0 and qty <= max_qty:
                         self._enter_trade(curr, qty)
-
             elif self.position > 0:
                 self._manage_trade(curr)
 
         if self.position > 0:
             pnl = (self.m15_df.iloc[-1]['close'] - self.entry_price) * self.position
             self._exit_trade(self.m15_df.iloc[-1]['close'], pnl, self.m15_df.index[-1], "EOD Exit")
-
-        print(f"Trades taken: {len(self.trades)//2} | Final cash: {self.cash:.2f}")
+        print(f"Trades taken: {len(self.trades)//2} | Final cash: {self.cash:.2f} | Mode: {self.mode}")
         return self.trades
 
     def _enter_trade(self, curr, qty):
@@ -161,18 +162,8 @@ class Backtest2025Next:
         self.entry_price = curr['close']
         self.cash -= qty * self.entry_price
         self.highest_price = self.entry_price
-        # Record pullback/breakout status
-        breakout = bool(curr.get('breakout', False))
-        pullback = bool(curr.get('pullback', False))
-        self.trades.append({
-            'type': 'BUY',
-            'date': curr.name,
-            'price': self.entry_price,
-            'qty': qty,
-            'breakout': breakout,
-            'pullback': pullback,
-        })
-        print(f"Entered trade: {curr.name} Qty: {qty} Price: {self.entry_price} Breakout:{breakout} Pullback:{pullback}")
+        self.trades.append({'type': 'BUY', 'date': curr.name, 'price': self.entry_price, 'qty': qty})
+        print(f"Entered trade: {curr.name} Qty: {qty} Price: {self.entry_price}")
 
     def _manage_trade(self, curr):
         price = curr['close']
@@ -181,8 +172,7 @@ class Backtest2025Next:
         tp = self.entry_price * 1.02
         trailing_sl = self.highest_price * 0.99
         chand_exit = curr['chandelier_exit']
-        stop_loss = max(sl, trailing_sl, chand_exit) 
-
+        stop_loss = max(sl, trailing_sl, chand_exit)
         if price <= stop_loss:
             pnl = (price - self.entry_price) * self.position
             self._exit_trade(price, pnl, curr.name, "Stop/Trail/ChandExit")
@@ -197,9 +187,8 @@ class Backtest2025Next:
         self.position = 0
         self.entry_price = 0
         self.highest_price = 0
-        
+
 def extract_trade_stats(trades):
-    import pandas as pd
     df = pd.DataFrame(trades)
     if df.empty or 'type' not in df.columns or 'pnl' not in df.columns:
         return {}
@@ -218,69 +207,39 @@ def extract_trade_stats(trades):
     }
     return stats
 
-def analyze_pullback_breakout(trades):
-    df = pd.DataFrame(trades)
-    if df.empty: 
-        print("No trades to analyze.")
-        return
-
-    print("\n--- Pullback/Breakout Trade Analysis ---")
-    for typ in ['breakout', 'pullback']:
-        mask = df[typ] == True
-        trades_typ = df[mask]
-        wins = trades_typ['pnl'][df['type']=='SELL'] > 0
-        num = mask.sum()
-        win_rate = wins.mean() if not wins.empty else 0
-        print(f"{typ.capitalize()} trades: {num}, Win rate: {win_rate:.2%}")
-
-    # Overlap (both)
-    both = df['breakout'] & df['pullback']
-    print(f"Trades flagged as BOTH breakout and pullback: {both.sum()}")
-    print("---")
-    
-#################
-# Run for all symbols, print/save summary!
-#################
 if __name__ == "__main__":
     def get_symbols_from_data():
         daily_files = os.listdir(DATA_PATHS['daily'])
         return [os.path.splitext(f)[0] for f in daily_files if f.endswith('.csv')]
-
     symbols = get_symbols_from_data()
     all_stats = []
-    report_lines = []
-    all_trades = []  # Initialize here
-
     for symbol in symbols:
         daily, hourly, m15 = prepare_data_2025(symbol)
         if m15.empty or len(m15) < 30:
             continue
+        # Baseline full ML strategy
         ml_model, ml_metrics, ml_index, ml_proba = ml_trade_filter(m15, hourly)
-        bt = Backtest2025Next(daily, hourly, m15, ml_model, ml_proba, ml_index)
-        trades = bt.run()
-        all_trades.extend(trades)  # Collect trades here
-
-        stats = extract_trade_stats(trades)
-        stats['Symbol'] = symbol
-        stats['ML Accuracy'] = round(ml_metrics['accuracy'], 4)
-        stats['ML Precision'] = round(ml_metrics['precision'], 4)
-        stats['ML Recall'] = round(ml_metrics['recall'], 4)
-        all_stats.append(stats)
-
-        report_lines.append(
-            f"\n=== {symbol} ===\n"
-            + "\n".join([f"{k}: {v}" for k, v in stats.items()])
-            + f"\nML Classification Report:\n{ml_metrics['clf_report']}\n"
-        )
+        bt_ml = Backtest2025Next(daily, hourly, m15, ml_model, ml_proba, ml_index, mode='ml_all')
+        trades_ml = bt_ml.run()
+        stats_ml = extract_trade_stats(trades_ml)
+        stats_ml.update({'Symbol': symbol, 'Strategy': 'ML+All Features',
+                         'ML Accuracy': round(ml_metrics['accuracy'], 4),
+                         'ML Precision': round(ml_metrics['precision'], 4),
+                         'ML Recall': round(ml_metrics['recall'], 4)})
+        all_stats.append(stats_ml)
+        # Breakout only
+        bt_bo = Backtest2025Next(daily, hourly, m15, mode='breakout')
+        trades_bo = bt_bo.run()
+        stats_bo = extract_trade_stats(trades_bo)
+        stats_bo.update({'Symbol': symbol, 'Strategy': 'Breakout Only'})
+        all_stats.append(stats_bo)
+        # Pullback only
+        bt_pb = Backtest2025Next(daily, hourly, m15, mode='pullback')
+        trades_pb = bt_pb.run()
+        stats_pb = extract_trade_stats(trades_pb)
+        stats_pb.update({'Symbol': symbol, 'Strategy': 'Pullback Only'})
+        all_stats.append(stats_pb)
 
     df = pd.DataFrame(all_stats)
-    df.to_csv("2025_backtest_next_summary.csv", index=False)
-
-    with open("2025_detailed_next_report.txt", "w") as f:
-        f.writelines(report_lines)
-
+    df.to_csv("2025_backtest_multi_strategy_summary.csv", index=False)
     print(df)
-    print("\nNext phase backtest complete. Summary saved.")
-
-    all_trades_df = pd.DataFrame(all_trades)
-    analyze_pullback_breakout(all_trades)

@@ -161,6 +161,18 @@ def load_and_filter_2025(symbol):
     daily, hourly, m15 = filter_year(daily), filter_year(hourly), filter_year(m15)
     return daily, hourly, m15
 
+m15 = add_indicators(m15)
+hourly = add_indicators(hourly)
+m15 = add_hourly_features_to_m15(m15, hourly)
+
+# Generate the entry signals needed by apply_ml_filter
+m15 = breakout_signal(m15)
+m15 = bb_breakout_signal(m15)
+m15 = bb_pullback_signal(m15)
+m15 = combine_signals(m15)
+
+m15 = apply_ml_filter(m15, ml_model)
+
 def apply_ml_filter(df, model):
     if not USE_ML_CONFIRM or model is None:
         df['ml_signal'] = 1

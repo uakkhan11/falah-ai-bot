@@ -160,7 +160,11 @@ def load_and_filter_2025(symbol):
     m15 = pd.read_csv(os.path.join(DATA_PATHS['15minute'], f"{symbol}.csv"))
     daily, hourly, m15 = filter_year(daily), filter_year(hourly), filter_year(m15)
     return daily, hourly, m15
+    
+symbols = get_symbols_from_data()
 
+for symbol in symbols:    
+daily, hourly, m15 = load_and_filter_2025(symbol)
 m15 = add_indicators(m15)
 hourly = add_indicators(hourly)
 m15 = add_hourly_features_to_m15(m15, hourly)

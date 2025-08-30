@@ -169,6 +169,18 @@ def combine_signals(df):
 
     return df
 
+def add_hourly_features_to_m15(m15_df, hourly_df):
+    hourly_df = hourly_df.set_index('date')
+    m15_df = m15_df.set_index('date')
+
+    # Forward-fill ADX from hourly to m15
+    if 'adx' in hourly_df.columns:
+        m15_df['hour_adx'] = hourly_df['adx'].reindex(m15_df.index, method='ffill')
+    else:
+        m15_df['hour_adx'] = np.nan
+
+    return m15_df.reset_index()
+
 def apply_ml_filter(df, model):
     if not USE_ML_CONFIRM or model is None:
         df['ml_signal'] = 1
@@ -313,6 +325,8 @@ if __name__ == "__main__":
 
         # Add indicators and signals to m15
         m15 = add_indicators(m15)
+        hourly = add_indicators(hourly)
+        m15 = add_hourly_features_to_m15(m15, hourly)
         m15 = breakout_signal(m15)
         m15 = bb_breakout_signal(m15)
         m15 = bb_pullback_signal(m15)

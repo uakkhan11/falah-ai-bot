@@ -2,14 +2,11 @@ import os
 import pandas as pd
 import numpy as np
 import talib
-import matplotlib.pyplot as plt
-import seaborn as sns
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import accuracy_score, precision_score, recall_score, classification_report
 import warnings
-warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore"))
 
 BASE_DIR = "/root/falah-ai-bot"
 DATA_PATHS = {
@@ -36,34 +33,6 @@ def load_and_filter_2025(symbol):
     m15 = pd.read_csv(os.path.join(DATA_PATHS['15minute'], f"{symbol}.csv"))
     daily, hourly, m15 = filter_year(daily), filter_year(hourly), filter_year(m15)
     return daily, hourly, m15
-
-def add_ichimoku(df):
-    high = df['high']
-    low = df['low']
-    close = df['close']
-
-    period9_high = high.rolling(window=9).max()
-    period9_low = low.rolling(window=9).min()
-    df['tenkan_sen'] = (period9_high + period9_low) / 2
-
-    period26_high = high.rolling(window=26).max()
-    period26_low = low.rolling(window=26).min()
-    df['kijun_sen'] = (period26_high + period26_low) / 2
-
-    df['senkou_span_a'] = ((df['tenkan_sen'] + df['kijun_sen']) / 2).shift(26)
-
-    period52_high = high.rolling(window=52).max()
-    period52_low = low.rolling(window=52).min()
-    df['senkou_span_b'] = ((period52_high + period52_low) / 2).shift(26)
-
-    df['chikou_span'] = close.shift(-26)
-
-    df['cloud_thickness'] = abs(df['senkou_span_a'] - df['senkou_span_b'])
-
-    df.fillna(method='ffill', inplace=True)
-    df.fillna(method='bfill', inplace=True)
-    
-    return df
 
 def compute_indicators(df):
     df = df.copy()
@@ -96,9 +65,7 @@ def compute_indicators(df):
 
     df.fillna(method='ffill', inplace=True)
     df.fillna(method='bfill', inplace=True)
-
-    df = add_ichimoku(df)
-
+    
     return df
 
 def prepare_data_2025(symbol):
@@ -168,7 +135,6 @@ class Backtest2025Next:
     def run(self):
         if self.m15_df.empty:
             return []
-
         for i in range(1, len(self.m15_df)):
             prev = self.m15_df.iloc[i-1]
             curr = self.m15_df.iloc[i]
@@ -188,6 +154,7 @@ class Backtest2025Next:
                         qty = max(int(max_qty * trade_ml_prob), MIN_TRADE_SIZE)
                     if qty > 0 and qty <= max_qty:
                         self._enter_trade(curr, qty)
+
             elif self.position > 0:
                 self._manage_trade(curr)
 
@@ -199,22 +166,12 @@ class Backtest2025Next:
         return self.trades
 
     def _enter_trade(self, curr, qty):
-        in_cloud = (curr['close'] > min(curr['senkou_span_a'], curr['senkou_span_b']) and
-                    curr['close'] < max(curr['senkou_span_a'], curr['senkou_span_b']))
-        tenkan_above_kijun = curr['tenkan_sen'] > curr['kijun_sen']
         self.position = qty
         self.entry_price = curr['close']
         self.cash -= qty * self.entry_price
         self.highest_price = self.entry_price
-        self.trades.append({
-            'type': 'BUY',
-            'date': curr.name,
-            'price': self.entry_price,
-            'qty': qty,
-            'in_cloud': in_cloud,
-            'tenkan_above_kijun': tenkan_above_kijun
-        })
-        print(f"Entered trade: {curr.name} Qty: {qty} Price: {self.entry_price} InCloud: {in_cloud} TenkanAboveKijun: {tenkan_above_kijun}")
+        self.trades.append({'type': 'BUY', 'date': curr.name, 'price': self.entry_price, 'qty': qty})
+        print(f"Entered trade: {curr.name} Qty: {qty} Price: {self.entry_price}")
 
     def _manage_trade(self, curr):
         price = curr['close']
@@ -241,6 +198,7 @@ class Backtest2025Next:
         self.highest_price = 0
 
 def extract_trade_stats(trades):
+    import pandas as pd
     df = pd.DataFrame(trades)
     if df.empty or 'type' not in df.columns or 'pnl' not in df.columns:
         return {}
@@ -259,48 +217,6 @@ def extract_trade_stats(trades):
     }
     return stats
 
-def analyze_ichimoku_trades(trades_df):
-    if trades_df.empty:
-        return "No trades to analyze.\n"
-
-    trades_df['win'] = trades_df['pnl'] > 0
-    report = ""
-
-    if 'in_cloud' in trades_df.columns:
-        win_rate_cloud = trades_df.groupby('in_cloud')['win'].mean()
-        report += "Win Rate by Ichimoku Cloud Presence:\n"
-        for val, rate in win_rate_cloud.items():
-            report += f"  In Cloud: {val} -> Win Rate: {rate:.2%}\n"
-
-        sns.barplot(x=win_rate_cloud.index.astype(str), y=win_rate_cloud.values)
-        plt.title("Win Rate by Ichimoku Cloud Presence")
-        plt.ylabel("Win Rate")
-        plt.xlabel("Trade Entry Inside Cloud")
-        plt.savefig("win_rate_by_ichimoku_cloud.png")
-        plt.close()
-
-    if 'tenkan_above_kijun' in trades_df.columns:
-        win_rate_tk = trades_df.groupby('tenkan_above_kijun')['win'].mean()
-        report += "Win Rate by Tenkan > Kijun:\n"
-        for val, rate in win_rate_tk.items():
-            report += f"  Tenkan above Kijun: {val} -> Win Rate: {rate:.2%}\n"
-
-        sns.barplot(x=win_rate_tk.index.astype(str), y=win_rate_tk.values)
-        plt.title("Win Rate by Tenkan > Kijun")
-        plt.ylabel("Win Rate")
-        plt.xlabel("Tenkan Above Kijun at Entry")
-        plt.savefig("win_rate_by_tenkan_kijun.png")
-        plt.close()
-
-    report += "\nTrade PnL distribution saved as histogram plot.\n"
-
-    sns.histplot(data=trades_df, x="pnl", bins=30, kde=True)
-    plt.title("Distribution of Trade PnL")
-    plt.savefig("trade_pnl_distribution.png")
-    plt.close()
-
-    return report
-
 
 if __name__ == "__main__":
     def get_symbols_from_data():
@@ -310,23 +226,21 @@ if __name__ == "__main__":
     symbols = get_symbols_from_data()
     all_stats = []
     report_lines = []
-    all_trades = []  # Collect trades from all symbols
 
     for symbol in symbols:
         daily, hourly, m15 = prepare_data_2025(symbol)
         if m15.empty or len(m15) < 30:
             continue
-        ml_model, ml_metrics, ml_index, ml_proba = ml_trade_filter_tuned(m15, hourly)
+        ml_model, ml_metrics, ml_index, ml_proba = ml_trade_filter(m15, hourly)
         bt = Backtest2025Next(daily, hourly, m15, ml_model, ml_proba, ml_index)
         trades = bt.run()
-        # Collect trades for later analysis
-        all_trades.extend(trades)
         stats = extract_trade_stats(trades)
         stats['Symbol'] = symbol
         stats['ML Accuracy'] = round(ml_metrics['accuracy'], 4)
         stats['ML Precision'] = round(ml_metrics['precision'], 4)
         stats['ML Recall'] = round(ml_metrics['recall'], 4)
         all_stats.append(stats)
+
         report_lines.append(
             f"\n=== {symbol} ===\n"
             + "\n".join([f"{k}: {v}" for k, v in stats.items()])
@@ -336,13 +250,8 @@ if __name__ == "__main__":
     df = pd.DataFrame(all_stats)
     df.to_csv("2025_backtest_next_summary.csv", index=False)
 
-    all_trades_df = pd.DataFrame(all_trades)  # Create DataFrame after collecting all trades
-
-    with open("2025_detailed_next_report.txt", "a") as f:  # Append Ichimoku summary text
-        ichimoku_report = analyze_ichimoku_trades(all_trades_df)
-        f.write("\n=== Ichimoku Indicator Trade Analysis ===\n")
-        f.write(ichimoku_report)
+    with open("2025_detailed_next_report.txt", "w") as f:
+        f.writelines(report_lines)
 
     print(df)
     print("\nNext phase backtest complete. Summary saved.")
-

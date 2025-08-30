@@ -21,15 +21,21 @@ VOLUME_MULT_BREAKOUT = 2
 ADX_THRESHOLD_BREAKOUT = 25
 ADX_THRESHOLD_DEFAULT = 20
 ATR_SL_MULT = 1.0
-PROFIT_TARGET = 0.02
-TRAIL_TRIGGER = 0.005
+PROFIT_TARGET = 0.03       # Increased from 0.02 to 0.03
+TRAIL_TRIGGER = 0.01       # Increased from 0.005 to 0.01
 MAX_TRADES = 500
 MAX_POSITIONS = 5
-MIN_TRADE_SIZE = 1
 INITIAL_CAPITAL = 100000
+
+MIN_TRADE_SIZE = 1  # Fixed previous missing constant
 
 FEATURES = ["adx", "atr", "volume_ratio", "adosc", "hour_adx", "volume_sma",
             "macd_hist", "vwap", "roc", "obv"]
+
+ML_PROBA_THRESHOLD = 0.4   # Lowered from 0.5 to allow more trades
+MAX_POSITION_FRACTION = 0.2   # Increased max position size fraction from 0.1 to 0.2
+BASE_RISK = 0.02    # Increased base risk per trade from 0.01 to 0.02
+MAX_HOLD_BARS = 20  # New max holding time for trades
 
 def load_and_filter_2025(symbol):
     def filter_year(df):
@@ -124,10 +130,9 @@ def combine_signals(df):
     return df
 
 def dynamic_position_sizing(prob, atr, capital=INITIAL_CAPITAL):
-    base_risk = 0.01  # 1% of capital
-    size = (base_risk * capital) / (atr if atr > 0 else 1)
-    size *= prob  # scale by ML probability
-    max_size = capital * 0.1  # max 10% capital per trade
+    size = (BASE_RISK * capital) / (atr if atr > 0 else 1)
+    size *= max(prob, 0.5)
+    max_size = capital * MAX_POSITION_FRACTION
     return min(size, max_size)
 
 def ml_trade_filter_rolling_cv(m15_df, hourly_df):
@@ -176,8 +181,9 @@ def apply_ml_filter(df, model):
     df = df.dropna(subset=features).reset_index(drop=True)
     if df.empty:
         return df
-    df['ml_signal'] = model.predict(df[features])
-    df['entry_signal'] = np.where((df['entry_signal'] == 1) & (df['ml_signal'] == 1), 1, 0)
+    proba = model.predict_proba(df[features])[:, 1]
+    df['ml_signal'] = (proba >= ML_PROBA_THRESHOLD).astype(int)
+    df['entry_signal'] = ((df['entry_signal'] == 1) & (df['ml_signal'] == 1)).astype(int)
     return df
 
 def backtest(df, symbol, capital=INITIAL_CAPITAL):
@@ -192,11 +198,13 @@ def backtest(df, symbol, capital=INITIAL_CAPITAL):
         date, price, sig, sigtype = row['date'], row['close'], row['entry_signal'], row['entry_type']
         regime_ok = (row['close'] > row['ema200']) and (row['adx'] > ADX_THRESHOLD_DEFAULT)
 
-        # EXIT logic
+        # EXIT logic including max hold bars
         to_close = []
         for pid, pos in positions.items():
             ret = (price - pos['entry_price']) / pos['entry_price']
+            days_held = i - pos.get('entry_idx', i)
             atr_stop = pos['entry_price'] - ATR_SL_MULT * pos['entry_atr']
+
             if price > pos['high']:
                 pos['high'] = price
             if not pos['trail_active'] and ret >= TRAIL_TRIGGER:
@@ -205,24 +213,11 @@ def backtest(df, symbol, capital=INITIAL_CAPITAL):
             if pos['trail_active'] and row['chandelier_exit'] > pos['trail_stop']:
                 pos['trail_stop'] = row['chandelier_exit']
 
-            if ret >= PROFIT_TARGET:
-                reason = 'Profit Target'
-            elif price <= atr_stop:
-                reason = 'ATR Stop Loss'
-            elif pos['trail_active'] and price <= pos['trail_stop']:
-                reason = 'Chandelier Exit'
-            else:
-                pid_key = f"{symbol}_{pid}"
-                if not regime_ok:
-                    regime_fail_count[pid_key] = regime_fail_count.get(pid_key, 0) + 1
-                else:
-                    regime_fail_count[pid_key] = 0
-                if regime_fail_count.get(pid_key, 0) >= 2:
-                    reason = 'Regime Exit'
-                else:
-                    reason = None
-
-            if reason:
+            if ret >= PROFIT_TARGET or price <= atr_stop or (pos['trail_active'] and price <= pos['trail_stop']) or days_held >= MAX_HOLD_BARS:
+                reason = 'Profit Target' if ret >= PROFIT_TARGET else \
+                         'ATR Stop Loss' if price <= atr_stop else \
+                         'Chandelier Exit' if pos['trail_active'] and price <= pos['trail_stop'] else \
+                         'Time Exit'
                 buy_val = pos['shares'] * pos['entry_price']
                 sell_val = pos['shares'] * price
                 charges = 0.0005 * (buy_val + sell_val)
@@ -240,18 +235,19 @@ def backtest(df, symbol, capital=INITIAL_CAPITAL):
         if trade_count >= MAX_TRADES:
             break
 
-        # ENTRY logic with dynamic sizing based on ML prob * ATR
+        # ENTRY logic with dynamic sizing
         if sig == 1 and len(positions) < MAX_POSITIONS and cash > 0:
             prob = row.get('ml_signal', 1)
             size = dynamic_position_sizing(prob, row['atr'], cash)
             shares = size / price
-            if size > cash:  # ensures no over-investment
+            if size > cash:
                 shares = cash / price
                 size = shares * price
-            if shares*price >= MIN_TRADE_SIZE:
+            if shares * price >= MIN_TRADE_SIZE:
                 positions[len(positions)+1] = {'entry_date': date, 'entry_price': price,
                                                'shares': shares, 'high': price, 'trail_active': False,
-                                               'trail_stop': 0, 'entry_atr': row['atr'], 'entry_type': sigtype}
+                                               'trail_stop': 0, 'entry_atr': row['atr'], 'entry_type': sigtype,
+                                               'entry_idx': i}
                 cash -= size
 
     return trades
@@ -260,12 +256,11 @@ def extract_trade_stats(trades):
     df = pd.DataFrame(trades)
     if df.empty or 'pnl' not in df.columns:
         return {}
-    df['win'] = df['pnl'] > 0
     return {
         'Total Trades': len(df),
-        'Winning Trades': df['win'].sum(),
-        'Losing Trades': len(df) - df['win'].sum(),
-        'Win Rate %': round(df['win'].mean() * 100, 2),
+        'Winning Trades': df['pnl'].gt(0).sum(),
+        'Losing Trades': df['pnl'].le(0).sum(),
+        'Win Rate %': round(df['pnl'].gt(0).mean() * 100, 2),
         'Avg PnL per Trade': round(df['pnl'].mean(), 2),
         'Best PnL': round(df['pnl'].max(), 2),
         'Worst PnL': round(df['pnl'].min(), 2),
@@ -273,10 +268,9 @@ def extract_trade_stats(trades):
     }
 
 def summarize_strategy_performance(df):
-    strategies = df['Strategy'].unique()
     summary = []
-    for strat in strategies:
-        strat_df = df[df['Strategy'] == strat]
+    grouped = df.groupby('Strategy')
+    for strat, strat_df in grouped:
         summary.append({
             'Strategy': strat,
             'Symbols Traded': strat_df['Symbol'].nunique(),
@@ -310,21 +304,13 @@ if __name__ == "__main__":
     all_stats = []
     for symbol in symbols:
         daily, hourly, m15 = prepare_data_2025(symbol)
-        # Generate signals needed for ML filter
         m15 = breakout_signal(m15)
         m15 = bb_breakout_signal(m15)
         m15 = bb_pullback_signal(m15)
         m15 = combine_signals(m15)
-
-        # Train ML model with rolling CV and get classification metrics
         ml_model, ml_metrics, ml_index, ml_proba = ml_trade_filter_rolling_cv(m15, hourly)
-
-        # Add ML signals to dataframe for filtering and sizing
         m15 = apply_ml_filter(m15, ml_model)
-
-        # Backtest with dynamic sizing and adaptive regime exits
         trades_ml = backtest(m15, symbol)
-
         stats_ml = extract_trade_stats(trades_ml)
         stats_ml.update({
             'Symbol': symbol,
@@ -334,7 +320,6 @@ if __name__ == "__main__":
             'ML Recall': round(ml_metrics['recall'], 4)
         })
         all_stats.append(stats_ml)
-
     df_summary = pd.DataFrame(all_stats)
     df_summary.to_csv("final_ml_tuned_backtest_report.csv", index=False)
     summarize_strategy_performance(df_summary)

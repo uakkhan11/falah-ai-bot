@@ -177,7 +177,8 @@ def apply_ml_filter(df, model):
     df['ema10'] = ta.trend.ema_indicator(df['close'], window=10)
     df['ema21'] = ta.trend.ema_indicator(df['close'], window=21)
     df['volumechange'] = df['volume'].pct_change().fillna(0)
-    features = ['rsi','atr','adx','ema10','ema21','volumechange']
+    features = ["adx", "atr", "volume_ratio", "adosc", "hour_adx", "volume_sma",
+           "macd_hist", "vwap", "roc", "obv"]
     df = df.dropna(subset=features).reset_index(drop=True)
     if df.empty:
         return df

@@ -14,7 +14,7 @@ import joblib
 warnings.filterwarnings("ignore")
 
 # =============================================================================
-# COMPREHENSIVE ML TRADING SYSTEM - HOURLY+ TIMEFRAMES
+# FIXED COMPREHENSIVE ML TRADING SYSTEM - HOURLY+ TIMEFRAMES
 # =============================================================================
 
 BASE_DIR = "/root/falah-ai-bot"
@@ -72,7 +72,6 @@ ML_MODELS = {
     'RandomForest': RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1),
     'GradientBoosting': GradientBoostingClassifier(n_estimators=100, random_state=42),
     'LogisticRegression': LogisticRegression(random_state=42, max_iter=1000),
-    'SVM': SVC(random_state=42, probability=True)
 }
 
 def get_all_symbols():
@@ -101,15 +100,22 @@ def load_and_prepare_data(symbol, timeframe):
             if len(df) < 100:
                 return None
 
-            # Aggregate to 4-hour bars
-            df.set_index('date', inplace=True)
-            df_resampled = df.groupby(df.index // 4).agg({
-                'open': 'first',
-                'high': 'max',
-                'low': 'min',
-                'close': 'last',
-                'volume': 'sum'
-            }).reset_index(drop=True)
+            # Simple 4-hour aggregation
+            aggregated_data = []
+            for i in range(0, len(df) - 4, 4):
+                chunk = df.iloc[i:i+4]
+                if len(chunk) == 4:
+                    agg_bar = {
+                        'date': chunk['date'].iloc[-1],
+                        'open': chunk['open'].iloc[0],
+                        'high': chunk['high'].max(),
+                        'low': chunk['low'].min(),
+                        'close': chunk['close'].iloc[-1],
+                        'volume': chunk['volume'].sum()
+                    }
+                    aggregated_data.append(agg_bar)
+
+            df_resampled = pd.DataFrame(aggregated_data)
 
         elif timeframe == 'weekly':
             # Load daily data and resample to weekly
@@ -120,6 +126,9 @@ def load_and_prepare_data(symbol, timeframe):
             df = pd.read_csv(file_path)
             df['date'] = pd.to_datetime(df['date'])
             df = df[df['date'].dt.year == YEAR_FILTER].reset_index(drop=True)
+
+            if len(df) < 20:
+                return None
 
             df.set_index('date', inplace=True)
             df_resampled = df.resample('W-MON').agg({
@@ -150,64 +159,112 @@ def load_and_prepare_data(symbol, timeframe):
         return None
 
 def create_comprehensive_features(df, lookback_periods=20):
-    """Create comprehensive ML features"""
+    """Create comprehensive ML features - FIXED VERSION"""
     try:
-        features_df = df.copy()
+        # Start with clean copy
+        features_df = df.copy().reset_index(drop=True)
 
-        # Price-based features
-        features_df['returns'] = df['close'].pct_change()
-        features_df['high_low_ratio'] = df['high'] / df['low']
-        features_df['close_open_ratio'] = df['close'] / df['open']
+        # Basic validation
+        if len(df) < 30:
+            return df
 
-        # Technical indicators
-        features_df['rsi'] = ta.momentum.rsi(df['close'], window=14)
-        features_df['macd'] = ta.trend.macd_diff(df['close'])
-        features_df['bb_upper'], features_df['bb_middle'], features_df['bb_lower'] = ta.volatility.bollinger_hband(df['close']), ta.volatility.bollinger_mavg(df['close']), ta.volatility.bollinger_lband(df['close'])
-        features_df['bb_width'] = (features_df['bb_upper'] - features_df['bb_lower']) / features_df['bb_middle']
-        features_df['bb_position'] = (df['close'] - features_df['bb_lower']) / (features_df['bb_upper'] - features_df['bb_lower'])
+        # Ensure we have required columns
+        required_cols = ['open', 'high', 'low', 'close', 'volume']
+        for col in required_cols:
+            if col not in df.columns:
+                print(f"Missing required column: {col}")
+                return df
 
-        # Trend indicators
-        features_df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'])
-        features_df['cci'] = ta.trend.cci(df['high'], df['low'], df['close'])
-        features_df['williams_r'] = ta.momentum.williams_r(df['high'], df['low'], df['close'])
+        # FIXED: Price-based features with proper error handling
+        try:
+            features_df['returns'] = df['close'].pct_change().fillna(0)
+            features_df['high_low_ratio'] = (df['high'] / df['low']).fillna(1)
+            features_df['close_open_ratio'] = (df['close'] / df['open']).fillna(1)
+        except Exception as e:
+            print(f"Error in basic price features: {e}")
+            return df
 
-        # Moving averages
-        for period in [5, 10, 20]:
-            features_df[f'sma_{period}'] = df['close'].rolling(period).mean()
-            features_df[f'ema_{period}'] = ta.trend.ema_indicator(df['close'], window=period)
-            features_df[f'price_vs_sma_{period}'] = df['close'] / features_df[f'sma_{period}']
+        # Technical indicators with error handling
+        try:
+            # RSI
+            features_df['rsi'] = ta.momentum.rsi(df['close'], window=14)
 
-        # Volume indicators
-        features_df['volume_sma'] = df['volume'].rolling(20).mean()
-        features_df['volume_ratio'] = df['volume'] / features_df['volume_sma']
-        features_df['volume_price_trend'] = ta.volume.volume_price_trend(df['close'], df['volume'])
-        features_df['acc_dist_index'] = ta.volume.acc_dist_index(df['high'], df['low'], df['close'], df['volume'])
+            # Moving averages
+            features_df['sma_5'] = df['close'].rolling(5).mean()
+            features_df['sma_10'] = df['close'].rolling(10).mean()
+            features_df['sma_20'] = df['close'].rolling(20).mean()
 
-        # Volatility indicators
-        features_df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'])
-        features_df['volatility'] = df['returns'].rolling(10).std()
+            # Price vs moving average ratios
+            features_df['price_vs_sma_5'] = df['close'] / features_df['sma_5']
+            features_df['price_vs_sma_10'] = df['close'] / features_df['sma_10']
+            features_df['price_vs_sma_20'] = df['close'] / features_df['sma_20']
 
-        # Momentum indicators
-        for period in [5, 10, 15]:
-            features_df[f'momentum_{period}'] = df['close'] / df['close'].shift(period)
-            features_df[f'roc_{period}'] = ta.momentum.roc(df['close'], window=period)
+        except Exception as e:
+            print(f"Error in technical indicators: {e}")
+            # Continue with basic features
+
+        # Volume features
+        try:
+            features_df['volume_sma'] = df['volume'].rolling(20).mean()
+            features_df['volume_ratio'] = df['volume'] / features_df['volume_sma']
+        except Exception as e:
+            print(f"Error in volume features: {e}")
+            features_df['volume_ratio'] = 1.0
+
+        # Advanced technical indicators (with fallbacks)
+        try:
+            # ADX
+            features_df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=14)
+
+            # Bollinger Bands
+            bb_upper = ta.volatility.bollinger_hband(df['close'])
+            bb_lower = ta.volatility.bollinger_lband(df['close'])
+            bb_middle = ta.volatility.bollinger_mavg(df['close'])
+
+            features_df['bb_position'] = (df['close'] - bb_lower) / (bb_upper - bb_lower)
+            features_df['bb_width'] = (bb_upper - bb_lower) / bb_middle
+
+        except Exception as e:
+            print(f"Error in advanced indicators: {e}")
+            # Use default values
+            features_df['adx'] = 25.0
+            features_df['bb_position'] = 0.5
+            features_df['bb_width'] = 0.1
+
+        # Momentum features
+        try:
+            for period in [5, 10]:
+                features_df[f'momentum_{period}'] = df['close'] / df['close'].shift(period)
+                features_df[f'roc_{period}'] = ((df['close'] - df['close'].shift(period)) / df['close'].shift(period)) * 100
+        except Exception as e:
+            print(f"Error in momentum features: {e}")
 
         # Lag features (past values)
-        for lag in range(1, min(lookback_periods//4, 6)):
-            features_df[f'close_lag_{lag}'] = df['close'].shift(lag)
-            features_df[f'volume_lag_{lag}'] = df['volume'].shift(lag)
-            features_df[f'returns_lag_{lag}'] = features_df['returns'].shift(lag)
+        try:
+            for lag in range(1, min(6, lookback_periods//4)):
+                features_df[f'close_lag_{lag}'] = df['close'].shift(lag)
+                features_df[f'returns_lag_{lag}'] = features_df['returns'].shift(lag)
+        except Exception as e:
+            print(f"Error in lag features: {e}")
 
-        # Statistical features (rolling)
-        features_df['price_mean_reversion'] = (df['close'] - df['close'].rolling(20).mean()) / df['close'].rolling(20).std()
-        features_df['volume_mean_reversion'] = (df['volume'] - df['volume'].rolling(20).mean()) / df['volume'].rolling(20).std()
+        # Statistical features
+        try:
+            features_df['volatility'] = features_df['returns'].rolling(10).std()
+            features_df['price_mean_reversion'] = (df['close'] - df['close'].rolling(20).mean()) / df['close'].rolling(20).std()
+        except Exception as e:
+            print(f"Error in statistical features: {e}")
 
-        # Market structure features
-        features_df['higher_highs'] = (df['high'] > df['high'].shift(1)).astype(int).rolling(5).sum()
-        features_df['lower_lows'] = (df['low'] < df['low'].shift(1)).astype(int).rolling(5).sum()
+        # Fill all NaN values
+        numeric_columns = features_df.select_dtypes(include=[np.number]).columns
+        for col in numeric_columns:
+            if col in features_df.columns:
+                # Forward fill, then backward fill, then fill with median
+                features_df[col] = features_df[col].fillna(method='ffill')
+                features_df[col] = features_df[col].fillna(method='bfill')
+                features_df[col] = features_df[col].fillna(features_df[col].median())
 
-        # Fill NaN values
-        features_df = features_df.fillna(method='ffill').fillna(method='bfill')
+                # Replace any remaining inf values
+                features_df[col] = features_df[col].replace([np.inf, -np.inf], features_df[col].median())
 
         return features_df
 
@@ -229,6 +286,7 @@ def create_target_variable(df, timeframe):
             entry_price = df.iloc[i]['close']
 
             # Look forward to find exit
+            target_found = False
             for j in range(1, max_hold + 1):
                 if i + j >= len(df):
                     break
@@ -238,13 +296,16 @@ def create_target_variable(df, timeframe):
 
                 if return_pct >= profit_target:
                     targets.append(1)  # Profitable trade
+                    target_found = True
                     break
                 elif return_pct <= -stop_loss:
                     targets.append(0)  # Loss trade
+                    target_found = True
                     break
-            else:
+
+            if not target_found:
                 # Max hold reached
-                final_price = df.iloc[i + max_hold]['close'] if i + max_hold < len(df) else df.iloc[-1]['close']
+                final_price = df.iloc[min(i + max_hold, len(df)-1)]['close']
                 final_return = (final_price - entry_price) / entry_price
                 targets.append(1 if final_return > 0 else 0)
 
@@ -264,25 +325,31 @@ def train_ml_models(features_df, targets, feature_columns):
         X = features_df[feature_columns].values
         y = targets
 
-        # Remove any remaining NaN or inf values
+        # Clean data
+        # Remove rows with NaN or inf
         mask = ~(np.isnan(X).any(axis=1) | np.isinf(X).any(axis=1) | np.isnan(y) | np.isinf(y))
-        X = X[mask]
-        y = y[mask]
+        X_clean = X[mask]
+        y_clean = y[mask]
 
-        if len(X) < 100:  # Need minimum samples
-            return None, None, None
+        if len(X_clean) < 50:  # Need minimum samples
+            return None, None, None, {}
+
+        # Check if we have both classes
+        if len(np.unique(y_clean)) < 2:
+            return None, None, None, {}
 
         # Scale features
         scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+        X_scaled = scaler.fit_transform(X_clean)
 
         # Split data
-        X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.3, random_state=42, stratify=y)
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_scaled, y_clean, test_size=0.3, random_state=42, stratify=y_clean
+        )
 
         best_model = None
         best_score = 0
         best_model_name = None
-
         model_results = {}
 
         # Train and evaluate each model
@@ -292,7 +359,7 @@ def train_ml_models(features_df, targets, feature_columns):
                 model.fit(X_train, y_train)
 
                 # Cross-validation score
-                cv_scores = cross_val_score(model, X_train, y_train, cv=5)
+                cv_scores = cross_val_score(model, X_train, y_train, cv=3)
                 avg_cv_score = cv_scores.mean()
 
                 # Test score
@@ -386,37 +453,45 @@ def backtest_ml_system(df, model, scaler, feature_columns, timeframe):
             if len(positions) == 0 and cash > 10000:
                 try:
                     # Prepare features for current bar
-                    current_features = features_df.iloc[i][feature_columns].values.reshape(1, -1)
+                    feature_values = []
+                    for col in feature_columns:
+                        if col in features_df.columns:
+                            val = features_df.iloc[i][col]
+                            if np.isnan(val) or np.isinf(val):
+                                val = 0.0
+                            feature_values.append(val)
+                        else:
+                            feature_values.append(0.0)
 
-                    # Check for NaN or inf values
-                    if not (np.isnan(current_features).any() or np.isinf(current_features).any()):
-                        # Scale features
-                        current_features_scaled = scaler.transform(current_features)
+                    current_features = np.array(feature_values).reshape(1, -1)
 
-                        # Get ML prediction
-                        prediction = model.predict(current_features_scaled)[0]
-                        prediction_proba = model.predict_proba(current_features_scaled)[0][1]  # Probability of success
+                    # Scale features
+                    current_features_scaled = scaler.transform(current_features)
 
-                        # Only trade if ML predicts success with high confidence
-                        if prediction == 1 and prediction_proba > 0.6:
-                            position_value = cash * POSITION_SIZE
-                            entry_price = current['close'] * 1.001
-                            shares = position_value / entry_price
+                    # Get ML prediction
+                    prediction = model.predict(current_features_scaled)[0]
+                    prediction_proba = model.predict_proba(current_features_scaled)[0][1]
 
-                            if cash >= position_value:
-                                positions[0] = {
-                                    'symbol': 'ML_TRADE',
-                                    'entry_date': current['date'],
-                                    'entry_price': entry_price,
-                                    'shares': shares,
-                                    'entry_bar': i,
-                                    'entry_value': position_value,
-                                    'ml_prediction': prediction_proba
-                                }
-                                cash -= position_value
+                    # Only trade if ML predicts success with high confidence
+                    if prediction == 1 and prediction_proba > 0.6:
+                        position_value = cash * POSITION_SIZE
+                        entry_price = current['close'] * 1.001
+                        shares = position_value / entry_price
+
+                        if cash >= position_value:
+                            positions[0] = {
+                                'symbol': 'ML_TRADE',
+                                'entry_date': current['date'],
+                                'entry_price': entry_price,
+                                'shares': shares,
+                                'entry_bar': i,
+                                'entry_value': position_value,
+                                'ml_prediction': prediction_proba
+                            }
+                            cash -= position_value
 
                 except Exception as e:
-                    continue  # Skip this bar if features can't be calculated
+                    continue  # Skip this bar if prediction fails
 
         return trades
 
@@ -427,15 +502,15 @@ def backtest_ml_system(df, model, scaler, feature_columns, timeframe):
 def run_comprehensive_ml_analysis():
     """Run comprehensive ML analysis across multiple timeframes"""
 
-    print("🤖 COMPREHENSIVE ML TRADING SYSTEM ANALYSIS")
-    print("=" * 60)
+    print("🤖 COMPREHENSIVE ML TRADING SYSTEM ANALYSIS (FIXED)")
+    print("=" * 65)
     print("Testing ML models on 1-hour, 4-hour, daily, and weekly timeframes")
-    print("This will take some time due to ML model training...")
+    print("Fixed version with improved error handling...")
     print()
 
-    # Get symbols (test subset for speed)
+    # Get symbols (test smaller subset initially)
     all_symbols = get_all_symbols()
-    test_symbols = all_symbols[:50]  # Test 50 symbols
+    test_symbols = all_symbols[:25]  # Test 25 symbols for faster execution
 
     all_results = {}
 
@@ -453,7 +528,7 @@ def run_comprehensive_ml_analysis():
         failed = 0
 
         for i, symbol in enumerate(test_symbols, 1):
-            if i % 10 == 0:
+            if i % 5 == 0:
                 print(f"  Progress: {i}/{len(test_symbols)} symbols...")
 
             try:
@@ -469,11 +544,11 @@ def run_comprehensive_ml_analysis():
                 # Create target variable
                 targets = create_target_variable(df, timeframe)
 
-                # Get feature columns (exclude date and OHLCV)
-                feature_columns = [col for col in features_df.columns 
-                                 if col not in ['date', 'open', 'high', 'low', 'close', 'volume']]
+                # Get feature columns (exclude basic OHLCV and date)
+                exclude_cols = ['date', 'open', 'high', 'low', 'close', 'volume']
+                feature_columns = [col for col in features_df.columns if col not in exclude_cols]
 
-                if len(feature_columns) < 10:  # Need minimum features
+                if len(feature_columns) < 5:  # Need minimum features
                     failed += 1
                     continue
 
@@ -489,7 +564,7 @@ def run_comprehensive_ml_analysis():
                 # Backtest with best model
                 trades = backtest_ml_system(df, best_model, scaler, feature_columns, timeframe)
 
-                if len(trades) >= 2:
+                if len(trades) >= 1:  # Accept even 1 trade for longer timeframes
                     df_trades = pd.DataFrame(trades)
                     winning_trades = len(df_trades[df_trades['pnl'] > 0])
 
@@ -507,7 +582,7 @@ def run_comprehensive_ml_analysis():
                         'avg_ml_confidence': df_trades['ml_prediction'].mean(),
                         'bars_analyzed': len(df),
                         'is_profitable': df_trades['pnl'].sum() > 0,
-                        'model_scores': model_results
+                        'feature_count': len(feature_columns)
                     }
 
                     timeframe_results.append(result)
@@ -516,6 +591,7 @@ def run_comprehensive_ml_analysis():
                     failed += 1
 
             except Exception as e:
+                print(f"    Error processing {symbol}: {e}")
                 failed += 1
                 continue
 
@@ -533,6 +609,7 @@ def run_comprehensive_ml_analysis():
 
             print(f"\n✅ ML {timeframe.upper()} RESULTS:")
             print(f"  Symbols tested: {successful}")
+            print(f"  Failed symbols: {failed}")
             print(f"  Profitable symbols: {profitable_count} ({profitable_count/successful*100:.1f}%)")
             print(f"  Total trades: {total_trades}")
             print(f"  Total PnL: ₹{total_pnl:,.0f}")
@@ -548,12 +625,12 @@ def run_comprehensive_ml_analysis():
                 print(f"   ROC: {roc:.2f}%")
 
             # Save results
-            df_results.to_csv(f'ml_{timeframe}_results.csv', index=False)
+            df_results.to_csv(f'ml_{timeframe}_results_fixed.csv', index=False)
 
             # Show top ML performers
             if len(df_results) > 0:
-                top_performers = df_results.nlargest(5, 'total_pnl')
-                print(f"\n🏆 TOP 5 ML {timeframe.upper()} PERFORMERS:")
+                top_performers = df_results.nlargest(min(3, len(df_results)), 'total_pnl')
+                print(f"\n🏆 TOP ML {timeframe.upper()} PERFORMERS:")
                 for _, row in top_performers.iterrows():
                     print(f"  {row['symbol']:<12}: ₹{row['total_pnl']:>6.0f} "
                           f"({row['total_trades']:>2} trades, {row['win_rate']:>5.1f}% win, "
@@ -606,7 +683,8 @@ def run_comprehensive_ml_analysis():
                 print(f"Close to profitability - consider parameter optimization")
             else:
                 print(f"\n📊 ML RESULTS:")
-                print(f"All ML timeframes show losses, but methodology is comprehensive")
+                print(f"All ML timeframes show losses")
+                print(f"Consider returning to simple technical approach")
 
     else:
         print("\n❌ No ML results generated across any timeframe")

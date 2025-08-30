@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 import talib
-import ta  # Technical analysis library for supertrend, BBands, etc.
+import ta
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, classification_report
@@ -35,40 +35,6 @@ ATR_PERIOD = 14
 FEATURES = ["adx", "atr", "volume_ratio", "adosc", "hour_adx", "volume_sma",
             "macd_hist", "vwap", "roc", "obv"]
 
-def ml_trade_filter(m15_df, hourly_df):
-    hourly_df = hourly_df.set_index('date')
-    m15_df = m15_df.set_index('date')
-    # Forward-fill hourly features into m15 timeframe
-    for col in set(['adx','atr','macd_hist']) & set(hourly_df.columns):
-        m15_df['hour_' + col] = hourly_df[col].reindex(m15_df.index, method='ffill')
-    m15_df['future_return'] = m15_df['close'].shift(-10) / m15_df['close'] - 1
-    m15_df['label'] = (m15_df['future_return'] > 0.01).astype(int)
-    m15_df.dropna(subset=FEATURES + ['label'], inplace=True)
-    X = m15_df[FEATURES]
-    y = m15_df['label']
-    X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=False, test_size=0.2)
-    model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    metrics = {
-        'accuracy': accuracy_score(y_test, y_pred),
-        'precision': precision_score(y_test, y_pred, zero_division=0),
-        'recall': recall_score(y_test, y_pred, zero_division=0),
-        'clf_report': classification_report(y_test, y_pred, output_dict=True)
-    }
-    proba_all = model.predict_proba(X)[:, 1]
-    return model, metrics, m15_df.index, proba_all
-
-def prepare_data_2025(symbol):
-    daily, hourly, m15 = load_and_filter_2025(symbol)
-    daily = add_indicators(daily)
-    hourly = add_indicators(hourly)
-    m15 = add_indicators(m15)
-    daily.dropna(subset=['ema200'], inplace=True)
-    hourly.dropna(subset=['ema200'], inplace=True)
-    m15.dropna(subset=['ema200'], inplace=True)
-    return daily, hourly, m15
-
 def load_and_filter_2025(symbol):
     def filter_year(df):
         df['date'] = pd.to_datetime(df['date'])
@@ -80,15 +46,6 @@ def load_and_filter_2025(symbol):
     return daily, hourly, m15
 
 def add_indicators(df):
-    close = df['close'].values.astype(float)
-    high = df['high'].values.astype(float)
-    low = df['low'].values.astype(float)
-    volume = df['volume'].values.astype(float)
-    df['macd_hist'] = talib.MACD(close)[2]
-    df['roc'] = talib.ROC(close, timeperiod=10)
-    df['obv'] = talib.OBV(close, volume)
-    df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
-    
     if 'date' in df.columns: df = df.sort_values('date')
 
     df_weekly = df.set_index('date').resample('W-MON').agg({
@@ -101,7 +58,7 @@ def add_indicators(df):
 
     df['donchian_high'] = df['high'].rolling(20,1).max()
     df['ema200'] = ta.trend.ema_indicator(df['close'], window=200)
-    
+
     try:
         adx_df = ta.trend.ADXIndicator(df['high'], df['low'], df['close'], window=14)
         df['adx'] = adx_df.adx()
@@ -122,7 +79,6 @@ def add_indicators(df):
     high20 = df['high'].rolling(22,1).max()
     df['chandelier_exit'] = high20 - 3.0 * atr_ce
 
-    # Supertrend calculation (3 × 10)
     try:
         st = ta.trend.STCIndicator(df['close'], window=10, smooth1=3, smooth2=3)
         df['supertrend'] = st.stc()
@@ -131,66 +87,86 @@ def add_indicators(df):
         df['supertrend'] = np.nan
         df['supertrend_dir'] = 0
 
+    # Additional ML features using TA-Lib
+    close = df['close'].values.astype(float)
+    high = df['high'].values.astype(float)
+    low = df['low'].values.astype(float)
+    volume = df['volume'].values.astype(float)
+
+    df['macd_hist'] = talib.MACD(close)[2]
+    df['roc'] = talib.ROC(close, timeperiod=10)
+    df['obv'] = talib.OBV(close, volume)
+    df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
+
+    # Volume ratio and VWAP
+    df['volume_ratio'] = df['volume'] / df['vol_sma20']
+    df['vwap'] = (df['close'] * df['volume']).cumsum() / df['volume'].cumsum()
+
     return df.reset_index(drop=True)
-
-def breakout_signal(df):
-    cond_d = df['close'] > df['donchian_high'].shift(1)
-    cond_v = df['volume'] > VOLUME_MULT_BREAKOUT * df['vol_sma20']
-    cond_w = df['close'] > df['weekly_donchian_high'].shift(1)
-    df['breakout_signal'] = (cond_d & cond_v & cond_w).astype(int)
-    return df
-
-def bb_breakout_signal(df):
-    df['bb_breakout_signal'] = ((df['close'] > df['bb_upper']) & (df['volume'] > VOLUME_MULT_BREAKOUT * df['vol_sma20'])).astype(int)
-    return df
-
-def bb_pullback_signal(df):
-    cond_pull = df['close'] < df['bb_lower']
-    cond_resume = df['close'] > df['bb_lower'].shift(1)
-    df['bb_pullback_signal'] = (cond_pull.shift(1) & cond_resume).astype(int)
-    return df
-
-def combine_signals(df):
-    chand_or_st = (df['close'] > df['chandelier_exit']) | (df['supertrend_dir'] == 1)
-    regime_breakout = (df['close'] > df['ema200']) & (df['adx'] > ADX_THRESHOLD_BREAKOUT)
-    regime_default = (df['close'] > df['ema200']) & (df['adx'] > ADX_THRESHOLD_DEFAULT)
-
-    df['entry_signal'] = 0
-    df['entry_type'] = ''
-
-    df.loc[(df['breakout_signal'] == 1) & chand_or_st & regime_breakout,
-           ['entry_signal', 'entry_type']] = [1, 'Breakout']
-
-    df.loc[(df['bb_breakout_signal'] == 1) & chand_or_st & regime_breakout & (df['entry_signal'] == 0),
-           ['entry_signal', 'entry_type']] = [1, 'BB_Breakout']
-
-    df.loc[(df['bb_pullback_signal'] == 1) & chand_or_st & regime_default & (df['entry_signal'] == 0),
-           ['entry_signal', 'entry_type']] = [1, 'BB_Pullback']
-
-    return df
 
 def add_hourly_features_to_m15(m15_df, hourly_df):
     hourly_df = hourly_df.set_index('date')
     m15_df = m15_df.set_index('date')
-
-    # Forward-fill ADX from hourly to m15
     if 'adx' in hourly_df.columns:
         m15_df['hour_adx'] = hourly_df['adx'].reindex(m15_df.index, method='ffill')
     else:
         m15_df['hour_adx'] = np.nan
-
     return m15_df.reset_index()
+
+def ml_trade_filter(m15_df, hourly_df):
+    hourly_df = hourly_df.set_index('date')
+    m15_df = m15_df.set_index('date')
+
+    for col in set(['adx','atr','macd_hist']) & set(hourly_df.columns):
+        m15_df['hour_' + col] = hourly_df[col].reindex(m15_df.index, method='ffill')
+
+    m15_df['future_return'] = m15_df['close'].shift(-10) / m15_df['close'] - 1
+    m15_df['label'] = (m15_df['future_return'] > 0.01).astype(int)
+
+    m15_df.dropna(subset=FEATURES + ['label'], inplace=True)
+    X = m15_df[FEATURES]
+    y = m15_df['label']
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=False, test_size=0.2)
+    model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    metrics = {
+        'accuracy': accuracy_score(y_test, y_pred),
+        'precision': precision_score(y_test, y_pred, zero_division=0),
+        'recall': recall_score(y_test, y_pred, zero_division=0),
+        'clf_report': classification_report(y_test, y_pred, output_dict=True)
+    }
+    proba_all = model.predict_proba(X)[:, 1]
+    return model, metrics, m15_df.index, proba_all
+
+def prepare_data_2025(symbol):
+    daily, hourly, m15 = load_and_filter_2025(symbol)
+    daily = add_indicators(daily)
+    hourly = add_indicators(hourly)
+    m15 = add_indicators(m15)
+    m15 = add_hourly_features_to_m15(m15, hourly)
+    daily.dropna(subset=['ema200'], inplace=True)
+    hourly.dropna(subset=['ema200'], inplace=True)
+    m15.dropna(subset=['ema200'], inplace=True)
+    return daily, hourly, m15
+
+def load_and_filter_2025(symbol):
+    def filter_year(df):
+        df['date'] = pd.to_datetime(df['date'])
+        return df[df['date'].dt.year == YEAR_FILTER].reset_index(drop=True)
+    daily = pd.read_csv(os.path.join(DATA_PATHS['daily'], f"{symbol}.csv"))
+    hourly = pd.read_csv(os.path.join(DATA_PATHS['1hour'], f"{symbol}.csv"))
+    m15 = pd.read_csv(os.path.join(DATA_PATHS['15minute'], f"{symbol}.csv"))
+    daily, hourly, m15 = filter_year(daily), filter_year(hourly), filter_year(m15)
+    return daily, hourly, m15
 
 def apply_ml_filter(df, model):
     if not USE_ML_CONFIRM or model is None:
         df['ml_signal'] = 1
         return df
-    df['rsi'] = ta.momentum.rsi(df['close'], window=14)
-    df['ema10'] = ta.trend.ema_indicator(df['close'], window=10)
-    df['ema21'] = ta.trend.ema_indicator(df['close'], window=21)
-    df['volumechange'] = df['volume'].pct_change().fillna(0)
-    features = ["adx", "atr", "volume_ratio", "adosc", "hour_adx", "volume_sma",
-           "macd_hist", "vwap", "roc", "obv"]
+
+    features = FEATURES
     df = df.dropna(subset=features).reset_index(drop=True)
     if df.empty:
         return df
@@ -198,12 +174,9 @@ def apply_ml_filter(df, model):
     df['entry_signal'] = np.where((df['entry_signal'] == 1) & (df['ml_signal'] == 1), 1, 0)
     return df
 
-def calc_charges(buy_val, sell_val):
-    # Placeholder for brokerage fees/charges - adjust as per real-world model
-    return 0.0005 * (buy_val + sell_val)
-
 def backtest(df, symbol):
-    cash = INITIAL_CAPITAL = 100000
+    INITIAL_CAPITAL = 100000
+    cash = INITIAL_CAPITAL
     positions = {}
     trades = []
     trade_count = 0
@@ -247,8 +220,8 @@ def backtest(df, symbol):
             if reason:
                 buy_val = pos['shares'] * pos['entry_price']
                 sell_val = pos['shares'] * price
-                charges = calc_charges(buy_val, sell_val)
-                pnl = sell_val * (1 - TRANSACTION_COST) - buy_val - charges if 'TRANSACTION_COST' in globals() else sell_val - buy_val - charges
+                charges = 0.0005 * (buy_val + sell_val)  # Simple fee model
+                pnl = sell_val - buy_val - charges
                 trades.append({'symbol': symbol, 'entry_date': pos['entry_date'], 'exit_date': date,
                                'pnl': pnl, 'entry_type': pos['entry_type'], 'exit_reason': reason})
                 cash += sell_val
@@ -268,7 +241,7 @@ def backtest(df, symbol):
             positions[len(positions) + 1] = {'entry_date': date, 'entry_price': price,
                                            'shares': shares, 'high': price, 'trail_active': False,
                                            'trail_stop': 0, 'entry_atr': row['atr'], 'entry_type': sigtype}
-            cash -= POSITION_SIZE  # Simplified cost calculation for demo
+            cash -= POSITION_SIZE  # Deduct full position size
 
     return trades
 
@@ -312,77 +285,28 @@ def summarize_strategy_performance(df):
     print(summary_df)
     return summary_df
 
-if __name__ == "__main__":
-    def get_symbols_from_data():
-        daily_files = os.listdir(DATA_PATHS['daily'])
-        return [os.path.splitext(f)[0] for f in daily_files if f.endswith('.csv')]
+def get_symbols_from_data():
+    daily_files = os.listdir(DATA_PATHS['daily'])
+    return [os.path.splitext(f)[0] for f in daily_files if f.endswith('.csv')]
 
+if __name__ == "__main__":
     symbols = get_symbols_from_data()
     all_stats = []
-
     for symbol in symbols:
-        daily, hourly, m15 = prepare_data_2025(symbol := symbol)  # you may need to define prepare_data_2025 similarly to above
-
-        # Add indicators and signals to m15
-        m15 = add_indicators(m15)
-        hourly = add_indicators(hourly)
-        m15 = add_hourly_features_to_m15(m15, hourly)
-        m15 = breakout_signal(m15)
-        m15 = bb_breakout_signal(m15)
-        m15 = bb_pullback_signal(m15)
-        m15 = combine_signals(m15)
-
-        # Train or load your ML model on m15 here (or reuse existing logic)
+        daily, hourly, m15 = prepare_data_2025(symbol)
         ml_model, ml_metrics, ml_index, ml_proba = ml_trade_filter(m15, hourly)
-
-        # Apply ML filter on signals
         m15 = apply_ml_filter(m15, ml_model)
-
-        # Backtest for ML only (filtered by ML)
         trades_ml = backtest(m15, symbol)
         stats_ml = extract_trade_stats(trades_ml)
-        stats_ml.update({'Symbol': symbol, 'Strategy': 'ML+All Features',
-                         'ML Accuracy': round(ml_metrics['accuracy'], 4),
-                         'ML Precision': round(ml_metrics['precision'], 4),
-                         'ML Recall': round(ml_metrics['recall'], 4)})
+        stats_ml.update({
+            'Symbol': symbol,
+            'Strategy': 'ML+All Features',
+            'ML Accuracy': round(ml_metrics['accuracy'], 4),
+            'ML Precision': round(ml_metrics['precision'], 4),
+            'ML Recall': round(ml_metrics['recall'], 4)
+        })
         all_stats.append(stats_ml)
 
-        # Backtest Volume Spike only
-        vol_spike_df = m15.copy()
-        vol_spike_df['entry_signal'] = (vol_spike_df['volume'] > 2 * vol_spike_df['vol_sma20']).astype(int)
-        vol_spike_df['entry_type'] = 'Volume Spike'
-        trades_vs = backtest(vol_spike_df, symbol)
-        stats_vs = extract_trade_stats(trades_vs)
-        stats_vs.update({'Symbol': symbol, 'Strategy': 'Volume Spike Only'})
-        all_stats.append(stats_vs)
-
-        # Backtest Breakout only
-        breakout_df = m15.copy()
-        breakout_df['entry_signal'] = breakout_df['breakout_signal']
-        breakout_df['entry_type'] = 'Breakout'
-        trades_bo = backtest(breakout_df, symbol)
-        stats_bo = extract_trade_stats(trades_bo)
-        stats_bo.update({'Symbol': symbol, 'Strategy': 'Breakout Only'})
-        all_stats.append(stats_bo)
-
-        # Backtest BB Breakout only
-        bb_bo_df = m15.copy()
-        bb_bo_df['entry_signal'] = bb_bo_df['bb_breakout_signal']
-        bb_bo_df['entry_type'] = 'BB Breakout'
-        trades_bbbo = backtest(bb_bo_df, symbol)
-        stats_bbbo = extract_trade_stats(trades_bbbo)
-        stats_bbbo.update({'Symbol': symbol, 'Strategy': 'BB Breakout Only'})
-        all_stats.append(stats_bbbo)
-
-        # Backtest BB Pullback only
-        bb_pb_df = m15.copy()
-        bb_pb_df['entry_signal'] = bb_pb_df['bb_pullback_signal']
-        bb_pb_df['entry_type'] = 'BB Pullback'
-        trades_bbpull = backtest(bb_pb_df, symbol)
-        stats_bbpull = extract_trade_stats(trades_bbpull)
-        stats_bbpull.update({'Symbol': symbol, 'Strategy': 'BB Pullback Only'})
-        all_stats.append(stats_bbpull)
-
     df_summary = pd.DataFrame(all_stats)
-    df_summary.to_csv("2025_backtest_all_strategies_summary.csv", index=False)
+    df_summary.to_csv("final_ml_only_backtest_report.csv", index=False)
     summarize_strategy_performance(df_summary)

@@ -7,13 +7,9 @@ import ta
 import warnings
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split
 
 warnings.filterwarnings("ignore")
-
-# =============================================================================
-# COMPREHENSIVE ML TRADING SYSTEM - 1m, 5m, 15m, 1h, 4h, daily
-# =============================================================================
 
 BASE_DIR = "/root/falah-ai-bot"
 DATA_PATHS = {
@@ -37,87 +33,96 @@ def list_symbols():
     return [f[:-4] for f in os.listdir(DATA_PATHS['daily']) if f.endswith('.csv')]
 
 def load_resample(symbol, cfg):
-    df = pd.read_csv(os.path.join(DATA_PATHS[cfg['source']], f"{symbol}.csv"))
+    path = os.path.join(DATA_PATHS[cfg['source']], f"{symbol}.csv")
+    if not os.path.exists(path):
+        return None
+    df = pd.read_csv(path)
     df['date'] = pd.to_datetime(df['date'])
     df = df[df['date'].dt.year == 2025].reset_index(drop=True)
     if len(df) < 50:
         return None
     if cfg['agg'] > 1:
-        bars=[]
-        for i in range(0, len(df)-cfg['agg']+1, cfg['agg']):
-            c=df.iloc[i:i+cfg['agg']]
-            if len(c)==cfg['agg']:
-                bars.append({
-                    'date': c['date'].iloc[-1],
-                    'open': c['open'].iloc[0],
-                    'high': c['high'].max(),
-                    'low': c['low'].min(),
-                    'close': c['close'].iloc[-1],
-                    'volume': c['volume'].sum()
-                })
-        df=pd.DataFrame(bars)
-    return df if len(df)>=50 else None
+        bars = []
+        for i in range(0, len(df) - cfg['agg'] + 1, cfg['agg']):
+            chunk = df.iloc[i:i+cfg['agg']]
+            bars.append({
+                'date': chunk['date'].iloc[-1],
+                'open': chunk['open'].iloc[0],
+                'high': chunk['high'].max(),
+                'low': chunk['low'].min(),
+                'close': chunk['close'].iloc[-1],
+                'volume': chunk['volume'].sum()
+            })
+        df = pd.DataFrame(bars)
+    return df if len(df) >= 50 else None
 
 def make_features(df):
-    df=df.copy().reset_index(drop=True)
-    df['ret']=df['close'].pct_change().fillna(0)
-    df['rsi']=ta.momentum.rsi(df['close'],14).fillna(50)
-    df['adx']=ta.trend.adx(df['high'],df['low'],df['close'],14).fillna(25)
-    df['sma20']=df['close'].rolling(20).mean().fillna(method='bfill')
-    df['vol_r']=df['volume']/df['volume'].rolling(20).mean().fillna(1)
-    df=df.fillna(method='bfill').fillna(method='ffill')
-    return df
+    df = df.copy().reset_index(drop=True)
+    df['ret'] = df['close'].pct_change().fillna(0)
+    df['rsi'] = ta.momentum.rsi(df['close'], 14).fillna(50)
+    df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], 14).fillna(25)
+    df['sma20'] = df['close'].rolling(20).mean().fillna(method='bfill')
+    df['vol_r'] = df['volume'] / df['volume'].rolling(20).mean().fillna(1)
+    return df.fillna(method='bfill').fillna(method='ffill')
 
 def make_target(df, cfg):
-    tgt=[]
-    for i in range(len(df)-cfg['mh']):
-        e=df['close'].iloc[i]
-        win=False
-        for j in range(1,cfg['mh']+1):
-            f=df['close'].iloc[i+j]
-            r=(f-e)/e
-            if r>=cfg['pt']:
+    tgt = []
+    for i in range(len(df) - cfg['mh']):
+        e = df['close'].iloc[i]
+        win = False
+        for j in range(1, cfg['mh'] + 1):
+            f = df['close'].iloc[i + j]
+            r = (f - e) / e
+            if r >= cfg['pt']:
                 tgt.append(1)
-                win=True
+                win = True
                 break
-            if r<=-cfg['sl']:
+            if r <= -cfg['sl']:
                 tgt.append(0)
-                win=True
+                win = True
                 break
         if not win:
-            f=df['close'].iloc[min(i+cfg['mh'],len(df)-1)]
-            tgt.append(1 if (f-e)/e>0 else 0)
-    tgt.extend([0]*cfg['mh'])
+            f = df['close'].iloc[min(i + cfg['mh'], len(df) - 1)]
+            tgt.append(1 if (f - e) / e > 0 else 0)
+    tgt.extend([0] * cfg['mh'])
     return np.array(tgt)
 
 def train_backtest(symbols, timeframe):
-    cfg=TIMEFRAME_CONFIGS[timeframe]
-    Xs,ys=[],[]
+    cfg = TIMEFRAME_CONFIGS[timeframe]
+    Xs, ys = [], []
     for s in symbols:
-        df=load_resample(s,cfg)
-        if df is None: continue
-        df=make_features(df)
-        y=make_target(df,cfg)
-        X=df[['ret','rsi','adx','sma20','vol_r']].values
-        mask=~np.isnan(X).any(axis=1)
-        Xs.append(X[mask]); ys.append(y[mask])
-    if not Xs: return
-    Xall=np.vstack(Xs); yall=np.concatenate(ys)
-    if len(np.unique(yall))<2: return
-    sc=StandardScaler().fit(Xall)
-    Xs=sc.transform(Xall)
-    Xtr,Xte,ytr,yte=train_test_split(Xs,yall,test_size=0.3,random_state=42,stratify=yall)
-    ML_MODEL.fit(Xtr,ytr)
-    test_acc=ML_MODEL.score(Xte,yte)
-    preds=ML_MODEL.predict(Xs)
-    trades=pd.DataFrame({'pred':preds,'t':yall})
-    wins=(trades[preds==1]['t']==1).sum()
-    tot=(trades[preds==1]).shape[0]
-    pnl_pct=test_acc*100
-    print(f\"{timeframe}: Acc {test_acc*100:.1f}%, Trades {tot}, Wins {wins} ({(wins/tot*100) if tot else 0:.1f}%)\")
+        df = load_resample(s, cfg)
+        if df is None:
+            continue
+        df = make_features(df)
+        y = make_target(df, cfg)
+        X = df[['ret', 'rsi', 'adx', 'sma20', 'vol_r']].values
+        mask = ~np.isnan(X).any(axis=1)
+        Xs.append(X[mask])
+        ys.append(y[mask])
+    if not Xs:
+        print(f"{timeframe}: No data")
+        return
+    Xall = np.vstack(Xs)
+    yall = np.concatenate(ys)
+    if len(np.unique(yall)) < 2:
+        print(f"{timeframe}: Only one class present")
+        return
+    scaler = StandardScaler().fit(Xall)
+    Xs = scaler.transform(Xall)
+    Xtr, Xte, ytr, yte = train_test_split(
+        Xs, yall, test_size=0.3, random_state=42, stratify=yall)
+    ML_MODEL.fit(Xtr, ytr)
+    test_acc = ML_MODEL.score(Xte, yte)
+    preds = ML_MODEL.predict(Xs)
+    trades = pd.DataFrame({'pred': preds, 't': yall})
+    wins = (trades[trades['pred'] == 1]['t'] == 1).sum()
+    tot = len(trades[trades['pred'] == 1])
+    win_pct = (wins / tot * 100) if tot else 0.0
+    print(f"{timeframe}: Acc {test_acc*100:.1f}%, Trades {tot}, Wins {wins} ({win_pct:.1f}%)")
 
-if __name__=='__main__':
-    syms=list_symbols()
-    for tf in ['1minute','5minute','15minute','1hour','4hour','daily']:
-        print(f\"=== ML {tf} ===\")
-        train_backtest(syms,tf)
+if __name__ == "__main__":
+    symbols = list_symbols()
+    for tf in ['1minute', '5minute', '15minute', '1hour', '4hour', 'daily']:
+        print(f"=== ML {tf} ===")
+        train_backtest(symbols, tf)

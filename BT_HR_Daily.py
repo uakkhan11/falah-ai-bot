@@ -59,6 +59,13 @@ def compute_indicators(df):
     df['hour_adx'] = df['adx'] if 'adx' in df else np.nan
     df['highest_high_22'] = df['high'].rolling(window=22).max()
     df['chandelier_exit'] = df['highest_high_22'] - 3 * df['atr']
+
+    # NEW: Breakout when close > previous 20-bar high
+    df['breakout'] = df['close'] > df['high'].rolling(window=20).max().shift(1)
+
+    # NEW: Pullback - price below ema20 in uptrend (ema8>ema20)
+    df['pullback'] = (df['close'] < df['ema20']) & (df['ema8'] > df['ema20'])
+
     df.fillna(method='ffill', inplace=True)
     df.fillna(method='bfill', inplace=True)
     return df
@@ -154,8 +161,18 @@ class Backtest2025Next:
         self.entry_price = curr['close']
         self.cash -= qty * self.entry_price
         self.highest_price = self.entry_price
-        self.trades.append({'type': 'BUY', 'date': curr.name, 'price': self.entry_price, 'qty': qty})
-        print(f"Entered trade: {curr.name} Qty: {qty} Price: {self.entry_price}")
+        # Record pullback/breakout status
+        breakout = bool(curr.get('breakout', False))
+        pullback = bool(curr.get('pullback', False))
+        self.trades.append({
+            'type': 'BUY',
+            'date': curr.name,
+            'price': self.entry_price,
+            'qty': qty,
+            'breakout': breakout,
+            'pullback': pullback,
+        })
+        print(f"Entered trade: {curr.name} Qty: {qty} Price: {self.entry_price} Breakout:{breakout} Pullback:{pullback}")
 
     def _manage_trade(self, curr):
         price = curr['close']
@@ -200,6 +217,27 @@ def extract_trade_stats(trades):
         'Total PnL': round(closed['pnl'].sum(), 2)
     }
     return stats
+
+def analyze_pullback_breakout(trades):
+    df = pd.DataFrame(trades)
+    if df.empty: 
+        print("No trades to analyze.")
+        return
+
+    print("\n--- Pullback/Breakout Trade Analysis ---")
+    for typ in ['breakout', 'pullback']:
+        mask = df[typ] == True
+        trades_typ = df[mask]
+        wins = trades_typ['pnl'][df['type']=='SELL'] > 0
+        num = mask.sum()
+        win_rate = wins.mean() if not wins.empty else 0
+        print(f"{typ.capitalize()} trades: {num}, Win rate: {win_rate:.2%}")
+
+    # Overlap (both)
+    both = df['breakout'] & df['pullback']
+    print(f"Trades flagged as BOTH breakout and pullback: {both.sum()}")
+    print("---")
+    
 #################
 # Run for all symbols, print/save summary!
 #################
@@ -211,6 +249,7 @@ if __name__ == "__main__":
     symbols = get_symbols_from_data()
     all_stats = []
     report_lines = []
+    all_trades = []  # Initialize here
 
     for symbol in symbols:
         daily, hourly, m15 = prepare_data_2025(symbol)
@@ -219,6 +258,8 @@ if __name__ == "__main__":
         ml_model, ml_metrics, ml_index, ml_proba = ml_trade_filter(m15, hourly)
         bt = Backtest2025Next(daily, hourly, m15, ml_model, ml_proba, ml_index)
         trades = bt.run()
+        all_trades.extend(trades)  # Collect trades here
+
         stats = extract_trade_stats(trades)
         stats['Symbol'] = symbol
         stats['ML Accuracy'] = round(ml_metrics['accuracy'], 4)
@@ -240,3 +281,6 @@ if __name__ == "__main__":
 
     print(df)
     print("\nNext phase backtest complete. Summary saved.")
+
+    all_trades_df = pd.DataFrame(all_trades)
+    analyze_pullback_breakout(all_trades)

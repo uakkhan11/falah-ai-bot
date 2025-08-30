@@ -32,6 +32,16 @@ POSITION_SIZE = 10000  # Fixed size per trade
 USE_ML_CONFIRM = True
 ATR_PERIOD = 14
 
+def prepare_data_2025(symbol):
+    daily, hourly, m15 = load_and_filter_2025(symbol)
+    daily = add_indicators(daily)
+    hourly = add_indicators(hourly)
+    m15 = add_indicators(m15)
+    daily.dropna(subset=['ema200'], inplace=True)
+    hourly.dropna(subset=['ema200'], inplace=True)
+    m15.dropna(subset=['ema200'], inplace=True)
+    return daily, hourly, m15
+
 def load_and_filter_2025(symbol):
     def filter_year(df):
         df['date'] = pd.to_datetime(df['date'])

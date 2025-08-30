@@ -80,6 +80,15 @@ def load_and_filter_2025(symbol):
     return daily, hourly, m15
 
 def add_indicators(df):
+    close = df['close'].values.astype(float)
+    high = df['high'].values.astype(float)
+    low = df['low'].values.astype(float)
+    volume = df['volume'].values.astype(float)
+    df['macd_hist'] = talib.MACD(close)[2]
+    df['roc'] = talib.ROC(close, timeperiod=10)
+    df['obv'] = talib.OBV(close, volume)
+    df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
+    
     if 'date' in df.columns: df = df.sort_values('date')
 
     df_weekly = df.set_index('date').resample('W-MON').agg({

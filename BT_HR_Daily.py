@@ -60,12 +60,7 @@ def compute_indicators(df):
     df['hour_adx'] = df['adx'] if 'adx' in df else np.nan
     df['highest_high_22'] = df['high'].rolling(window=22).max()
     df['chandelier_exit'] = df['highest_high_22'] - 3 * df['atr']
-
-    df = add_ichimoku(df)  # Correctly call here once, not inside add_ichimoku itself
-
-    df.fillna(method='ffill', inplace=True)
-    df.fillna(method='bfill', inplace=True)
-    
+ 
     return df
 
 def prepare_data_2025(symbol):

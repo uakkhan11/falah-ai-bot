@@ -6,7 +6,7 @@ from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, classification_report
 import warnings
-warnings.filterwarnings("ignore"))
+warnings.filterwarnings("ignore")
 
 BASE_DIR = "/root/falah-ai-bot"
 DATA_PATHS = {

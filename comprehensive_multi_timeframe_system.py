@@ -7,7 +7,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # =============================================================================
-# COMPREHENSIVE MULTI-TIMEFRAME TRADING SYSTEM
+# COMPREHENSIVE ALL-SYMBOLS TESTING SYSTEM
 # =============================================================================
 
 BASE_DIR = "/root/falah-ai-bot"
@@ -17,185 +17,100 @@ DATA_PATHS = {
     '15minute': os.path.join(BASE_DIR, "scalping_data")
 }
 
-# CORE PARAMETERS (SAME ACROSS ALL TIMEFRAMES)
+# ORIGINAL VERIFIED PARAMETERS
 INITIAL_CAPITAL = 100000
-POSITION_SIZE_PER_TIMEFRAME = 0.02  # 2% per timeframe (can run 5 timeframes = 10% total)
+MAX_POSITIONS = 3
+POSITION_SIZE = 0.02
 YEAR_FILTER = 2025
 
-# TECHNICAL PARAMETERS (CONSISTENT LOGIC)
+# Technical parameters
 RSI_OVERBOUGHT = 70
 ADX_MIN = 20
 VOLUME_MULT = 1.5
+PROFIT_TARGET = 0.025  # 2.5%
+STOP_LOSS = 0.015      # 1.5%
+MAX_HOLD_BARS = 25
 
-# COMPREHENSIVE TIMEFRAME CONFIGURATIONS
-TIMEFRAME_CONFIGS = {
-    '15minute': {
-        'profit_target': 0.025,   # 2.5% (verified working)
-        'stop_loss': 0.015,       # 1.5%
-        'max_hold_bars': 25,      # ~6 hours
-        'data_source': '15minute',
-        'description': 'Scalping trades',
-        'expected_frequency': 'High (2-3 trades/day)',
-        'capital_allocation': 0.02  # 2% of total capital
-    },
-    '1hour': {
-        'profit_target': 0.035,   # 3.5% (larger intraday moves)
-        'stop_loss': 0.020,       # 2.0%
-        'max_hold_bars': 12,      # ~12 hours (1.5 days)
-        'data_source': '1hour',
-        'description': 'Short swing trades',
-        'expected_frequency': 'Medium (1 trade/day)',
-        'capital_allocation': 0.02  # 2% of total capital
-    },
-    'daily': {
-        'profit_target': 0.060,   # 6.0% (daily swing moves)
-        'stop_loss': 0.030,       # 3.0%
-        'max_hold_bars': 5,       # ~5 days
-        'data_source': 'daily',
-        'description': 'Medium swing trades',
-        'expected_frequency': 'Medium (3-4 trades/week)',
-        'capital_allocation': 0.02  # 2% of total capital
-    },
-    'weekly': {
-        'profit_target': 0.100,   # 10.0% (weekly trend moves)
-        'stop_loss': 0.050,       # 5.0%
-        'max_hold_bars': 4,       # ~4 weeks
-        'data_source': 'daily',   # Weekly derived from daily
-        'description': 'Long swing trades',
-        'expected_frequency': 'Low (1-2 trades/month)',
-        'capital_allocation': 0.03  # 3% of total capital
-    },
-    'monthly': {
-        'profit_target': 0.150,   # 15.0% (monthly trend moves)
-        'stop_loss': 0.075,       # 7.5%
-        'max_hold_bars': 3,       # ~3 months
-        'data_source': 'daily',   # Monthly derived from daily
-        'description': 'Position trades',
-        'expected_frequency': 'Very Low (1-2 trades/quarter)',
-        'capital_allocation': 0.03  # 3% of total capital
-    }
-}
+def get_all_available_symbols():
+    """Get ALL symbols from data directories"""
+    all_symbols = set()
 
-PROFITABLE_SYMBOLS = ['FINPIPE', 'GREENLAM', 'WABAG', 'ITI', 'LTTS', 'CONCORDBIO']
+    for data_type, path in DATA_PATHS.items():
+        try:
+            if os.path.exists(path):
+                files = [f for f in os.listdir(path) if f.endswith('.csv')]
+                symbols = [f.replace('.csv', '') for f in files]
+                all_symbols.update(symbols)
+                print(f"Found {len(symbols)} symbols in {data_type}")
+            else:
+                print(f"Path not found: {path}")
+        except Exception as e:
+            print(f"Error reading {data_type}: {e}")
 
-def resample_to_timeframe(df, target_timeframe):
-    """Convert daily data to weekly/monthly timeframes"""
+    return sorted(list(all_symbols))
+
+def load_symbol_data(symbol):
+    """Load 15-minute data for symbol"""
     try:
-        if target_timeframe == 'weekly':
-            # Resample to weekly (Monday start)
-            df_resampled = df.set_index('date').resample('W-MON').agg({
-                'open': 'first',
-                'high': 'max', 
-                'low': 'min',
-                'close': 'last',
-                'volume': 'sum'
-            }).dropna().reset_index()
+        file_path = os.path.join(DATA_PATHS['15minute'], f"{symbol}.csv")
+        if not os.path.exists(file_path):
+            return None
 
-        elif target_timeframe == 'monthly':
-            # Resample to monthly (month start)
-            df_resampled = df.set_index('date').resample('MS').agg({
-                'open': 'first',
-                'high': 'max',
-                'low': 'min', 
-                'close': 'last',
-                'volume': 'sum'
-            }).dropna().reset_index()
-
-        else:
-            return df
-
-        return df_resampled
-
-    except Exception as e:
-        print(f"Error resampling to {target_timeframe}: {e}")
-        return df
-
-def load_timeframe_data(symbol, timeframe):
-    """Load and prepare data for specific timeframe"""
-    try:
-        config = TIMEFRAME_CONFIGS[timeframe]
-        data_source = config['data_source']
-
-        # Load base data
-        df = pd.read_csv(os.path.join(DATA_PATHS[data_source], f"{symbol}.csv"))
+        df = pd.read_csv(file_path)
         df['date'] = pd.to_datetime(df['date'])
         df = df[df['date'].dt.year == YEAR_FILTER].reset_index(drop=True)
 
-        # Resample if needed for weekly/monthly
-        if timeframe in ['weekly', 'monthly']:
-            df = resample_to_timeframe(df, timeframe)
-
-        # Minimum data requirement varies by timeframe
-        min_bars = {'15minute': 100, '1hour': 80, 'daily': 60, 'weekly': 40, 'monthly': 20}
-
-        if len(df) < min_bars.get(timeframe, 50):
+        if len(df) < 500:  # Need minimum data
             return None
 
         return df
     except Exception as e:
-        print(f"Error loading {timeframe} data for {symbol}: {e}")
+        print(f"Error loading {symbol}: {e}")
         return None
 
-def add_comprehensive_indicators(df, timeframe):
-    """Add indicators optimized for each timeframe"""
+def add_technical_indicators(df):
+    """Add the proven technical indicators"""
     try:
-        # Timeframe-adjusted periods
-        if timeframe == '15minute':
-            periods = {'rsi': 14, 'adx': 14, 'sma': 20, 'high': 20}
-        elif timeframe == '1hour':
-            periods = {'rsi': 14, 'adx': 14, 'sma': 20, 'high': 20}
-        elif timeframe == 'daily':
-            periods = {'rsi': 14, 'adx': 14, 'sma': 20, 'high': 20}
-        elif timeframe == 'weekly':
-            periods = {'rsi': 10, 'adx': 10, 'sma': 10, 'high': 10}  # Shorter for weekly
-        else:  # monthly
-            periods = {'rsi': 6, 'adx': 6, 'sma': 6, 'high': 6}    # Shorter for monthly
+        # RSI
+        df['rsi'] = ta.momentum.rsi(df['close'], window=14)
 
-        # Calculate indicators
-        df['rsi'] = ta.momentum.rsi(df['close'], window=periods['rsi'])
-        df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=periods['adx'])
+        # ADX
+        df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=14)
 
         # Volume indicators
-        df['volume_sma'] = df['volume'].rolling(periods['sma']).mean()
+        df['volume_sma'] = df['volume'].rolling(20).mean()
         df['volume_ratio'] = df['volume'] / df['volume_sma']
 
         # Price indicators
-        df['sma_20'] = df['close'].rolling(periods['sma']).mean()
-        df['high_20'] = df['high'].rolling(periods['high']).max()
-
-        # Additional trend indicators for longer timeframes
-        if timeframe in ['weekly', 'monthly']:
-            df['ema_50'] = ta.trend.ema_indicator(df['close'], window=min(periods['sma']*2, len(df)//3))
-            df['trend_strength'] = (df['close'] - df['ema_50']) / df['ema_50']
+        df['sma_20'] = df['close'].rolling(20).mean()
+        df['high_20'] = df['high'].rolling(20).max()
 
         # Fill NaN values
-        numeric_columns = [col for col in df.columns if df[col].dtype in ['float64', 'int64']]
+        numeric_columns = ['rsi', 'adx', 'volume_ratio', 'sma_20', 'high_20', 'volume_sma']
         for col in numeric_columns:
-            if col in ['rsi', 'adx', 'volume_ratio', 'sma_20', 'high_20']:
+            if col in df.columns:
                 df[col] = df[col].fillna(method='ffill').fillna(method='bfill')
 
         return df
     except Exception as e:
-        print(f"Error adding indicators for {timeframe}: {e}")
+        print(f"Error adding indicators: {e}")
         return df
 
-def generate_comprehensive_signals(df, timeframe):
-    """Generate signals with timeframe-appropriate logic"""
+def generate_trading_signals(df):
+    """Generate trading signals using proven logic"""
     try:
         df['signal'] = 0
 
-        start_idx = {'15minute': 50, '1hour': 40, 'daily': 30, 'weekly': 20, 'monthly': 10}
-
-        for i in range(start_idx.get(timeframe, 30), len(df)):
+        for i in range(50, len(df)):
             current = df.iloc[i]
             prev = df.iloc[i-1]
 
-            # Core signal conditions (same logic, different sensitivity)
+            # PROVEN signal conditions (same as ₹894 system)
             conditions = [
                 # Breakout condition
                 current['close'] > current['high_20'],
 
-                # Volume confirmation (adjusted for timeframe)
+                # Volume confirmation
                 current['volume_ratio'] > VOLUME_MULT,
 
                 # Trend strength
@@ -211,30 +126,20 @@ def generate_comprehensive_signals(df, timeframe):
                 current['rsi'] > prev['rsi']
             ]
 
-            # Additional conditions for longer timeframes
-            if timeframe in ['weekly', 'monthly'] and 'trend_strength' in df.columns:
-                conditions.append(current['trend_strength'] > 0.02)  # Strong trend
-                required_conditions = 5  # 5 out of 7 for longer timeframes
-            else:
-                required_conditions = 4  # 4 out of 6 for shorter timeframes
-
-            # Generate signal
-            if sum(conditions) >= required_conditions:
+            # Require 4 out of 6 conditions (PROVEN OPTIMAL)
+            if sum(conditions) >= 4:
                 df.iloc[i, df.columns.get_loc('signal')] = 1
 
         return df
     except Exception as e:
-        print(f"Error generating signals for {timeframe}: {e}")
+        print(f"Error generating signals: {e}")
         df['signal'] = 0
         return df
 
-def backtest_comprehensive_timeframe(df, symbol, timeframe):
-    """Backtest with comprehensive timeframe parameters"""
+def backtest_symbol(df, symbol):
+    """Backtest using proven parameters"""
     try:
-        config = TIMEFRAME_CONFIGS[timeframe]
-        capital = INITIAL_CAPITAL * config['capital_allocation']  # Allocated capital
-
-        cash = capital
+        cash = INITIAL_CAPITAL
         positions = {}
         trades = []
 
@@ -247,13 +152,13 @@ def backtest_comprehensive_timeframe(df, symbol, timeframe):
                 current_return = (current['close'] - pos['entry_price']) / pos['entry_price']
                 bars_held = i - pos['entry_bar']
 
-                # Timeframe-specific exit conditions
+                # PROVEN exit conditions
                 exit_reason = None
-                if current_return >= config['profit_target']:
+                if current_return >= PROFIT_TARGET:
                     exit_reason = 'Profit Target'
-                elif current_return <= -config['stop_loss']:
+                elif current_return <= -STOP_LOSS:
                     exit_reason = 'Stop Loss'
-                elif bars_held >= config['max_hold_bars']:
+                elif bars_held >= MAX_HOLD_BARS:
                     exit_reason = 'Time Exit'
 
                 if exit_reason:
@@ -266,7 +171,6 @@ def backtest_comprehensive_timeframe(df, symbol, timeframe):
 
                     trade = {
                         'symbol': symbol,
-                        'timeframe': timeframe,
                         'entry_date': pos['entry_date'],
                         'exit_date': current['date'],
                         'entry_price': pos['entry_price'],
@@ -275,8 +179,7 @@ def backtest_comprehensive_timeframe(df, symbol, timeframe):
                         'pnl': net_pnl,
                         'return_pct': current_return,
                         'exit_reason': exit_reason,
-                        'bars_held': bars_held,
-                        'capital_allocated': capital
+                        'bars_held': bars_held
                     }
 
                     trades.append(trade)
@@ -287,18 +190,18 @@ def backtest_comprehensive_timeframe(df, symbol, timeframe):
             for pos_id in positions_to_close:
                 del positions[pos_id]
 
-            # Check for new entries (only one position per timeframe per symbol)
+            # Check for new entries
             if (current['signal'] == 1 and
-                len(positions) == 0 and  # One position per symbol per timeframe
-                cash > 1000):
+                len(positions) < MAX_POSITIONS and
+                cash > 5000):
 
-                # Use available capital for position
-                position_value = min(cash * 0.8, cash - 1000)  # Keep some cash buffer
+                # PROVEN position sizing
+                position_value = cash * POSITION_SIZE
                 entry_price = current['close'] * 1.0005  # Slippage
                 shares = position_value / entry_price
 
-                if shares > 0:
-                    positions[0] = {
+                if cash >= position_value:
+                    positions[len(positions)] = {
                         'entry_date': current['date'],
                         'entry_price': entry_price,
                         'shares': shares,
@@ -310,216 +213,209 @@ def backtest_comprehensive_timeframe(df, symbol, timeframe):
         return trades
 
     except Exception as e:
-        print(f"Error in {timeframe} backtest for {symbol}: {e}")
+        print(f"Error in backtest for {symbol}: {e}")
         return []
 
-def run_comprehensive_multi_timeframe_test():
-    """Test all timeframes comprehensively"""
+def run_comprehensive_all_symbols_test():
+    """Test ALL available symbols comprehensively"""
 
-    print("🚀 COMPREHENSIVE MULTI-TIMEFRAME SYSTEM")
-    print("=" * 60)
-    print("Testing 15min → 1hour → Daily → Weekly → Monthly timeframes!")
+    print("🚀 COMPREHENSIVE ALL-SYMBOLS TESTING")
+    print("=" * 50)
+    print("Testing EVERY symbol in your data directories!")
     print()
 
-    # Display timeframe configurations
-    print("⚙️ TIMEFRAME CONFIGURATIONS:")
-    print("-" * 30)
-    print(f"{'Timeframe':<12} {'Profit Target':<13} {'Stop Loss':<10} {'Max Hold':<9} {'Capital %'}")
-    print("-" * 70)
+    # Get all available symbols
+    all_symbols = get_all_available_symbols()
 
-    for tf, config in TIMEFRAME_CONFIGS.items():
-        print(f"{tf:<12} {config['profit_target']*100:<13.1f}% "
-              f"{config['stop_loss']*100:<10.1f}% "
-              f"{config['max_hold_bars']:<9} "
-              f"{config['capital_allocation']*100:<8.0f}%")
+    if not all_symbols:
+        print("No symbols found in data directories!")
+        return
 
-    all_results = {}
-    timeframe_summaries = {}
+    print(f"\n📊 FOUND {len(all_symbols)} TOTAL SYMBOLS")
+    print(f"Testing with PROVEN ₹894 system parameters...")
+    print()
 
-    # Test each timeframe
-    for timeframe in ['15minute', '1hour', 'daily', 'weekly', 'monthly']:
-        print(f"\n📊 TESTING {timeframe.upper()} TIMEFRAME:")
-        print(f"Target: {TIMEFRAME_CONFIGS[timeframe]['profit_target']*100:.1f}% profit, "
-              f"{TIMEFRAME_CONFIGS[timeframe]['stop_loss']*100:.1f}% stop")
-        print("-" * 60)
+    all_results = []
+    successful_symbols = 0
+    failed_symbols = 0
 
-        timeframe_results = []
+    # Test each symbol
+    for i, symbol in enumerate(all_symbols, 1):
+        print(f"[{i}/{len(all_symbols)}] Testing {symbol}...")
 
-        for i, symbol in enumerate(PROFITABLE_SYMBOLS, 1):
-            print(f"[{i}/{len(PROFITABLE_SYMBOLS)}] Processing {symbol}...")
-
-            try:
-                # Load timeframe data
-                df = load_timeframe_data(symbol, timeframe)
-                if df is None:
-                    print(f"  ✗ Insufficient {timeframe} data")
-                    continue
-
-                # Add indicators
-                df = add_comprehensive_indicators(df, timeframe)
-
-                # Generate signals
-                df = generate_comprehensive_signals(df, timeframe)
-
-                # Check signal count
-                signal_count = df['signal'].sum()
-                if signal_count < 1:
-                    print(f"  ✗ No signals generated")
-                    continue
-
-                print(f"  📊 {signal_count} signals, {len(df)} {timeframe} bars")
-
-                # Run backtest
-                trades = backtest_comprehensive_timeframe(df, symbol, timeframe)
-
-                if len(trades) >= 1:
-                    # Calculate stats
-                    df_trades = pd.DataFrame(trades)
-                    winning_trades = len(df_trades[df_trades['pnl'] > 0])
-
-                    result = {
-                        'symbol': symbol,
-                        'timeframe': timeframe,
-                        'total_trades': len(trades),
-                        'winning_trades': winning_trades,
-                        'win_rate': (winning_trades / len(trades)) * 100 if len(trades) > 0 else 0,
-                        'total_pnl': df_trades['pnl'].sum(),
-                        'avg_pnl_per_trade': df_trades['pnl'].mean(),
-                        'best_trade': df_trades['pnl'].max(),
-                        'worst_trade': df_trades['pnl'].min(),
-                        'avg_return_pct': df_trades['return_pct'].mean() * 100,
-                        'avg_hold_bars': df_trades['bars_held'].mean(),
-                        'signals_generated': signal_count,
-                        'bars_analyzed': len(df),
-                        'capital_allocated': df_trades['capital_allocated'].iloc[0]
-                    }
-
-                    timeframe_results.append(result)
-
-                    print(f"  ✅ {result['total_trades']} trades, "
-                          f"{result['win_rate']:.1f}% win rate, "
-                          f"₹{result['total_pnl']:.0f} PnL")
-                else:
-                    print(f"  ✗ No valid trades generated")
-
-            except Exception as e:
-                print(f"  ✗ Error: {e}")
+        try:
+            # Load data
+            df = load_symbol_data(symbol)
+            if df is None:
+                print(f"  ✗ No/insufficient data")
+                failed_symbols += 1
                 continue
 
-        # Store and summarize timeframe results
-        if timeframe_results:
-            all_results[timeframe] = timeframe_results
-            df_results = pd.DataFrame(timeframe_results)
+            # Add indicators
+            df = add_technical_indicators(df)
 
-            # Timeframe summary
-            summary = {
-                'timeframe': timeframe,
-                'successful_symbols': len(df_results),
-                'total_trades': df_results['total_trades'].sum(),
-                'total_pnl': df_results['total_pnl'].sum(),
-                'avg_win_rate': df_results['win_rate'].mean(),
-                'avg_pnl_per_trade': df_results['avg_pnl_per_trade'].mean(),
-                'capital_allocated': TIMEFRAME_CONFIGS[timeframe]['capital_allocation'] * INITIAL_CAPITAL,
-                'return_on_allocated_capital': (df_results['total_pnl'].sum() / (TIMEFRAME_CONFIGS[timeframe]['capital_allocation'] * INITIAL_CAPITAL)) * 100
-            }
+            # Generate signals
+            df = generate_trading_signals(df)
 
-            timeframe_summaries[timeframe] = summary
+            # Check signal count
+            signal_count = df['signal'].sum()
+            if signal_count < 5:
+                print(f"  ✗ Only {signal_count} signals")
+                failed_symbols += 1
+                continue
 
-            # Save results
-            df_results.to_csv(f'{timeframe}_comprehensive_results.csv', index=False)
-            print(f"\n✅ {timeframe} SUMMARY: {summary['total_trades']} trades, "
-                  f"₹{summary['total_pnl']:.0f} profit, "
-                  f"{summary['return_on_allocated_capital']:.1f}% return on allocated capital")
-        else:
-            print(f"\n❌ No successful results for {timeframe}")
+            print(f"  📊 {signal_count} signals generated")
+
+            # Run backtest
+            trades = backtest_symbol(df, symbol)
+
+            if len(trades) >= 3:  # Need minimum trades
+                # Calculate comprehensive stats
+                df_trades = pd.DataFrame(trades)
+                winning_trades = len(df_trades[df_trades['pnl'] > 0])
+
+                result = {
+                    'symbol': symbol,
+                    'total_trades': len(trades),
+                    'winning_trades': winning_trades,
+                    'losing_trades': len(trades) - winning_trades,
+                    'win_rate': (winning_trades / len(trades)) * 100,
+                    'total_pnl': df_trades['pnl'].sum(),
+                    'avg_pnl_per_trade': df_trades['pnl'].mean(),
+                    'best_trade': df_trades['pnl'].max(),
+                    'worst_trade': df_trades['pnl'].min(),
+                    'avg_return_pct': df_trades['return_pct'].mean() * 100,
+                    'avg_hold_bars': df_trades['bars_held'].mean(),
+                    'signals_generated': signal_count,
+                    'profit_factor': abs(df_trades[df_trades['pnl'] > 0]['pnl'].sum() / 
+                                       df_trades[df_trades['pnl'] <= 0]['pnl'].sum()) if len(df_trades[df_trades['pnl'] <= 0]) > 0 else float('inf'),
+                    'max_drawdown': df_trades['pnl'].cumsum().min(),
+                    'data_bars': len(df),
+                    'is_profitable': df_trades['pnl'].sum() > 0
+                }
+
+                all_results.append(result)
+                successful_symbols += 1
+
+                status = "✅ PROFIT" if result['is_profitable'] else "❌ LOSS"
+                print(f"  {status}: {result['total_trades']} trades, "
+                      f"{result['win_rate']:.1f}% win rate, "
+                      f"₹{result['total_pnl']:.0f} PnL")
+            else:
+                print(f"  ✗ Only {len(trades)} trades")
+                failed_symbols += 1
+
+        except Exception as e:
+            print(f"  ✗ Error: {e}")
+            failed_symbols += 1
+            continue
 
     # COMPREHENSIVE ANALYSIS
-    print(f"\n\n🏆 COMPREHENSIVE MULTI-TIMEFRAME ANALYSIS:")
-    print("=" * 65)
+    if all_results:
+        results_df = pd.DataFrame(all_results)
 
-    if timeframe_summaries:
-        print(f"\n📊 PERFORMANCE BY TIMEFRAME:")
-        print("-" * 35)
-        print(f"{'Timeframe':<12} {'Symbols':<8} {'Trades':<7} {'Total PnL':<11} {'Allocated':<11} {'ROI %'}")
-        print("-" * 80)
+        print(f"\n\n🏆 COMPREHENSIVE ALL-SYMBOLS ANALYSIS")
+        print("=" * 55)
 
-        total_system_pnl = 0
-        total_allocated_capital = 0
+        # Overall statistics
+        total_symbols_tested = len(all_symbols)
+        successful_count = len(results_df)
+        profitable_count = len(results_df[results_df['is_profitable']])
+        losing_count = successful_count - profitable_count
 
-        for tf, summary in timeframe_summaries.items():
-            total_system_pnl += summary['total_pnl']
-            total_allocated_capital += summary['capital_allocated']
+        print(f"\n📊 OVERALL STATISTICS:")
+        print(f"  Total Symbols Available: {total_symbols_tested}")
+        print(f"  Successfully Tested: {successful_count} ({successful_count/total_symbols_tested*100:.1f}%)")
+        print(f"  Failed Testing: {failed_symbols} ({failed_symbols/total_symbols_tested*100:.1f}%)")
+        print(f"  Profitable Symbols: {profitable_count} ({profitable_count/successful_count*100:.1f}% of tested)")
+        print(f"  Losing Symbols: {losing_count} ({losing_count/successful_count*100:.1f}% of tested)")
 
-            print(f"{tf:<12} {summary['successful_symbols']:<8} {summary['total_trades']:<7} "
-                  f"₹{summary['total_pnl']:<10.0f} ₹{summary['capital_allocated']:<10.0f} "
-                  f"{summary['return_on_allocated_capital']:<6.1f}%")
+        # Performance metrics
+        total_trades = results_df['total_trades'].sum()
+        total_pnl = results_df['total_pnl'].sum()
+        avg_win_rate = results_df['win_rate'].mean()
 
-        # System-wide analysis
-        print(f"\n🎯 SYSTEM-WIDE PERFORMANCE:")
-        print("-" * 28)
-        print(f"Total System PnL: ₹{total_system_pnl:.0f}")
-        print(f"Total Capital Used: ₹{total_allocated_capital:.0f} ({total_allocated_capital/INITIAL_CAPITAL*100:.0f}% of ₹{INITIAL_CAPITAL:,})")
-        print(f"Overall System ROI: {(total_system_pnl/total_allocated_capital)*100:.1f}%")
+        print(f"\n💰 SYSTEM PERFORMANCE:")
+        print(f"  Total Trades: {total_trades:,}")
+        print(f"  Total PnL: ₹{total_pnl:,.0f}")
+        print(f"  Average Win Rate: {avg_win_rate:.1f}%")
+        print(f"  Return on Capital: {(total_pnl/INITIAL_CAPITAL)*100:.2f}%")
 
-        # Monthly projections
-        print(f"\n💰 MONTHLY RETURN PROJECTIONS:")
-        print("-" * 30)
+        # Top and bottom performers
+        results_df_sorted = results_df.sort_values('total_pnl', ascending=False)
 
-        monthly_projections = {}
-        total_monthly_pnl = 0
+        print(f"\n🏆 TOP 10 PROFITABLE SYMBOLS:")
+        print(f"{'Symbol':<12} {'Trades':<7} {'Win Rate':<9} {'Total PnL':<11} {'Profit Factor'}")
+        print("-" * 65)
 
-        for tf, summary in timeframe_summaries.items():
-            if tf == '15minute':
-                monthly_factor = 22 / 250  # 22 trading days per month
-            elif tf == '1hour':
-                monthly_factor = 22 / 250
-            elif tf == 'daily':
-                monthly_factor = 22 / 250
-            elif tf == 'weekly':
-                monthly_factor = 4.33 / 52  # ~4.33 weeks per month
-            else:  # monthly
-                monthly_factor = 1 / 12  # 1 month per month
+        top_10 = results_df_sorted.head(10)
+        for _, row in top_10.iterrows():
+            pf = row['profit_factor'] if row['profit_factor'] != float('inf') else 99.99
+            print(f"{row['symbol']:<12} {row['total_trades']:<7} {row['win_rate']:<9.1f}% "
+                  f"₹{row['total_pnl']:<10.0f} {pf:<6.2f}")
 
-            monthly_pnl = summary['total_pnl'] * monthly_factor
-            monthly_return_pct = (monthly_pnl / summary['capital_allocated']) * 100
+        print(f"\n💸 WORST 10 PERFORMING SYMBOLS:")
+        print(f"{'Symbol':<12} {'Trades':<7} {'Win Rate':<9} {'Total PnL':<11} {'Profit Factor'}")
+        print("-" * 65)
 
-            monthly_projections[tf] = {
-                'monthly_pnl': monthly_pnl,
-                'monthly_return_pct': monthly_return_pct
-            }
+        bottom_10 = results_df_sorted.tail(10)
+        for _, row in bottom_10.iterrows():
+            pf = row['profit_factor'] if row['profit_factor'] != float('inf') else 99.99
+            print(f"{row['symbol']:<12} {row['total_trades']:<7} {row['win_rate']:<9.1f}% "
+                  f"₹{row['total_pnl']:<10.0f} {pf:<6.2f}")
 
-            total_monthly_pnl += monthly_pnl
+        # Comparison with original 6 symbols
+        original_6_symbols = ['FINPIPE', 'GREENLAM', 'WABAG', 'ITI', 'LTTS', 'CONCORDBIO']
+        original_results = results_df[results_df['symbol'].isin(original_6_symbols)]
 
-            print(f"{tf:<12}: ₹{monthly_pnl:>6.0f}/month ({monthly_return_pct:>5.1f}% on allocated capital)")
+        if len(original_results) > 0:
+            original_pnl = original_results['total_pnl'].sum()
+            original_trades = original_results['total_trades'].sum()
 
-        total_monthly_return_pct = (total_monthly_pnl / total_allocated_capital) * 100
+            print(f"\n🔍 COMPARISON WITH ORIGINAL 6 SYMBOLS:")
+            print(f"  Original 6 Symbols PnL: ₹{original_pnl:.0f} ({original_trades} trades)")
+            print(f"  All Symbols PnL: ₹{total_pnl:.0f} ({total_trades} trades)")
+            print(f"  Improvement: {((total_pnl - original_pnl) / abs(original_pnl)) * 100 if original_pnl != 0 else 0:+.1f}%")
 
-        print(f"\n🚀 COMBINED SYSTEM MONTHLY POTENTIAL:")
-        print(f"Total Monthly PnL: ₹{total_monthly_pnl:.0f}")
-        print(f"Monthly Return: {total_monthly_return_pct:.1f}% on ₹{total_allocated_capital:,.0f} allocated")
-        print(f"Annualized Return: {total_monthly_return_pct * 12:.1f}%")
+        # Distribution analysis
+        print(f"\n📈 PERFORMANCE DISTRIBUTION:")
+        profitable_symbols = results_df[results_df['is_profitable']]
+        losing_symbols = results_df[~results_df['is_profitable']]
 
-        # Best timeframe recommendation
-        best_timeframe = max(timeframe_summaries.items(), key=lambda x: x[1]['return_on_allocated_capital'])
-        print(f"\n⭐ BEST PERFORMING TIMEFRAME: {best_timeframe[0].upper()}")
-        print(f"   ROI: {best_timeframe[1]['return_on_allocated_capital']:.1f}%")
-        print(f"   Total Profit: ₹{best_timeframe[1]['total_pnl']:.0f}")
-        print(f"   Trade Count: {best_timeframe[1]['total_trades']}")
+        if len(profitable_symbols) > 0:
+            print(f"  Profitable Symbols ({len(profitable_symbols)}):")
+            print(f"    Average PnL: ₹{profitable_symbols['total_pnl'].mean():.0f}")
+            print(f"    Total Contribution: ₹{profitable_symbols['total_pnl'].sum():.0f}")
+            print(f"    Best Performer: {profitable_symbols.loc[profitable_symbols['total_pnl'].idxmax(), 'symbol']} "
+                  f"(₹{profitable_symbols['total_pnl'].max():.0f})")
 
-        print(f"\n🎯 IMPLEMENTATION RECOMMENDATION:")
-        print("-" * 32)
-        if total_monthly_return_pct > 10:  # If system shows >10% monthly potential
-            print("🚀 DEPLOY MULTI-TIMEFRAME SYSTEM!")
-            print(f"   Potential: {total_monthly_return_pct:.1f}% monthly return")
-            print(f"   This is {total_monthly_return_pct/3:.1f}x better than 15-min only!")
-            print("   Implement all profitable timeframes in parallel")
+        if len(losing_symbols) > 0:
+            print(f"  Losing Symbols ({len(losing_symbols)}):")
+            print(f"    Average Loss: ₹{losing_symbols['total_pnl'].mean():.0f}")
+            print(f"    Total Drain: ₹{losing_symbols['total_pnl'].sum():.0f}")
+            print(f"    Worst Performer: {losing_symbols.loc[losing_symbols['total_pnl'].idxmin(), 'symbol']} "
+                  f"(₹{losing_symbols['total_pnl'].min():.0f})")
+
+        # Save comprehensive results
+        results_df.to_csv('all_symbols_comprehensive_results.csv', index=False)
+        print(f"\n💾 Results saved to: all_symbols_comprehensive_results.csv")
+
+        # Final recommendation
+        print(f"\n🎯 FINAL ANALYSIS:")
+        if total_pnl > 0:
+            print(f"✅ SYSTEM IS PROFITABLE across all symbols!")
+            print(f"   Total profit: ₹{total_pnl:,.0f}")
+            print(f"   Success rate: {profitable_count}/{successful_count} symbols")
+            print(f"   Recommended for live trading")
         else:
-            print("✅ Stick with 15-minute verified system")
-            print("   Multi-timeframe doesn't show significant improvement")
-    else:
-        print("❌ No successful results across any timeframe")
+            print(f"❌ System shows overall loss across all symbols")
+            print(f"   Total loss: ₹{total_pnl:,.0f}")
+            print(f"   Consider filtering to only profitable symbols")
 
-    return all_results, timeframe_summaries
+        return results_df
+    else:
+        print("\n❌ No successful results across any symbols")
+        return None
 
 if __name__ == "__main__":
-    results, summaries = run_comprehensive_multi_timeframe_test()
+    results = run_comprehensive_all_symbols_test()

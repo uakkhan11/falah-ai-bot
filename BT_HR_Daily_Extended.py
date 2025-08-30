@@ -36,6 +36,17 @@ ATR_PERIOD = 14
 FEATURES = ["adx", "atr", "volume_ratio", "adosc", "hour_adx", "volume_sma",
             "macd_hist", "vwap", "roc", "obv"]
 
+def prepare_data_2025(symbol):
+    daily, hourly, m15 = load_and_filter_2025(symbol)
+    daily = add_indicators(daily)
+    hourly = add_indicators(hourly)
+    m15 = add_indicators(m15)
+    m15 = add_hourly_features_to_m15(m15, hourly)
+    daily.dropna(subset=['ema200'], inplace=True)
+    hourly.dropna(subset=['ema200'], inplace=True)
+    m15.dropna(subset=['ema200'], inplace=True)
+    return daily, hourly, m15
+
 def load_and_filter_2025(symbol):
     def filter_year(df):
         df['date'] = pd.to_datetime(df['date'])

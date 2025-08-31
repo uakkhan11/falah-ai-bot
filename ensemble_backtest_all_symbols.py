@@ -150,7 +150,10 @@ if __name__ == "__main__":
             for tf, cfg in TIMEFRAME_CONFIGS.items():
                 df = symbol_data.get(tf)
                 if df is None or i>=len(df): continue
-                feat = df.iloc[i][['ret','rsi','adx','sma20','vol_r']].values
+                raw = df.iloc[i][['ret','rsi','adx','sma20','vol_r']].values
+                try:
+                    feat = np.array(raw, dtype=float)
+                except ValueError: continue
                 if np.isnan(feat).any(): continue
                 feat_s = scalers[tf].transform([feat])
                 pred = models[tf].predict(feat_s)[0]

@@ -16,8 +16,8 @@ def analyze_ml_trades(csv_file='all_timeframes_ml_trades.csv'):
     
     # Load data
     df = pd.read_csv(csv_file)
-    df['entry_date'] = pd.to_datetime(df['entry_date'])
-    df['exit_date'] = pd.to_datetime(df['exit_date'])
+    df['entry_date'] = pd.to_datetime(df['entry_date'], errors='coerce', infer_datetime_format=True)
+    df['exit_date']  = pd.to_datetime(df['exit_date'],  errors='coerce', infer_datetime_format=True)
     
     # Basic stats
     total_trades = len(df)

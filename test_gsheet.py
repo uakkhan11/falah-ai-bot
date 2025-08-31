@@ -1,18 +1,15 @@
+from google.oauth2.service_account import Credentials
 import gspread
 
-gc = gspread.service_account(filename="/root/falah-ai-bot/falah-credentials.json")
+scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+creds = Credentials.from_service_account_file(
+    "/root/falah-ai-bot/falah-credentials.json", scopes=scopes)
 
-# This is your spreadsheet key (just the ID)
-SPREADSHEET_KEY = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
-
-sheet = gc.open_by_key(SPREADSHEET_KEY)
-
-# List all worksheets
-worksheets = sheet.worksheets()
-for ws in worksheets:
-    print("✅ Found worksheet:", ws.title)
-
-# Read some data
-first_ws = worksheets[0]
-rows = first_ws.get_all_values()
-print("✅ First 5 rows:", rows[:5])
+client = gspread.authorize(creds)
+try:
+    sheet = client.open_by_key("1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c")
+    worksheet = sheet.worksheet("HalalList")
+    symbols = worksheet.col_values(1)
+    print(symbols[:10])  # preview first 10
+except Exception as e:
+    print(f"Failed to fetch halal symbols: {e}")

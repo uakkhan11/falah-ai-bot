@@ -7,6 +7,7 @@ import ta
 import warnings
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 from multiprocessing import Pool, cpu_count
 
 warnings.filterwarnings("ignore")

@@ -22,11 +22,11 @@ SYMBOLS = [
     "KIOCL","LLOYDSENGG","LUMAXTECH","LUXIND","OIL"
 ]
 
-DATE_START = "2024-01-01"
-DATE_END   = "2025-06-30"
+DATE_START = "2025-05-01"
+DATE_END   = "2025-08-31"
 
 # Walk-forward rolling windows: 6 months train, 1 month test
-TRAIN_MONTHS = 6
+TRAIN_MONTHS = 2
 TEST_MONTHS  = 1
 
 # Parameter grid (keep small and fixed)

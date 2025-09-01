@@ -18,26 +18,26 @@ DATA_PATHS = {
 }
 YEAR_FILTER = 2025
 
-# Strategy toggles
+# Strategy toggles (start simple, add later)
 STRAT_TREND_BREAKOUT = True
-STRAT_WITH_TREND_PULLBACK = True   # replaces raw BB_Pullback
-STRAT_EVENT_CONTINUATION = True
+STRAT_WITH_TREND_PULLBACK = False
+STRAT_EVENT_CONTINUATION = False
 
-# Universe curation (optional: leave empty to include all)
+# Universe curation (optional)
 SYMBOL_WHITELIST = set([])  # e.g., {"INFIBEAM","HINDCOPPER","TDPOWERSYS"}
-SYMBOL_BLACKLIST = set(["LLOYDSENGG","SAGILITY","WELSPUNLIV"])  # example blacklist from prior run
+SYMBOL_BLACKLIST = set(["LLOYDSENGG","SAGILITY","WELSPUNLIV"])
 
-# Entries and filters
+# Entries and filters (loosened)
 VOLUME_MULT_BREAKOUT = 2.0
 ADX_THRESHOLD_BREAKOUT = 25
 ADX_THRESHOLD_DEFAULT = 20
-HOURLY_ADX_MIN = 25
-DAILY_ADX_MIN = 20
+HOURLY_ADX_MIN = 22     # was 25
+DAILY_ADX_MIN = 18      # was 20
 
 # Exits
 ATR_SL_MULT = 1.3
 PROFIT_TARGET = 0.02
-TRAIL_TRIGGER = 0.02  # delay to avoid early trail
+TRAIL_TRIGGER = 0.02
 PARTIAL_TP_FRACTION = 0.5
 
 # Risk & capacity
@@ -56,13 +56,13 @@ ROUND_TRIP_BPS = 0.002
 ADV_PARTICIPATION = 0.02
 ENTRY_AT_NEXT_BAR = True
 
-# ML gate (v2.1)
+# ML gate (loosened composite)
 FEATURES = ["adx","atr","volume_ratio","adosc","hour_adx","volume_sma","macd_hist","vwap","roc","obv"]
 ML_PROBA_THRESHOLD = 0.5
-ML_COMPOSITE_MIN = 0.6  # proba * (hour_adx/50 capped) must exceed this
+ML_COMPOSITE_MIN = 0.55   # was 0.6
 
 # Portfolio layer
-DAILY_LOSS_LIMIT = -0.015  # -1.5% of capital; stop new entries for the day after breach
+DAILY_LOSS_LIMIT = -0.015
 MAX_NEW_ENTRIES_PER_15M = 3
 
 # ---------- Data loading ----------
@@ -86,8 +86,6 @@ def load_and_filter_2025(symbol):
 
 def add_indicators(df):
     df = df.sort_values('date').reset_index(drop=True)
-
-    # Ensure datetime
     df['date'] = pd.to_datetime(df['date'])
 
     # Weekly Donchian
@@ -133,7 +131,6 @@ def add_indicators(df):
     df['obv'] = talib.OBV(close, volume)
     df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
 
-    # Safety
     for f in ["hour_adx", "adosc", "roc", "obv", "vwap", "volume_sma", "ema50"]:
         if f not in df.columns:
             df[f] = np.nan
@@ -153,9 +150,7 @@ def add_hourly_features_to_m15(m15_df, hourly_df):
 
 # ---------- Strategy signals (with datetime alignment) ----------
 def trend_breakout_signal(df, daily_df, hourly_df):
-    df = df.copy()
-    daily_df = daily_df.copy()
-    hourly_df = hourly_df.copy()
+    df = df.copy(); daily_df = daily_df.copy(); hourly_df = hourly_df.copy()
     df['date'] = pd.to_datetime(df['date'])
     daily_df['date'] = pd.to_datetime(daily_df['date'])
     hourly_df['date'] = pd.to_datetime(hourly_df['date'])
@@ -180,23 +175,19 @@ def trend_breakout_signal(df, daily_df, hourly_df):
     return sig
 
 def with_trend_pullback_signal(df, daily_df, hourly_df):
-    df = df.copy()
-    daily_df = daily_df.copy()
-    hourly_df = hourly_df.copy()
+    # disabled by toggle; keep function for later use
+    df = df.copy(); daily_df = daily_df.copy(); hourly_df = hourly_df.copy()
     df['date'] = pd.to_datetime(df['date'])
     daily_df['date'] = pd.to_datetime(daily_df['date'])
     hourly_df['date'] = pd.to_datetime(hourly_df['date'])
     m15_idx = df['date']
 
-    # Daily & hourly gates
     d_ok = ((daily_df['ema50'] > daily_df['ema200']) & (daily_df['adx'] >= DAILY_ADX_MIN)).rename('d_ok')
     d_ok.index = daily_df['date']
     daily_gate = d_ok.reindex(m15_idx, method='ffill').fillna(False)
-
     h_ok_series = (hourly_df.set_index('date')['adx'] >= HOURLY_ADX_MIN)
     hourly_gate = h_ok_series.reindex(m15_idx, method='ffill').fillna(False)
 
-    # Pullback & reclaim logic on 15m
     ema20 = ta.trend.ema_indicator(df['close'], window=20)
     ema50_15 = ta.trend.ema_indicator(df['close'], window=50)
     rsi = df['rsi']
@@ -210,26 +201,23 @@ def with_trend_pullback_signal(df, daily_df, hourly_df):
     return sig
 
 def event_continuation_signal(df, daily_df, hourly_df):
-    df = df.copy()
-    daily_df = daily_df.copy()
-    hourly_df = hourly_df.copy()
+    # disabled by toggle; keep function for later use
+    df = df.copy(); daily_df = daily_df.copy(); hourly_df = hourly_df.copy()
     df['date'] = pd.to_datetime(df['date'])
     daily_df['date'] = pd.to_datetime(daily_df['date'])
     hourly_df['date'] = pd.to_datetime(hourly_df['date'])
     m15_idx = df['date']
 
-    # Daily & hourly gates for trend/momentum
     d_ok_series = (daily_df['ema50'] > daily_df['ema200'])
     d_ok_series.index = daily_df['date']
     d_ok = d_ok_series.reindex(m15_idx, method='ffill').fillna(False)
     h_ok_series = (hourly_df.set_index('date')['adx'] >= HOURLY_ADX_MIN)
     h_ok = h_ok_series.reindex(m15_idx, method='ffill').fillna(False)
 
-    # Event proxy: very high relative vol in first hour
     x = df.copy()
     x['date_only'] = pd.to_datetime(x['date']).dt.date
     day_meds = x.groupby('date_only')['volume'].transform('median')
-    first_hour = pd.to_datetime(x['date']).dt.hour == 9  # adjust if market open differs
+    first_hour = pd.to_datetime(x['date']).dt.hour == 9
     event_day = (first_hour & (x['volume'] > 2.5 * day_meds)).groupby(x['date_only']).transform('max')
     event_gate = pd.Series(event_day.values, index=x.index).reindex(x.index, method='ffill').fillna(False)
 
@@ -296,7 +284,6 @@ def walk_forward_predict(m15_df, hourly_df, period='M'):
         model = fit_xgb(X_train, y_train)
         proba.loc[val_idx] = model.predict_proba(df.loc[val_idx, FEATURES])[:, 1]
 
-        # v2.1 ML gate: prob threshold and hour_adx alignment (50 scale)
         hour_adx = df.loc[val_idx, 'hour_adx'].fillna(0)
         align_factor = (hour_adx / 50.0).clip(upper=1.0)
         composite = proba.loc[val_idx].fillna(0) * align_factor
@@ -456,9 +443,8 @@ def prepare_data(symbol):
     hourly = add_indicators(hourly)
     m15 = add_indicators(m15)
     m15 = add_hourly_features_to_m15(m15, hourly)
-    # build strategy entries
+    # build entries
     m15 = build_entry_signals(m15, daily, hourly)
-    # Warmup cut
     m15 = m15.dropna(subset=['ema200']).reset_index(drop=True)
     return daily, hourly, m15
 
@@ -479,7 +465,6 @@ def extract_trade_stats(trades):
 
 def walk_forward_predict_gate(m15, hourly):
     m15_ml = walk_forward_predict(m15, hourly)
-    # Gate requires both strategy signal and ML approval
     m15_ml['entry_signal'] = ((m15_ml['entry_signal'] == 1) & (m15_ml['ml_signal'] == 1)).astype(int)
     return m15_ml
 
@@ -506,7 +491,7 @@ def summarize_and_save(trades_df, stats_df):
 
     stats_df.to_csv('walk_forward_stats_v21.csv', index=False)
 
-    print('\n===== Walk-Forward Summary (v2.1) =====')
+    print('\n===== Walk-Forward Summary (v2.1 loosened) =====')
     print(f'Total trades: {total_trades}')
     print(f'Wins: {wins} | Losses: {losses} | Win rate: {win_rate}%')
     print(f'Total PnL: {total_pnl} | Avg PnL/trade: {avg_pnl}')
@@ -545,7 +530,7 @@ def run_walk_forward(symbols):
         trades = backtest_live_like(m15_ml, symbol)
         logging.info(f"Trades: {len(trades)}")
         stats = extract_trade_stats(trades)
-        stats.update({'Symbol': symbol, 'Strategy': 'ML+Regime Walk-Forward v2.1'})
+        stats.update({'Symbol': symbol, 'Strategy': 'ML+Regime Walk-Forward v2.1 loosened'})
         all_stats.append(stats)
         for t in trades:
             t['Symbol'] = symbol

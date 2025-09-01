@@ -57,7 +57,7 @@ def list_symbols():
 
 def _synthetic_ohlcv(n=200, start="2025-01-01", freq="1H", seed=42):
     rng = np.random.RandomState(seed)
-    idx = pd.date_range(start=start, periods=n, freq=freq, tz="UTC")
+    idx = pd.date_range(start=start, periods=n, freq="h", tz="UTC")
     # Log-normal random walk for price
     ret = rng.normal(0, 0.002, size=n)
     price = 100 * np.exp(np.cumsum(ret))
@@ -190,34 +190,42 @@ def generate_signals(symbols, timeframe, feature_cols, model, scaler, proba_thre
         except Exception as e:
             print(f"[warn] {sym}: load failed: {e}")
             continue
+
         df = compute_features(df)
         X = df[feature_cols].copy()
         mask = X.notna().all(axis=1)
         X = X[mask]
         if len(X) == 0:
             continue
+
+        # Keep a masked view aligned to X for safe positional access
+        df_masked = df.loc[X.index].copy()
+
         Xs = scaler.transform(X.values)
         proba = model.predict_proba(Xs)[:, 1]
-        entries = np.where(proba >= proba_threshold)
-        for idx in entries:
-            # Map back to original index position
-            entry_pos = X.index[idx]
-            entry_idx = df.index.get_loc(entry_pos)
-            entry_price = df.loc[entry_pos, "close"]
-            conf = float(proba[idx])
-            rows.append((sym, entry_idx, float(entry_price), conf))
-        # Optional: simple PnL proxy for reporting (aligns roughly with attachments)
-        # This is placeholder; real PnL is computed in harness. Here we only summarize counts.
+
+        # entries should be a 1-D array of integer positions, not a tuple
+        entries = np.where(proba >= proba_threshold)[0]  # [web:257]
+
+        for i in entries:
+            # i is positional within the masked arrays
+            entry_ts = df_masked.index[i]  # aligned timestamp
+            # stable integer index in the original df using searchsorted on sorted index
+            entry_idx = int(df.index.searchsorted(entry_ts))  # avoids get_loc on exact match [web:241]
+            entry_price = float(df_masked["close"].iloc[i])
+            conf = float(proba[i])
+            rows.append((sym, entry_idx, entry_price, conf))
+
         if len(entries) > 0:
             per_symbol_rows.append((sym, len(entries), float(np.mean(proba[entries]))))
-    # Write ensemble signals file in the exact format seen in attachments
+
     out_path = os.path.join(OUT_DIR, "ensemble_trades_updated.txt")
     with open(out_path, "w") as f:
         f.write("symbol        entry_idx  entry_price  confidence\n")
         for sym, eidx, price, conf in rows:
             f.write(f"{sym:<13}{eidx:<12}{price:<12.2f}{conf:.2f}\n")
-    print(f"📝 Wrote {len(rows)} signals to {out_path}")
 
+    print(f"📝 Wrote {len(rows)} signals to {out_path}")
     return rows, per_symbol_rows
 
 # -------------------------

@@ -171,26 +171,33 @@ def backtest_rules_15m(symbols):
         except Exception as e:
             print(f"[rules warn] {sym}: {e}")
             continue
-        # Example entry rule: simple momentum crossover proxy
+
         f = compute_features(df)
         fast = f["close"].rolling(10).mean()
         slow = f["close"].rolling(30).mean()
-        signal = (fast > slow) & (fast.shift(1) <= slow.shift(1))
-        entries = np.where(signal.values)
+        cross_up = (fast > slow) & (fast.shift(1) <= slow.shift(1))
+
+        # entries as 1-D integer positions
+        entries = np.where(cross_up.values)  # ensure np.where(...) is used [1]
 
         for i in entries:
-            if i+1 >= len(df):
+            i = int(i)
+            if i + 1 >= len(df):
                 continue
+
             entry_time = df.index[i]
             entry_price = float(df["close"].iloc[i])
             highs = df["high"].iloc[i+1:]
             lows = df["low"].iloc[i+1:]
-            # Determine exit
+
             tp_price = entry_price * (1 + RULES_CONF["profit_target"])
             sl_price = entry_price * (1 - RULES_CONF["stop_loss"])
-            exit_price = entry_price  # default
+
+            exit_price = entry_price
             exit_reason = "TIME"
             bars_held = 0
+
+            # iterate forward with explicit scalar checks
             for j, (h, l) in enumerate(zip(highs.values, lows.values), start=1):
                 if l <= sl_price:
                     exit_price = sl_price
@@ -203,11 +210,13 @@ def backtest_rules_15m(symbols):
                     bars_held = j
                     break
                 if j >= RULES_CONF["max_hold_bars"]:
-                    # time exit at close of the last considered bar
-                    exit_price = float(df["close"].iloc[i+j])
+                    # guard index; time exit at last available bar close within window
+                    end_loc = min(i + j, len(df) - 1)
+                    exit_price = float(df["close"].iloc[end_loc])
                     exit_reason = "TIME"
                     bars_held = j
                     break
+
             pnl = exit_price - entry_price
             rows.append([sym, entry_time, entry_price, exit_price, pnl, bars_held, exit_reason])
 

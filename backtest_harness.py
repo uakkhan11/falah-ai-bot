@@ -178,9 +178,9 @@ def backtest_rules_15m(symbols):
         cross_up = (fast > slow) & (fast.shift(1) <= slow.shift(1))
 
         # entries as 1-D integer positions
-        entries = np.where(cross_up.to_numpy(dtype=bool))  # 1-D int array [1]
+        entries = np.where(cross_up.to_numpy(dtype=bool))[0]  # take [0] to get the index array [web:257]
 
-        for i in entries.tolist():  # ensure plain Python ints
+        for i in entries.tolist():  # iterate over plain Python ints
             if i + 1 >= len(df):
                 continue
 

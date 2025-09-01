@@ -55,11 +55,52 @@ def list_symbols():
         "BHARTIARTL","HINDALCO","TORNTPHARM","ULTRACEMCO","OIL","JUBLFOOD","VOLTAS"
     ])))
 
-def load_ohlcv(symbol: str, timeframe: str):
-    # Placeholder: replace with actual OHLCV loader returning DataFrame with columns: ['open','high','low','close','volume']
-    # Ensure index is datetime-like ascending
-    # For example: pd.read_parquet(f"{DATA_DIR}/{timeframe}/{symbol}.parquet")
-    raise NotImplementedError("Implement load_ohlcv(symbol, timeframe) to return OHLCV DataFrame.")
+def load_ohlcv(symbol: str, timeframe: str) -> pd.DataFrame:
+    """
+    Load OHLCV for a symbol/timeframe from local files.
+    Supported paths (checked in order):
+      - data/{timeframe}/{symbol}.parquet
+      - data/{timeframe}/{symbol}.csv
+    CSV must have columns: timestamp, open, high, low, close, volume (timestamp in ISO or epoch ms).
+    """
+    # 1) Parquet path
+    pq_path = os.path.join(DATA_DIR, timeframe, f"{symbol}.parquet")
+    if os.path.exists(pq_path):
+        df = pd.read_parquet(pq_path)
+    else:
+        # 2) CSV path
+        csv_path = os.path.join(DATA_DIR, timeframe, f"{symbol}.csv")
+        if not os.path.exists(csv_path):
+            raise FileNotFoundError(f"No data file for {symbol} {timeframe} at {pq_path} or {csv_path}")
+        df = pd.read_csv(csv_path)
+
+    # Normalize columns
+    cols_lower = {c: c.lower() for c in df.columns}
+    df = df.rename(columns=cols_lower)
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+        df = df.set_index("timestamp")
+    elif df.index.name is None or "datetime" in (df.index.name or "").lower():
+        # Try to coerce index to datetime
+        try:
+            df.index = pd.to_datetime(df.index, utc=True, errors="coerce")
+        except Exception:
+            pass
+
+    needed = ["open","high","low","close","volume"]
+    missing = [c for c in needed if c not in df.columns]
+    if missing:
+        raise ValueError(f"{symbol} {timeframe}: missing columns {missing}")
+
+    # Clean
+    df = df[needed].copy()
+    df = df[~df.index.duplicated(keep="last")]
+    df = df.sort_index()
+    df = df.replace([np.inf, -np.inf], np.nan).dropna()
+    if len(df) < 100:
+        raise ValueError(f"{symbol} {timeframe}: not enough rows after cleaning ({len(df)})")
+
+    return df
 
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     # Compute ret, rsi, sma; simple versions for alignment with DEFAULT_FEATURES

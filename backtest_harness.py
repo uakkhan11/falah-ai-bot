@@ -252,21 +252,27 @@ def backtest_ml_1h(symbols):
         if mask.sum() == 0:
             continue
         X = X[mask]
-        df_masked = f.loc[X.index]  # aligned
+        df_masked = f.loc[X.index]  # aligned to X
+
         Xs = scaler.transform(X.values)
         proba = model.predict_proba(Xs)[:, 1]
-        entries = np.where(proba >= ML_CONF["proba_threshold"])
 
-        for i in entries:
-            # Entry at masked index position i
-            entry_pos = df_masked.index[i]
-            entry_loc = int(df.index.searchsorted(entry_pos))
-            if entry_loc >= len(df)-1:
+        # ensure 1-D integer positions from np.where
+        entries = np.where(proba >= ML_CONF["proba_threshold"])[0]  # not the tuple, take [0]
+
+        for i in entries.tolist():  # scalar ints
+            # scalar timestamp in masked frame
+            entry_ts = df_masked.index[i]  # a single pd.Timestamp (scalar)
+            # map to integer loc in full df via searchsorted on sorted index
+            entry_loc = int(df.index.searchsorted(entry_ts))
+            if entry_loc >= len(df) - 1:
                 continue
+
             entry_time = df.index[entry_loc]
             entry_price = float(df["close"].iloc[entry_loc])
-            highs = df["high"].iloc[entry_loc+1:]
-            lows = df["low"].iloc[entry_loc+1:]
+
+            highs = df["high"].iloc[entry_loc+1:].to_numpy()
+            lows  = df["low"].iloc[entry_loc+1:].to_numpy()
 
             tp_price = entry_price * (1 + ML_CONF["profit_target"])
             sl_price = entry_price * (1 - ML_CONF["stop_loss"])
@@ -274,7 +280,7 @@ def backtest_ml_1h(symbols):
             exit_price = entry_price
             exit_reason = "TIME"
             bars_held = 0
-            for j, (h, l) in enumerate(zip(highs.values, lows.values), start=1):
+            for j, (h, l) in enumerate(zip(highs, lows), start=1):
                 if l <= sl_price:
                     exit_price = sl_price
                     exit_reason = "SL"
@@ -286,10 +292,12 @@ def backtest_ml_1h(symbols):
                     bars_held = j
                     break
                 if j >= ML_CONF["max_hold_bars"]:
-                    exit_price = float(df["close"].iloc[entry_loc + j])
+                    end_loc = min(entry_loc + j, len(df) - 1)
+                    exit_price = float(df["close"].iloc[end_loc])
                     exit_reason = "TIME"
                     bars_held = j
                     break
+
             pnl = exit_price - entry_price
             rows.append([sym, entry_time, entry_price, exit_price, pnl, bars_held, exit_reason])
 

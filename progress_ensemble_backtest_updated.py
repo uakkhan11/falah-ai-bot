@@ -316,6 +316,14 @@ def main():
     summary_path = os.path.join(OUT_DIR, "wf_summary.csv")
     agg.to_csv(summary_path, index=False)
     print(f"✅ Done. Per-symbol files in {OUT_DIR}. Overall ranking written to wf_summary.csv")
+for sym in SYMBOLS:
+    try:
+        m15 = load_csv(DATA_DIRS["15m"], sym)
+        h1  = load_csv(DATA_DIRS["1h"], sym)
+        print(sym, "15m rows:", len(m15), "range:", m15["date"].min(), "→", m15["date"].max())
+        print(sym, "1h  rows:", len(h1),  "range:", h1["date"].min(),  "→", h1["date"].max())
+    except Exception as e:
+        print("[data]", sym, e)
 
 if __name__ == "__main__":
     main()

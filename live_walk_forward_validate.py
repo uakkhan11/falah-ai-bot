@@ -62,38 +62,64 @@ def load_and_filter_2025(symbol):
 
 def add_indicators(df):
     df = df.sort_values('date').reset_index(drop=True)
-    df_weekly = df.set_index('date').resample('W-MON').agg({'open':'first','high':'max','low':'min','close':'last','volume':'sum'}).dropna().reset_index()
+
+    # Weekly aggregation and Donchian
+    df_weekly = df.set_index('date').resample('W-MON').agg({
+        'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
+    }).dropna().reset_index()
     df_weekly['weekly_donchian_high'] = df_weekly['high'].rolling(20, min_periods=1).max()
-    df['weekly_donchian_high'] = df_weekly.set_index('date')['weekly_donchian_high'].reindex(df['date'], method='ffill').values
+    df['weekly_donchian_high'] = df_weekly.set_index('date')['weekly_donchian_high'] \
+        .reindex(df['date'], method='ffill').values
+
+    # Core indicators
     df['donchian_high'] = df['high'].rolling(20, min_periods=1).max()
     df['ema200'] = ta.trend.ema_indicator(df['close'], window=200)
     adx_df = ta.trend.ADXIndicator(df['high'], df['low'], df['close'], window=14)
     df['adx'] = adx_df.adx()
+
+    # Volume averages
     df['vol_sma20'] = df['volume'].rolling(20, min_periods=1).mean()
+    df['volume_sma'] = df['volume'].rolling(20, min_periods=1).mean()  # for FEATURES
+
+    # Bollinger bands
     bb = ta.volatility.BollingerBands(df['close'], window=20, window_dev=2)
-    df['bb_upper'] = bb.bollinger_hband(); df['bb_lower'] = bb.bollinger_lband()
-    high14 = df['high'].rolling(14).max(); low14 = df['low'].rolling(14).min()
+    df['bb_upper'] = bb.bollinger_hband()
+    df['bb_lower'] = bb.bollinger_lband()
+
+    # Williams %R base windows
+    high14 = df['high'].rolling(14).max()
+    low14 = df['low'].rolling(14).min()
     df['wpr'] = (high14 - df['close']) / (high14 - low14) * -100
+
+    # ATRs and Chandelier Exit
     df['atr'] = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range()
     atr_ce = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=22).average_true_range()
     high20 = df['high'].rolling(22, min_periods=1).max()
     df['chandelier_exit'] = high20 - 3.0 * atr_ce
+
+    # TA-Lib arrays
     close = df['close'].values.astype(float)
     high = df['high'].values.astype(float)
     low = df['low'].values.astype(float)
     volume = df['volume'].values.astype(float)
+
+    # MACD: correct tuple unpack (macd, signal, hist)
     macd, macd_signal, macd_hist = talib.MACD(close)
     df['macd_hist'] = macd_hist
+
     df['roc'] = talib.ROC(close, timeperiod=10)
     df['obv'] = talib.OBV(close, volume)
     df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
-    df['volume_ratio'] = df['volume'] / df['vol_sma20']
-    df['volume_sma'] = df['volume'].rolling(20, min_periods=1).mean()
+
+    # VWAP cumulative
     df['vwap'] = (df['close'] * df['volume']).cumsum() / df['volume'].cumsum()
+
+    # Safety: ensure columns used in FEATURES exist
+    for f in ["hour_adx", "adosc", "roc", "obv", "vwap", "volume_sma"]:
+        if f not in df.columns:
+            df[f] = np.nan
+
     return df
-    for f in ["hour_adx", "adosc", "roc", "obv", "vwap"]:
-    if f not in df.columns:
-        df[f] = np.nan
 
 def add_hourly_features_to_m15(m15_df, hourly_df):
     hourly_df = hourly_df.set_index('date')

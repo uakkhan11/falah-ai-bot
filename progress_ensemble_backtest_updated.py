@@ -11,11 +11,17 @@ from pathlib import Path
 from datetime import datetime
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
+mport os, sys
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # path to this script file [3]
+except NameError:
+    # Fallback for environments where __file__ is not set (interactive shells) [1]
+    BASE_DIR = os.getcwd()
 
 # -------------------------
 # Config & CLI
 # -------------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 DATA_DIR = os.path.join(BASE_DIR, "data")
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 OUT_DIR = BASE_DIR  # write outputs in project root

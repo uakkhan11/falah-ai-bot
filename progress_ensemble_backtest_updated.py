@@ -1,303 +1,321 @@
 #!/usr/bin/env python3
-import os
-import sys
-import argparse
-import json
-import time
-import joblib
+import os, sys, json, math, itertools, warnings
 import numpy as np
 import pandas as pd
-from pathlib import Path
 from datetime import datetime
+from xgboost import XGBClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
-import os, sys
-try:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # path to this script file [3]
-except NameError:
-    # Fallback for environments where __file__ is not set (interactive shells) [1]
-    BASE_DIR = os.getcwd()
+warnings.filterwarnings("ignore")
 
-# -------------------------
-# Config & CLI
-# -------------------------
+# ---------------- Config: freeze dataset ----------------
+BASE_DIR = "/root/falah-ai-bot"
+DATA_DIRS = {
+    "15m": os.path.join(BASE_DIR, "scalping_data"),
+    "1h":  os.path.join(BASE_DIR, "intraday_swing_data"),
+    "1d":  os.path.join(BASE_DIR, "swing_data"),
+}
+# Freeze a universe (edit to your 20 names present on disk)
+SYMBOLS = [
+    "AVANTIFEED","AXISCADES-BE","BANCOINDIA","BERGEPAINT","BHARTIARTL",
+    "CEWATER","CONCORDBIO","EMAMILTD","FINPIPE","FORCEMOT",
+    "GABRIEL","GALLANTT","HINDALCO","JUBLFOOD","KANSAINER",
+    "KIOCL","LLOYDSENGG","LUMAXTECH","LUXIND","OIL"
+]
 
-DATA_DIR = os.path.join(BASE_DIR, "data")
-MODELS_DIR = os.path.join(BASE_DIR, "models")
-OUT_DIR = BASE_DIR  # write outputs in project root
+DATE_START = "2024-01-01"
+DATE_END   = "2025-06-30"
 
-DEFAULT_FEATURES = ["ret", "rsi", "sma"]  # must match harness ML_CONF.feature_columns
-MODEL_PATH = os.path.join(MODELS_DIR, "best_rf_1h.pkl")
-SCALER_PATH = os.path.join(MODELS_DIR, "best_scaler_1h.pkl")
+# Walk-forward rolling windows: 6 months train, 1 month test
+TRAIN_MONTHS = 6
+TEST_MONTHS  = 1
 
-def parse_args():
-    p = argparse.ArgumentParser(description="Train ML ensemble (1h) and export artifacts + signals.")
-    p.add_argument("--quick", action="store_true", help="Limit symbols for a fast validation pass")  # boolean flag [8]
-    p.add_argument("--symbols", nargs="*", help="Explicit list of symbols to include")  # multiple values [6][10]
-    p.add_argument("--timeframes", nargs="*", default=["1h"], help="Timeframes to evaluate (default: 1h)")
-    p.add_argument("--threshold", type=float, default=0.65, help="Confidence threshold for entries")
-    p.add_argument("--estimators", type=int, default=50, help="RandomForest n_estimators")
-    p.add_argument("--max_samples", type=int, default=None, help="Optional cap on samples per symbol for speed")
-    return p.parse_args()
+# Parameter grid (keep small and fixed)
+PROBA_GRID = [0.70, 0.75, 0.80]
+PT_GRID    = [0.04, 0.05]     # profit target
+SL_GRID    = [0.008, 0.01]    # stop loss
+HOLD_GRID  = [24, 30]         # max hold bars on 1h
 
-# -------------------------
-# Data loading stubs
-# -------------------------
-def list_symbols():
-    # Replace with actual symbol discovery; keeping a deterministic subset if quick mode requested elsewhere
-    # This function returns a large consolidated list; filter later with args
-    return sorted(list(set([
-        # Fill with exchange universe or read from a symbols file; examples below align with attachments
-        "KANSAINER","BERGEPAINT","RHIM","WABAG","CONCORDBIO","AXISCADES-BE","LUMAXTECH","POWERINDIA","SHARDACROP",
-        "GALLANTT","KIOCL","SYRMA","TARIL","TRANSRAILL","WEBELSOLAR","FORCEMOT","POKARNA","THYROCARE","YATHARTH",
-        "SKIPPER","PRIVISCL","SHARDAMOTR","GABRIEL","PTCIL","NETWEB","LLOYDSENGG","BANCOINDIA","SHANTIGEAR","TDPOWERSYS",
-        "CEWATER","WAAREEENER","SUNFLAG","WOCKPHARMA","EMAMILTD","AVANTIFEED","LUXIND","FINPIPE","RAINBOW",
-        "BHARTIARTL","HINDALCO","TORNTPHARM","ULTRACEMCO","OIL","JUBLFOOD","VOLTAS"
-    ])))
+# Output
+OUT_DIR = os.path.join(BASE_DIR, "wf_outputs")
+os.makedirs(OUT_DIR, exist_ok=True)
 
-def _synthetic_ohlcv(n=200, start="2025-01-01", freq="1H", seed=42):
-    rng = np.random.RandomState(seed)
-    idx = pd.date_range(start=start, periods=n, freq="h", tz="UTC")
-    # Log-normal random walk for price
-    ret = rng.normal(0, 0.002, size=n)
-    price = 100 * np.exp(np.cumsum(ret))
-    high = price * (1 + rng.uniform(0, 0.002, size=n))
-    low = price * (1 - rng.uniform(0, 0.002, size=n))
-    open_ = price * (1 + rng.uniform(-0.001, 0.001, size=n))
-    close = price
-    vol = rng.randint(1000, 5000, size=n)
-    df = pd.DataFrame(
-        {"open": open_, "high": high, "low": low, "close": close, "volume": vol},
-        index=idx,
-    )
-    return df
-
-def load_ohlcv(symbol: str, timeframe: str) -> pd.DataFrame:
-    # Try real files first
-    pq_path = os.path.join(DATA_DIR, timeframe, f"{symbol}.parquet")
-    csv_path = os.path.join(DATA_DIR, timeframe, f"{symbol}.csv")
-    if os.path.exists(pq_path):
-        df = pd.read_parquet(pq_path)
-    elif os.path.exists(csv_path):
-        df = pd.read_csv(csv_path, parse_dates=["timestamp"])  # timestamp column expected [2]
-        if "timestamp" in df.columns:
-            df = df.set_index("timestamp")
-        cols_lower = {c: c.lower() for c in df.columns}
-        df = df.rename(columns=cols_lower)
-    else:
-        # Fallback synthetic so the pipeline can run end-to-end
-        df = _synthetic_ohlcv(n=300, freq="1H", seed=abs(hash(symbol)) % 10_000)
-
-    # Normalize/clean
-    needed = ["open","high","low","close","volume"]
-    for c in needed:
-        if c not in df.columns:
-            raise ValueError(f"{symbol} {timeframe}: missing column '{c}'")
-    df = df[needed].copy()
-    if not isinstance(df.index, pd.DatetimeIndex):
-        df.index = pd.to_datetime(df.index, utc=True, errors="coerce")
-    df = df[~df.index.duplicated(keep="last")].sort_index()
-    df = df.replace([np.inf, -np.inf], np.nan).dropna()
-    if len(df) < 120:
-        raise ValueError(f"{symbol} {timeframe}: not enough rows after cleaning ({len(df)})")
-    return df
-
-def compute_features(df: pd.DataFrame) -> pd.DataFrame:
-    # Compute ret, rsi, sma; simple versions for alignment with DEFAULT_FEATURES
-    out = df.copy()
-    out["ret"] = out["close"].pct_change().fillna(0.0)
-    # RSI(14) simple calc
-    delta = out["close"].diff()
-    up = np.where(delta > 0, delta, 0.0)
-    down = np.where(delta < 0, -delta, 0.0)
-    roll = 14
-    avg_gain = pd.Series(up, index=out.index).rolling(roll).mean().fillna(0.0)
-    avg_loss = pd.Series(down, index=out.index).rolling(roll).mean().fillna(1e-9)
-    rs = avg_gain / avg_loss
-    out["rsi"] = 100 - (100 / (1 + rs))
-    out["rsi"] = out["rsi"].fillna(50.0)
-    out["sma"] = out["close"].rolling(20).mean().bfill()
+# ---------------- Data & features ----------------
+def load_csv(dirpath, symbol):
+    path = os.path.join(dirpath, f"{symbol}.csv")
+    if not os.path.exists(path):
+        raise FileNotFoundError(path)
+    df = pd.read_csv(path)
+    # handle common timestamp column names
+    for c in ["timestamp","date","Datetime","Date","time"]:
+        if c in df.columns:
+            df["date"] = pd.to_datetime(df[c])
+            break
+    if "date" not in df:
+        raise ValueError(f"{symbol}: no timestamp column")
+    cols = {c.lower(): c for c in df.columns}
+    # normalize
+    need = ["open","high","low","close","volume"]
+    out = pd.DataFrame({
+        "date": df["date"].values,
+        "open": df[cols.get("open","open")].astype(float).values,
+        "high": df[cols.get("high","high")].astype(float).values,
+        "low":  df[cols.get("low","low")].astype(float).values,
+        "close":df[cols.get("close","close")].astype(float).values,
+        "volume":df[cols.get("volume","volume")].astype(float).values,
+    })
+    out = out.sort_values("date").reset_index(drop=True)
     return out
 
-def label_targets(df: pd.DataFrame) -> pd.Series:
-    # Simple forward-return > 0 labeling at horizon H=3 bars
-    H = 3
-    fwd_ret = df["close"].shift(-H) / df["close"] - 1.0
-    y = (fwd_ret > 0).astype(int)
-    return y.fillna(0)
+def ema(series, span):
+    return series.ewm(span=span, adjust=False).mean()
 
-# -------------------------
-# Training & caching
-# -------------------------
-def train_global_model(symbols, timeframe, feature_cols, n_estimators=50, max_samples=None):
-    os.makedirs(MODELS_DIR, exist_ok=True)
+def atr(df, window=14):
+    h, l, c = df["high"], df["low"], df["close"]
+    prev_c = c.shift(1)
+    tr1 = (h - l).abs()
+    tr2 = (h - prev_c).abs()
+    tr3 = (l - prev_c).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    return tr.rolling(window).mean()
 
-    # Use cached artifacts if present
-    if os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH):
-        print("✅ Using cached ML model/scaler from models/")
-        model = joblib.load(MODEL_PATH)
-        scaler = joblib.load(SCALER_PATH)
-        return model, scaler
+def adx(df, window=14):
+    # simplified ADX computation
+    h, l, c = df["high"], df["low"], df["close"]
+    up = h.diff()
+    down = -l.diff()
+    plus_dm = np.where((up > down) & (up > 0), up, 0.0)
+    minus_dm = np.where((down > up) & (down > 0), down, 0.0)
+    tr = atr(df, window=1) * 1.0
+    atrn = tr.rolling(window).mean()
+    plus_di = 100 * pd.Series(plus_dm, index=df.index).rolling(window).sum() / (atrn + 1e-9)
+    minus_di = 100 * pd.Series(minus_dm, index=df.index).rolling(window).sum() / (atrn + 1e-9)
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di + 1e-9)) * 100
+    return dx.rolling(window).mean()
 
-    X_list, y_list = [], []
-    for sym in symbols:
-        try:
-            df = load_ohlcv(sym, timeframe)
-        except Exception as e:
-            print(f"[warn] {sym}: load failed: {e}")
-            continue
-        df = compute_features(df)
-        y = label_targets(df)
-        X = df[feature_cols].copy()
-        mask = X.notna().all(axis=1) & y.notna()
-        X = X[mask]
-        y = y[mask]
-        if max_samples and len(X) > max_samples:
-            X = X.tail(max_samples)
-            y = y.tail(max_samples)
-        if len(X) < 100:
-            continue
-        X_list.append(X.values)
-        y_list.append(y.values)
+def compute_features(df_15m, df_1h):
+    # regime/trend context from 1h
+    df_1h = df_1h.copy()
+    df_1h["ema200"] = ema(df_1h["close"], 200)
+    df_1h["adx14"]  = adx(df_1h, 14)
+    df_1h["atr14"]  = atr(df_1h, 14)
+    df_1h["ema50"]  = ema(df_1h["close"], 50)
+    df_1h["ema200_slope"] = df_1h["ema200"].diff()
 
-    if not X_list:
-        raise RuntimeError("No training data aggregated; check loaders and features.")
+    # map 1h to 15m by ffill on timestamp
+    h = df_1h.set_index("date")
+    m = df_15m.set_index("date")
+    for col in ["ema200","adx14","atr14","ema50","ema200_slope","close"]:
+        m[f"h_{col}"] = h[col].reindex(m.index, method="ffill")
 
-    X_all = np.vstack(X_list)
-    y_all = np.concatenate(y_list)
+    m["ret"] = m["close"].pct_change().fillna(0.0)
+    m["atr14_norm"] = (m["h_atr14"] / m["h_close"]).fillna(0.0)
+    m["regime"] = ((m["h_close"] > m["h_ema200"]) & (m["h_adx14"] > 20)).astype(int)
+    # compact feature set
+    feat_cols = ["ret","atr14_norm","h_adx14","h_ema200_slope"]
+    m = m.reset_index()
+    return m, feat_cols
 
+# ---------------- Labeling & ML ----------------
+def make_labels(m15, horizon_bars=10, thresh=0.01):
+    # Future return over horizon on 15m data
+    fut = m15["close"].shift(-horizon_bars) / m15["close"] - 1
+    m15["label"] = (fut > thresh).astype(int)
+    return m15
+
+def fit_predict_prob(train_df, test_df, feat_cols):
+    # Strict time hygiene: fit scaler & model only on train
+    Xtr = train_df[feat_cols].values
+    ytr = train_df["label"].values
+    Xte = test_df[feat_cols].values
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X_all)  # save the scaler for inference [9]
-
-    model = RandomForestClassifier(n_estimators=n_estimators, random_state=42, n_jobs=-1)  # [3]
-    model.fit(X_scaled, y_all)
-
-    # Persist artifacts [2][5]
-    joblib.dump(model, MODEL_PATH)
-    joblib.dump(scaler, SCALER_PATH)
-    print(f"✅ Saved model and scaler to {MODELS_DIR}")
-    return model, scaler
-
-# -------------------------
-# Inference & signal export
-# -------------------------
-def generate_signals(symbols, timeframe, feature_cols, model, scaler, proba_threshold=0.65):
-    rows = []
-    per_symbol_rows = []
-    for sym in symbols:
-        try:
-            df = load_ohlcv(sym, timeframe)
-        except Exception as e:
-            print(f"[warn] {sym}: load failed: {e}")
-            continue
-
-        df = compute_features(df)
-        X = df[feature_cols].copy()
-        mask = X.notna().all(axis=1)
-        X = X[mask]
-        if len(X) == 0:
-            continue
-
-        # Keep a masked view aligned to X for safe positional access
-        df_masked = df.loc[X.index].copy()
-
-        Xs = scaler.transform(X.values)
-        proba = model.predict_proba(Xs)[:, 1]
-
-        # entries should be a 1-D array of integer positions, not a tuple
-        entries = np.where(proba >= proba_threshold)[0]  # [web:257]
-
-        for i in entries:
-            # i is positional within the masked arrays
-            entry_ts = df_masked.index[i]  # aligned timestamp
-            # stable integer index in the original df using searchsorted on sorted index
-            entry_idx = int(df.index.searchsorted(entry_ts))  # avoids get_loc on exact match [web:241]
-            entry_price = float(df_masked["close"].iloc[i])
-            conf = float(proba[i])
-            rows.append((sym, entry_idx, entry_price, conf))
-
-        if len(entries) > 0:
-            per_symbol_rows.append((sym, len(entries), float(np.mean(proba[entries]))))
-
-    out_path = os.path.join(OUT_DIR, "ensemble_trades_updated.txt")
-    with open(out_path, "w") as f:
-        f.write("symbol        entry_idx  entry_price  confidence\n")
-        for sym, eidx, price, conf in rows:
-            f.write(f"{sym:<13}{eidx:<12}{price:<12.2f}{conf:.2f}\n")
-
-    print(f"📝 Wrote {len(rows)} signals to {out_path}")
-    return rows, per_symbol_rows
-
-# -------------------------
-# Reporting (headers to match prior CSVs)
-# -------------------------
-def write_placeholder_aggregates():
-    # These are headers; actual aggregated PnL is produced by harness. Kept for downstream tooling compatibility.
-    tf_path = os.path.join(OUT_DIR, "timeframe_performance_analysis.csv")
-    with open(tf_path, "w") as f:
-        f.write("timeframe,Trades,Total_PnL,Avg_PnL,Win_Rate,Avg_Confidence,Profit_Target_%\n")
-    mo_path = os.path.join(OUT_DIR, "monthly_performance_analysis.csv")
-    with open(mo_path, "w") as f:
-        f.write("month,Trades,Total_PnL,Win_Rate\n")
-    print(f"📄 Created headers: timeframe_performance_analysis.csv, monthly_performance_analysis.csv")
-
-# -------------------------
-# Main
-# -------------------------
-def main():
-    args = parse_args()
-    all_syms = list_symbols()
-
-    # Symbol selection
-    if args.symbols and len(args.symbols) > 0:
-        symbols = [s for s in args.symbols if s in all_syms] or args.symbols
-    else:
-        symbols = all_syms
-
-    # Quick mode limits for fast validation
-    if args.quick:
-        # Prioritize high-conviction core first (subset)
-        priority = [
-            "AXISCADES-BE","LUMAXTECH","POWERINDIA","SHARDACROP","GALLANTT","KIOCL",
-            "SYRMA","TARIL","TRANSRAILL","WEBELSOLAR","FORCEMOT","POKARNA","THYROCARE",
-            "YATHARTH","SKIPPER","PRIVISCL","SHARDAMOTR","GABRIEL","PTCIL","NETWEB",
-            # Include coverage tier from ensemble attachments
-            "KANSAINER","BERGEPAINT","RHIM","WABAG","CONCORDBIO"
-        ]
-        symbols = [s for s in priority if s in symbols]
-        if not symbols:
-            symbols = all_syms[:25]
-
-    tfs = args.timeframes
-    feature_cols = DEFAULT_FEATURES
-    os.makedirs(MODELS_DIR, exist_ok=True)
-
-    # Train or load cached artifacts for 1h only (primary)
-    primary_tf = "1h"
-    if primary_tf not in tfs:
-        tfs = [primary_tf] + [tf for tf in tfs if tf != primary_tf]
-
-    print(f"Symbols: {len(symbols)} | Timeframes: {tfs} | Threshold: {args.threshold}")
-    model, scaler = train_global_model(
-        symbols=symbols,
-        timeframe=primary_tf,
-        feature_cols=feature_cols,
-        n_estimators=args.estimators,
-        max_samples=args.max_samples
+    Xtr_s = scaler.fit_transform(Xtr)
+    Xte_s = scaler.transform(Xte)
+    model = XGBClassifier(
+        n_estimators=250,
+        max_depth=4,
+        learning_rate=0.07,
+        subsample=0.9,
+        colsample_bytree=0.9,
+        random_state=42,
+        n_jobs=4
     )
+    model.fit(Xtr_s, ytr)
+    proba = model.predict_proba(Xte_s)[:, 1]
+    return proba
 
-    # Generate signals for requested timeframes (1h at minimum)
-    for tf in tfs:
-        try:
-            rows, per_sym = generate_signals(symbols, tf, feature_cols, model, scaler, args.threshold)
-            print(f"[{tf}] signals: {len(rows)} | symbols with entries: {len(per_sym)}")
-        except NotImplementedError:
-            print(f"[skip] Data loader not implemented for timeframe={tf}.")
+# ---------------- Backtest (1h exit logic applied to 15m entries by time) ----------------
+def backtest_entries(df, proba, proba_thresh, pt, sl, max_hold_bars):
+    df = df.copy().reset_index(drop=True)
+    df["proba"] = proba
+    df["ml_entry"] = ((df["proba"] >= proba_thresh) & (df["regime"] == 1)).astype(int)
+
+    # Convert 15m to 1h exit granularity by sampling every 4 bars for highs/lows window
+    rows = []
+    pos_open = None
+    for i in range(len(df)-1):
+        if pos_open is None and df.loc[i, "ml_entry"] == 1:
+            pos_open = {
+                "entry_idx": i,
+                "entry_time": df.loc[i, "date"],
+                "entry_price": float(df.loc[i, "close"])
+            }
             continue
+        if pos_open is not None:
+            eidx = pos_open["entry_idx"]
+            entry_price = pos_open["entry_price"]
+            # build pseudo-1h windows
+            held = i - eidx
+            if held <= 0:
+                continue
+            # price path since entry
+            hslice = df.loc[eidx+1:i, "high"]
+            lslice = df.loc[eidx+1:i, "low"]
+            tp = entry_price * (1 + pt)
+            slp = entry_price * (1 - sl)
+            hit = None
+            # evaluate bar by bar
+            for j, (h, l) in enumerate(zip(hslice.values, lslice.values), start=1):
+                if l <= slp:
+                    rows.append((pos_open["entry_time"], entry_price, slp, - (entry_price - slp), j, "SL"))
+                    pos_open = None
+                    hit = True
+                    break
+                if h >= tp:
+                    rows.append((pos_open["entry_time"], entry_price, tp, tp - entry_price, j, "TP"))
+                    pos_open = None
+                    hit = True
+                    break
+                if j >= max_hold_bars:
+                    exit_price = float(df.loc[eidx + j, "close"])
+                    pnl = exit_price - entry_price
+                    rows.append((pos_open["entry_time"], entry_price, exit_price, pnl, j, "TIME"))
+                    pos_open = None
+                    hit = True
+                    break
+            if hit:
+                continue
+    # finalize
+    trades = pd.DataFrame(rows, columns=["entry_time","entry_price","exit_price","pnl","bars_held","exit_reason"])
+    return trades
 
-    # Write placeholder aggregate CSV headers (real PnL via harness)
-    write_placeholder_aggregates()
-    print("✅ Completed. Artifacts in models/, signals in ensemble_trades_updated.txt")
+def summarize_trades(trades):
+    if trades.empty:
+        return {"total_trades":0,"total_pnl":0.0,"win_rate":0.0,"profit_factor":0.0,"avg_pnl":0.0}
+    total = len(trades)
+    total_pnl = trades["pnl"].sum()
+    wins = (trades["pnl"] > 0).sum()
+    win_rate = 100.0 * wins / total
+    gp = trades.loc[trades["pnl"] > 0, "pnl"].sum()
+    gl = -trades.loc[trades["pnl"] < 0, "pnl"].sum()
+    pf = (gp / gl) if gl > 0 else (gp if gp > 0 else 0.0)
+    avg = total_pnl / total
+    return {"total_trades":total,"total_pnl":float(total_pnl),"win_rate":float(win_rate),
+            "profit_factor":float(pf),"avg_pnl":float(avg)}
+
+# ---------------- Walk-forward runner ----------------
+def month_floor(d):
+    return pd.Timestamp(d).to_period("M").to_timestamp()
+
+def generate_folds(df_15m):
+    # Monthly buckets
+    df = df_15m[(df_15m["date"] >= DATE_START) & (df_15m["date"] <= DATE_END)].copy()
+    df["ym"] = df["date"].dt.to_period("M")
+    months = sorted(df["ym"].unique())
+    folds = []
+    for i in range(TRAIN_MONTHS, len(months) - TEST_MONTHS + 1):
+        train_months = months[i-TRAIN_MONTHS:i]
+        test_months = months[i:i+TEST_MONTHS]
+        tr = df[df["ym"].isin(train_months)].copy()
+        te = df[df["ym"].isin(test_months)].copy()
+        if len(tr) == 0 or len(te) == 0:
+            continue
+        folds.append((tr, te, str(test_months[0])))
+    return folds
+
+def run_symbol(symbol, grid):
+    # Load 15m & 1h
+    try:
+        m15 = load_csv(DATA_DIRS["15m"], symbol)
+        h1  = load_csv(DATA_DIRS["1h"], symbol)
+    except Exception as e:
+        print(f"[data] {symbol}: {e}")
+        return []
+
+    # Compute features & labels
+    m15_feat, feat_cols = compute_features(m15, h1)
+    m15_feat = make_labels(m15_feat, horizon_bars=10, thresh=0.01)
+    m15_feat = m15_feat.dropna(subset=feat_cols + ["label"]).reset_index(drop=True)
+
+    folds = generate_folds(m15_feat)
+    results = []
+
+    for (proba_th, pt, sl, hold) in grid:
+        label = f"p{int(proba_th*100)}_pt{int(pt*100)}_sl{int(sl*1000)}_hold{hold}"
+        all_trades = []
+        fold_rows = []
+        for tr, te, test_month in folds:
+            # Fit model on train, proba on test
+            proba = fit_predict_prob(tr, te, feat_cols)
+            trades = backtest_entries(te, proba, proba_th, pt, sl, hold)
+            trades["symbol"] = symbol
+            trades["test_month"] = test_month
+            all_trades.append(trades)
+            met = summarize_trades(trades)
+            fold_rows.append({
+                "symbol": symbol, "label": label, "test_month": test_month,
+                "total_trades": met["total_trades"], "total_pnl": met["total_pnl"],
+                "win_rate": met["win_rate"], "profit_factor": met["profit_factor"], "avg_pnl": met["avg_pnl"]
+            })
+        if len(all_trades) == 0:
+            continue
+        trades_df = pd.concat(all_trades, ignore_index=True)
+        metrics_df = pd.DataFrame(fold_rows)
+        # Overall out-of-sample metrics for this symbol+combo
+        overall = summarize_trades(trades_df)
+        overall_row = {
+            "symbol": symbol, "label": label, "test_month": "OVERALL",
+            "total_trades": overall["total_trades"], "total_pnl": overall["total_pnl"],
+            "win_rate": overall["win_rate"], "profit_factor": overall["profit_factor"], "avg_pnl": overall["avg_pnl"]
+        }
+        metrics_df = pd.concat([metrics_df, pd.DataFrame([overall_row])], ignore_index=True)
+
+        trades_out = os.path.join(OUT_DIR, f"wf_trades_{symbol}_{label}.csv")
+        metrics_out = os.path.join(OUT_DIR, f"wf_metrics_{symbol}_{label}.csv")
+        trades_df.to_csv(trades_out, index=False)
+        metrics_df.to_csv(metrics_out, index=False)
+        results.append((label, trades_df, metrics_df))
+    return results
+
+def main():
+    grid = list(itertools.product(PROBA_GRID, PT_GRID, SL_GRID, HOLD_GRID))
+    summary_rows = []
+    for sym in SYMBOLS:
+        res = run_symbol(sym, grid)
+        for (label, trades_df, metrics_df) in res:
+            # pull overall row for symbol+label
+            overall = metrics_df[metrics_df["test_month"] == "OVERALL"].iloc[0]
+            summary_rows.append({
+                "symbol": sym, "label": label,
+                "total_trades": overall["total_trades"],
+                "total_pnl": overall["total_pnl"],
+                "win_rate": overall["win_rate"],
+                "profit_factor": overall["profit_factor"],
+                "avg_pnl": overall["avg_pnl"]
+            })
+    if len(summary_rows) == 0:
+        print("No outputs generated. Check data availability and date filters.")
+        return
+    summary_df = pd.DataFrame(summary_rows)
+    # Aggregate across symbols per label to rank combos
+    agg = summary_df.groupby("label").agg(
+        total_trades=("total_trades","sum"),
+        total_pnl=("total_pnl","sum"),
+        avg_pf=("profit_factor","mean"),
+        avg_pnl=("avg_pnl","mean")
+    ).reset_index().sort_values(["avg_pf","avg_pnl","total_trades"], ascending=[False, False, False])
+    summary_path = os.path.join(OUT_DIR, "wf_summary.csv")
+    agg.to_csv(summary_path, index=False)
+    print(f"✅ Done. Per-symbol files in {OUT_DIR}. Overall ranking written to wf_summary.csv")
 
 if __name__ == "__main__":
     main()

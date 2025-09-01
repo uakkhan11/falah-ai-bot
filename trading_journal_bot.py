@@ -3,25 +3,48 @@
 # pip install python-telegram-bot==20.* pandas
 
 import os
-import pandas as pd
+import logging
 from datetime import datetime
+
+import pandas as pd
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, ConversationHandler
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ConversationHandler, ContextTypes, filters
 )
+
 
 BOT_TOKEN = "7763450358:AAH32bWYyu_hXR6l-UaVMaarFGZ4YFOv6q8"  # replace
 DATA_DIR = "/root/falah-ai-bot"
 CSV_PATH = os.path.join(DATA_DIR, "trades.csv")
 
 # Expected schema for safe pandas operations
+# Expected schema for safe pandas operations
 REQUIRED_COLUMNS = [
     "chat_id", "timestamp", "symbol", "side", "qty", "price", "notes"
 ]
 
-# Simple per-chat state for conversation inputs
+# Conversation states
 ASK_SYMBOL, ASK_SIDE, ASK_QTY, ASK_PRICE, ASK_NOTES = range(5)
 
+# =========================
+# Logging & Error Handling
+# =========================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+)
+logger = logging.getLogger("trading_journal_bot")
+
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Log full stack for any unhandled exception
+    logger.exception("Unhandled exception during update handling", exc_info=context.error)
+    # Optional: notify an admin
+    # await context.bot.send_message(chat_id=<ADMIN_ID>, text=str(context.error))
+
+# =========================
+# Storage helpers (pandas-safe)
+# =========================
 def ensure_storage():
     os.makedirs(DATA_DIR, exist_ok=True)
     if not os.path.exists(CSV_PATH):
@@ -33,7 +56,7 @@ def load_df():
     try:
         df = pd.read_csv(CSV_PATH)
     except Exception:
-        # Corrupt or unreadable file fallback
+        # Corrupt/unreadable -> start fresh with schema
         df = pd.DataFrame(columns=REQUIRED_COLUMNS)
     # Normalize columns to avoid KeyError
     for col in REQUIRED_COLUMNS:
@@ -48,10 +71,18 @@ def append_trade(record: dict):
     df = pd.concat([df, pd.DataFrame([record])], ignore_index=True)
     df.to_csv(CSV_PATH, index=False)
 
+# =========================
+# Handlers
+# =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Welcome to Trading Journal Bot.\nCommands:\n"
-        "/add - add a trade\n/list - show last 10 trades\n/export - export all trades to CSV",
+        "Welcome to Trading Journal Bot.\n"
+        "Commands:\n"
+        "/add - add a trade\n"
+        "/list - show last 10 trades\n"
+        "/export - export all trades to CSV\n"
+        "/export_xlsx - export your trades to Excel (xlsx)\n"
+        "/cancel - cancel current action"
     )
 
 async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -105,7 +136,7 @@ async def ask_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     trade = context.user_data.get("trade", {})
     trade["notes"] = notes
     trade["chat_id"] = update.effective_chat.id
-    trade["timestamp"] = datetime.utcnow().isoformat()
+    trade["timestamp"] = datetime.utcnow().isoformat(timespec="seconds")
 
     append_trade(trade)
     await update.message.reply_text(
@@ -122,7 +153,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def fmt_row(row):
     return (
         f"{row['timestamp']} | {row['symbol']} {row['side']} "
-        f"qty={row['qty']} price={row['price']} {('- ' + str(row['notes'])) if str(row['notes']).strip() else ''}"
+        f"qty={row['qty']} price={row['price']} "
+        f"{('- ' + str(row['notes'])) if str(row['notes']).strip() else ''}"
     )
 
 async def list_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -138,10 +170,33 @@ async def export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ensure_storage()
     await update.message.reply_document(document=open(CSV_PATH, "rb"), filename="trades.csv")
 
-def main():
-    ensure_storage()
+async def export_xlsx(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Per-user Excel export
+    df = load_df()
+    view = df[df["chat_id"] == update.effective_chat.id]
+    tmp_xlsx = os.path.join(DATA_DIR, f"trades_{update.effective_chat.id}.xlsx")
+    with pd.ExcelWriter(tmp_xlsx, engine="openpyxl") as writer:
+        view.to_excel(writer, sheet_name="trades", index=False)
+    await update.message.reply_document(document=open(tmp_xlsx, "rb"), filename="trades.xlsx")
+
+# =========================
+# Webhook cleanup for polling
+# =========================
+async def ensure_no_webhook(app):
+    # Clear webhook so getUpdates (polling) can be used
+    ok = await app.bot.delete_webhook(drop_pending_updates=True)
+    logger.info("delete_webhook called -> %s", ok)
+
+# =========================
+# App bootstrap
+# =========================
+def build_app():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # Error handler
+    app.add_error_handler(on_error)
+
+    # Conversation for /add
     conv = ConversationHandler(
         entry_points=[CommandHandler("add", add)],
         states={
@@ -154,12 +209,20 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
+    # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(conv)
     app.add_handler(CommandHandler("list", list_trades))
     app.add_handler(CommandHandler("export", export_csv))
+    app.add_handler(CommandHandler("export_xlsx", export_xlsx))
+    return app
 
-    app.run_polling()
+def main():
+    ensure_storage()
+    app = build_app()
+    # Ensure webhook is cleared before polling to avoid Conflict
+    app.post_init = ensure_no_webhook
+    app.run_polling(allowed_updates=None)
 
 if __name__ == "__main__":
     main()

@@ -18,15 +18,26 @@ DATA_PATHS = {
 }
 YEAR_FILTER = 2025
 
-# Entries
-VOLUME_MULT_BREAKOUT = 2
+# Strategy toggles
+STRAT_TREND_BREAKOUT = True
+STRAT_WITH_TREND_PULLBACK = True   # replaces raw BB_Pullback
+STRAT_EVENT_CONTINUATION = True
+
+# Universe curation (optional: leave empty to include all)
+SYMBOL_WHITELIST = set([])  # e.g., {"INFIBEAM","HINDCOPPER","TDPOWERSYS"}
+SYMBOL_BLACKLIST = set(["LLOYDSENGG","SAGILITY","WELSPUNLIV"])  # from prior run’s chronic ATR SLs
+
+# Entries and filters
+VOLUME_MULT_BREAKOUT = 2.0
 ADX_THRESHOLD_BREAKOUT = 25
 ADX_THRESHOLD_DEFAULT = 20
+HOURLY_ADX_MIN = 25
+DAILY_ADX_MIN = 20
 
-# Exits (v2 adjustments)
+# Exits
 ATR_SL_MULT = 1.3
 PROFIT_TARGET = 0.02
-TRAIL_TRIGGER = 0.015
+TRAIL_TRIGGER = 0.02  # a bit later to avoid early trail
 PARTIAL_TP_FRACTION = 0.5
 
 # Risk & capacity
@@ -45,9 +56,14 @@ ROUND_TRIP_BPS = 0.002
 ADV_PARTICIPATION = 0.02
 ENTRY_AT_NEXT_BAR = True
 
-# ML gate (v2)
+# ML gate (v2.1)
 FEATURES = ["adx","atr","volume_ratio","adosc","hour_adx","volume_sma","macd_hist","vwap","roc","obv"]
 ML_PROBA_THRESHOLD = 0.5
+ML_COMPOSITE_MIN = 0.6  # proba * (hour_adx/50 capped) must exceed this
+
+# Portfolio layer
+DAILY_LOSS_LIMIT = -0.015  # -1.5% of capital in PnL; stop new entries after breach
+MAX_NEW_ENTRIES_PER_15M = 3
 
 # ---------- Data loading ----------
 def load_and_filter_2025(symbol):
@@ -81,6 +97,7 @@ def add_indicators(df):
 
     # Trend & volatility
     df['donchian_high'] = df['high'].rolling(20, min_periods=1).max()
+    df['ema50'] = ta.trend.ema_indicator(df['close'], window=50)
     df['ema200'] = ta.trend.ema_indicator(df['close'], window=200)
     adx_df = ta.trend.ADXIndicator(df['high'], df['low'], df['close'], window=14)
     df['adx'] = adx_df.adx()
@@ -91,9 +108,11 @@ def add_indicators(df):
     df['bb_upper'] = bb.bollinger_hband()
     df['bb_lower'] = bb.bollinger_lband()
 
-    high14 = df['high'].rolling(14).max(); low14 = df['low'].rolling(14).min()
-    df['wpr'] = (high14 - df['close']) / (high14 - low14) * -100
+    # RSI and VWAP
+    df['rsi'] = ta.momentum.rsi(df['close'], window=14)
+    df['vwap'] = (df['close'] * df['volume']).cumsum() / (df['volume'].cumsum().replace(0, np.nan))
 
+    # ATR & chandelier
     df['atr'] = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range()
     atr_ce = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=22).average_true_range()
     high22 = df['high'].rolling(22, min_periods=1).max()
@@ -111,11 +130,8 @@ def add_indicators(df):
     df['obv'] = talib.OBV(close, volume)
     df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
 
-    # VWAP cumulative
-    df['vwap'] = (df['close'] * df['volume']).cumsum() / df['volume'].cumsum()
-
-    # Ensure needed columns exist
-    for f in ["hour_adx", "adosc", "roc", "obv", "vwap", "volume_sma"]:
+    # Safety: ensure required columns exist
+    for f in ["hour_adx", "adosc", "roc", "obv", "vwap", "volume_sma", "ema50"]:
         if f not in df.columns:
             df[f] = np.nan
     return df
@@ -128,34 +144,88 @@ def add_hourly_features_to_m15(m15_df, hourly_df):
             m15_df['hour_'+col] = hourly_df[col].reindex(m15_df.index, method='ffill')
     return m15_df.reset_index()
 
-# ---------- Signals ----------
-def breakout_signal(df):
-    cond_d = df['close'] > df['donchian_high'].shift(1)
-    cond_v = df['volume'] > VOLUME_MULT_BREAKOUT * df['vol_sma20']
-    cond_w = df['close'] > df['weekly_donchian_high'].shift(1)
-    df['breakout_signal'] = (cond_d & cond_v & cond_w).astype(int)
-    return df
+# ---------- Strategy signals ----------
+def trend_breakout_signal(df, daily_df, hourly_df):
+    # Daily filters
+    d_ok = (daily_df['ema50'] > daily_df['ema200']) & (daily_df['adx'] >= DAILY_ADX_MIN)
+    daily_gate = d_ok.reindex(df['date'], method='ffill').fillna(False)
 
-def bb_breakout_signal(df):
-    df['bb_breakout_signal'] = ((df['close'] > df['bb_upper']) & (df['volume'] > VOLUME_MULT_BREAKOUT * df['vol_sma20'])).astype(int)
-    return df
+    # Hourly filter
+    h_ok = (hourly_df.set_index('date')['adx'] >= HOURLY_ADX_MIN)
+    hourly_gate = h_ok.reindex(df['date'], method='ffill').fillna(False)
 
-def bb_pullback_signal(df):
-    cond_pull = df['close'] < df['bb_lower']
-    cond_resume = df['close'] > df['bb_lower'].shift(1)
-    df['bb_pullback_signal'] = (cond_pull.shift(1) & cond_resume).astype(int)
-    return df
+    # 15m breakout with volume
+    cond_don = df['close'] > df['donchian_high'].shift(1)
+    cond_vol = df['volume'] > VOLUME_MULT_BREAKOUT * df['vol_sma20']
+    cond_wk = df['close'] > df['weekly_donchian_high'].shift(1)
+    brk = cond_don & cond_vol & cond_wk
 
-def combine_signals(df):
-    chand_ok = (df['close'] > df['chandelier_exit'])
-    regime_breakout = (df['close'] > df['ema200']) & (df['adx'] > ADX_THRESHOLD_BREAKOUT)
-    regime_default = (df['close'] > df['ema200']) & (df['adx'] > ADX_THRESHOLD_DEFAULT)
-    df['entry_signal'] = 0
-    df['entry_type'] = ''
-    df.loc[(df['breakout_signal'] == 1) & chand_ok & regime_breakout, ['entry_signal','entry_type']] = [1,'Breakout']
-    df.loc[(df['bb_breakout_signal'] == 1) & chand_ok & regime_breakout & (df['entry_signal']==0), ['entry_signal','entry_type']] = [1,'BB_Breakout']
-    df.loc[(df['bb_pullback_signal'] == 1) & chand_ok & regime_default & (df['entry_signal']==0), ['entry_signal','entry_type']] = [1,'BB_Pullback']
-    return df
+    sig = (brk & daily_gate & hourly_gate).astype(int)
+    return sig
+
+def with_trend_pullback_signal(df, daily_df, hourly_df):
+    # Daily uptrend + hourly momentum
+    d_ok = (daily_df['ema50'] > daily_df['ema200']) & (daily_df['adx'] >= DAILY_ADX_MIN)
+    daily_gate = d_ok.reindex(df['date'], method='ffill').fillna(False)
+    h_ok = (hourly_df.set_index('date')['adx'] >= HOURLY_ADX_MIN)
+    hourly_gate = h_ok.reindex(df['date'], method='ffill').fillna(False)
+
+    # Pullback to EMA20-EMA50 band, RSI in 35-45 range, reclaim above VWAP and EMA20 on this bar
+    ema20 = ta.trend.ema_indicator(df['close'], window=20)
+    ema50_15 = ta.trend.ema_indicator(df['close'], window=50)
+    rsi = df['rsi']
+    pulled = (df['low'] <= ema20) | (df['low'] <= ema50_15)
+    reclaim = (df['close'] > df['vwap']) & (df['close'] > ema20)
+    rsi_ok = (rsi >= 35) & (rsi <= 50)
+    obv_rising = df['obv'].diff() > 0
+    adosc_pos = df['adosc'] > 0
+
+    sig = (pulled.shift(1).fillna(False) & reclaim & rsi_ok & obv_rising & adosc_pos & daily_gate & hourly_gate).astype(int)
+    return sig
+
+def event_continuation_signal(df, daily_df, hourly_df):
+    # Proxy for event day: very high intraday relative volume in first hour
+    # Mark day as event if first-hour volume > 2.5x median 15m volume of last 20 days
+    x = df.copy()
+    x['date_only'] = pd.to_datetime(x['date']).dt.date
+    day_meds = x.groupby('date_only')['volume'].transform('median')
+    first_hour = pd.to_datetime(x['date']).dt.hour == 9  # adjust if market hour differs
+    event_day = (first_hour & (x['volume'] > 2.5 * day_meds)).groupby(x['date_only']).transform('max')
+    event_gate = pd.Series(event_day.values, index=x.index).reindex(x.index, method='ffill').fillna(False)
+
+    # Basic ORB continuation: after first hour, break of day high with volume
+    day_high = x.groupby('date_only')['high'].transform('cummax')
+    after_first_hour = pd.to_datetime(x['date']).dt.hour >= 10
+    vol_ok = x['volume'] > VOLUME_MULT_BREAKOUT * x['vol_sma20']
+    cont = after_first_hour & vol_ok & (x['close'] > day_high.shift(1))
+
+    # Require hourly momentum and daily trend to avoid false moves
+    d_ok = (daily_df['ema50'] > daily_df['ema200']).reindex(x['date'], method='ffill').fillna(False)
+    h_ok = (hourly_df.set_index('date')['adx'] >= HOURLY_ADX_MIN).reindex(x['date'], method='ffill').fillna(False)
+
+    sig = (event_gate & cont & d_ok & h_ok).astype(int)
+    return sig
+
+def build_entry_signals(m15, daily, hourly):
+    m15 = m15.copy()
+    m15['entry_signal'] = 0
+    m15['entry_type'] = ''
+
+    if STRAT_TREND_BREAKOUT:
+        tb = trend_breakout_signal(m15, daily, hourly)
+        m15.loc[tb == 1, ['entry_signal','entry_type']] = [1, 'Trend_Breakout']
+
+    if STRAT_WITH_TREND_PULLBACK:
+        wtp = with_trend_pullback_signal(m15, daily, hourly)
+        idx = (wtp == 1) & (m15['entry_signal'] == 0)
+        m15.loc[idx, ['entry_signal','entry_type']] = [1, 'WithTrend_Pullback']
+
+    if STRAT_EVENT_CONTINUATION:
+        ec = event_continuation_signal(m15, daily, hourly)
+        idx = (ec == 1) & (m15['entry_signal'] == 0)
+        m15.loc[idx, ['entry_signal','entry_type']] = [1, 'Event_Continuation']
+
+    return m15
 
 # ---------- ML ----------
 def fit_xgb(X_train, y_train):
@@ -191,11 +261,10 @@ def walk_forward_predict(m15_df, hourly_df, period='M'):
         model = fit_xgb(X_train, y_train)
         proba.loc[val_idx] = model.predict_proba(df.loc[val_idx, FEATURES])[:, 1]
 
-        # v2 ML gate with hour-ADX alignment
         hour_adx = df.loc[val_idx, 'hour_adx'].fillna(0)
-        align_factor = (hour_adx / 40.0).clip(upper=1.0)
+        align_factor = (hour_adx / 50.0).clip(upper=1.0)
         composite = proba.loc[val_idx].fillna(0) * align_factor
-        gate.loc[val_idx] = ((proba.loc[val_idx] >= ML_PROBA_THRESHOLD) & (composite >= 0.5)).astype(int)
+        gate.loc[val_idx] = ((proba.loc[val_idx] >= ML_PROBA_THRESHOLD) & (composite >= ML_COMPOSITE_MIN)).astype(int)
 
     df['ml_proba'] = proba
     df['ml_signal'] = gate.fillna(0).astype(int)
@@ -210,26 +279,50 @@ def dynamic_position_sizing(prob, atr, capital):
     size_val = min(size_val, capital * MAX_POSITION_FRACTION)
     return max(size_val, 0.0)
 
-# ---------- Backtest with partial take-profit ----------
-def backtest_live_like(df, symbol, capital=INITIAL_CAPITAL):
+# ---------- Backtest with portfolio risk ----------
+def backtest_live_like(df, symbol, capital=INITIAL_CAPITAL, day_loss_limit=DAILY_LOSS_LIMIT):
     cash = capital
     positions = {}
     trades = []
     trade_count = 0
     df = df.copy().reset_index(drop=True)
 
+    # Portfolio-level trackers (per day)
+    df['day'] = pd.to_datetime(df['date']).dt.date
+    daily_realized_pnl = {}
+    last_entry_time = None
+    new_entries_window = {}
+
+    def can_enter(now_dt):
+        nonlocal last_entry_time
+        # Daily loss check
+        day = now_dt.date()
+        eq = cash + sum(pos['shares'] * df.loc[pos['entry_idx'], 'close'] for pos in positions.values())
+        realized = sum(p for d,p in daily_realized_pnl.items() if d == day)
+        if realized < day_loss_limit * capital:
+            return False
+        # Entry throttle per 15m window
+        window_key = (day, now_dt.hour, now_dt.minute//15)
+        count = new_entries_window.get(window_key, 0)
+        if count >= MAX_NEW_ENTRIES_PER_15M:
+            return False
+        return True
+
     for i in range(1, len(df)):
         row = df.iloc[i]
-        date = row['date']; price = float(row['close'])
-        sig = int(row.get('entry_signal', 0)); etype = row.get('entry_type', '')
+        date = pd.to_datetime(row['date'])
+        price = float(row['close'])
+        sig = int(row.get('entry_signal', 0))
+        etype = row.get('entry_type', '')
 
-        # Exits first
+        # Exits
         to_close = []
         for pid, pos in list(positions.items()):
             ret = (price - pos['entry_price']) / pos['entry_price']
             bars_held = i - pos['entry_idx']
             atr_stop = pos['entry_price'] - ATR_SL_MULT * pos['entry_atr']
             pos['high'] = max(pos['high'], price)
+            # trail logic
             if (not pos['trail_active']) and ret >= TRAIL_TRIGGER:
                 pos['trail_active'] = True
                 pos['trail_stop'] = row['chandelier_exit']
@@ -245,18 +338,15 @@ def backtest_live_like(df, symbol, capital=INITIAL_CAPITAL):
                 pnl = sell_val - buy_val - costs
                 cash += sell_val
                 trades.append({
-                    'symbol': symbol,
-                    'entry_date': pos['entry_date'],
-                    'exit_date': date,
-                    'pnl': pnl,
-                    'entry_type': pos['entry_type'],
-                    'exit_reason': 'Partial_TP'
+                    'symbol': symbol, 'entry_date': pos['entry_date'], 'exit_date': date,
+                    'pnl': pnl, 'entry_type': pos['entry_type'], 'exit_reason': 'Partial_TP'
                 })
                 pos['shares'] -= part_shares
                 pos['partial_taken'] = True
+                daily_realized_pnl[date.date()] = daily_realized_pnl.get(date.date(), 0.0) + pnl
                 continue
 
-            # Full exit rules
+            # Full exit
             exit_reason = None
             if price <= atr_stop:
                 exit_reason = 'ATR Stop Loss'
@@ -272,26 +362,24 @@ def backtest_live_like(df, symbol, capital=INITIAL_CAPITAL):
                 pnl = sell_val - buy_val - costs
                 cash += sell_val
                 trades.append({
-                    'symbol': symbol,
-                    'entry_date': pos['entry_date'],
-                    'exit_date': date,
-                    'pnl': pnl,
-                    'entry_type': pos['entry_type'],
-                    'exit_reason': exit_reason
+                    'symbol': symbol, 'entry_date': pos['entry_date'], 'exit_date': date,
+                    'pnl': pnl, 'entry_type': pos['entry_type'], 'exit_reason': exit_reason
                 })
                 to_close.append(pid)
                 trade_count += 1
+                daily_realized_pnl[date.date()] = daily_realized_pnl.get(date.date(), 0.0) + pnl
 
         for pid in to_close:
             positions.pop(pid, None)
         if trade_count >= MAX_TRADES:
             break
 
-        # Entries (next-bar execution)
-        if sig == 1 and len(positions) < MAX_POSITIONS and cash > 0:
+        # Entries
+        if sig == 1 and len(positions) < MAX_POSITIONS and cash > 0 and can_enter(date):
             prob = float(row.get('ml_proba', 0.5))
             atr = float(row['atr']) if not np.isnan(row['atr']) else 1.0
             size_val = dynamic_position_sizing(prob, atr, cash)
+            # Liquidity cap
             bar_val = float(row['close']) * float(row['volume'])
             liq_cap = ADV_PARTICIPATION * bar_val
             size_val = min(size_val, liq_cap)
@@ -310,6 +398,7 @@ def backtest_live_like(df, symbol, capital=INITIAL_CAPITAL):
             if buy_val + entry_costs > cash:
                 continue
 
+            # record entry
             cash -= buy_val
             positions[len(positions)+1] = {
                 'entry_date': df.iloc[exec_idx]['date'],
@@ -323,6 +412,8 @@ def backtest_live_like(df, symbol, capital=INITIAL_CAPITAL):
                 'entry_idx': exec_idx,
                 'partial_taken': False
             }
+            window_key = (date.date(), date.hour, date.minute//15)
+            new_entries_window[window_key] = new_entries_window.get(window_key, 0) + 1
 
     return trades
 
@@ -333,10 +424,9 @@ def prepare_data(symbol):
     hourly = add_indicators(hourly)
     m15 = add_indicators(m15)
     m15 = add_hourly_features_to_m15(m15, hourly)
-    m15 = breakout_signal(m15)
-    m15 = bb_breakout_signal(m15)
-    m15 = bb_pullback_signal(m15)
-    m15 = combine_signals(m15)
+    # build strategy entries
+    m15 = build_entry_signals(m15, daily, hourly)
+    # Warmup cut
     m15 = m15.dropna(subset=['ema200']).reset_index(drop=True)
     return daily, hourly, m15
 
@@ -357,12 +447,12 @@ def extract_trade_stats(trades):
 
 def walk_forward_predict_gate(m15, hourly):
     m15_ml = walk_forward_predict(m15, hourly)
+    # Gate requires both strategy signal and ML approval
     m15_ml['entry_signal'] = ((m15_ml['entry_signal'] == 1) & (m15_ml['ml_signal'] == 1)).astype(int)
     return m15_ml
 
 # ---------- Summary Reporting ----------
 def summarize_and_save(trades_df, stats_df):
-    # Overall totals
     total_trades = len(trades_df)
     wins = int((trades_df['pnl'] > 0).sum())
     losses = int((trades_df['pnl'] <= 0).sum())
@@ -370,25 +460,21 @@ def summarize_and_save(trades_df, stats_df):
     total_pnl = round(trades_df['pnl'].sum(), 2) if total_trades else 0.0
     avg_pnl = round(trades_df['pnl'].mean(), 2) if total_trades else 0.0
 
-    # By exit reason
     by_exit = (trades_df.groupby('exit_reason')['pnl']
-                          .agg(['count','sum','mean'])
-                          .rename(columns={'count':'trades','sum':'total_pnl','mean':'avg_pnl'})
-                          .reset_index())
-    by_exit.to_csv('walk_forward_by_exit_v2.csv', index=False)
+               .agg(['count','sum','mean'])
+               .rename(columns={'count':'trades','sum':'total_pnl','mean':'avg_pnl'})
+               .reset_index())
+    by_exit.to_csv('walk_forward_by_exit_v21.csv', index=False)
 
-    # By entry type
     by_entry = (trades_df.groupby('entry_type')['pnl']
-                           .agg(['count','sum','mean'])
-                           .rename(columns={'count':'trades','sum':'total_pnl','mean':'avg_pnl'})
-                           .reset_index())
-    by_entry.to_csv('walk_forward_by_entry_v2.csv', index=False)
+               .agg(['count','sum','mean'])
+               .rename(columns={'count':'trades','sum':'total_pnl','mean':'avg_pnl'})
+               .reset_index())
+    by_entry.to_csv('walk_forward_by_entry_v21.csv', index=False)
 
-    # Per-symbol stats already in stats_df
-    stats_df.to_csv('walk_forward_stats_v2.csv', index=False)
+    stats_df.to_csv('walk_forward_stats_v21.csv', index=False)
 
-    # Console print summary
-    print('\n===== Walk-Forward Summary (v2) =====')
+    print('\n===== Walk-Forward Summary (v2.1) =====')
     print(f'Total trades: {total_trades}')
     print(f'Wins: {wins} | Losses: {losses} | Win rate: {win_rate}%')
     print(f'Total PnL: {total_pnl} | Avg PnL/trade: {avg_pnl}')
@@ -397,18 +483,24 @@ def summarize_and_save(trades_df, stats_df):
         print(stats_df.sort_values('Total PnL', ascending=False).head(5))
     else:
         print('(no stats)')
-    print('\nBy exit reason (saved to walk_forward_by_exit_v2.csv):')
+    print('\nBy exit reason (saved to walk_forward_by_exit_v21.csv):')
     print(by_exit.head())
-    print('\nBy entry type (saved to walk_forward_by_entry_v2.csv):')
+    print('\nBy entry type (saved to walk_forward_by_entry_v21.csv):')
     print(by_entry.head())
 
 def run_walk_forward(symbols):
+    # Apply universe curation
+    if SYMBOL_WHITELIST:
+        symbols = [s for s in symbols if s in SYMBOL_WHITELIST]
+    if SYMBOL_BLACKLIST:
+        symbols = [s for s in symbols if s not in SYMBOL_BLACKLIST]
+
     all_stats, all_trades = [], []
-    logging.info(f"Discovered {len(symbols)} symbols")
+    logging.info(f"Discovered {len(symbols)} symbols (post-curation)")
     for idx, symbol in enumerate(symbols, 1):
         logging.info(f"[{idx}/{len(symbols)}] {symbol}")
         try:
-            _, hourly, m15 = prepare_data(symbol)
+            daily, hourly, m15 = prepare_data(symbol)
         except FileNotFoundError as e:
             logging.warning(str(e))
             continue
@@ -421,7 +513,7 @@ def run_walk_forward(symbols):
         trades = backtest_live_like(m15_ml, symbol)
         logging.info(f"Trades: {len(trades)}")
         stats = extract_trade_stats(trades)
-        stats.update({'Symbol': symbol, 'Strategy': 'ML+All Features Walk-Forward v2'})
+        stats.update({'Symbol': symbol, 'Strategy': 'ML+Regime Walk-Forward v2.1'})
         all_stats.append(stats)
         for t in trades:
             t['Symbol'] = symbol
@@ -431,8 +523,8 @@ def run_walk_forward(symbols):
     trades_df = pd.DataFrame(all_trades)
 
     # Save primary CSVs
-    stats_df.to_csv('walk_forward_stats_v2.csv', index=False)
-    trades_df.to_csv('walk_forward_trades_v2.csv', index=False)
+    stats_df.to_csv('walk_forward_stats_v21.csv', index=False)
+    trades_df.to_csv('walk_forward_trades_v21.csv', index=False)
 
     # Print and save summary/breakdowns
     if not trades_df.empty:
@@ -451,6 +543,6 @@ if __name__ == '__main__':
         base = base.strip().strip("()[]'")
         if base:
             symbols.append(base)
-    logging.info(f"Symbols: {len(symbols)} discovered. Example: {symbols[:5]}")
+    logging.info(f"Symbols discovered (pre-curation): {len(symbols)}. Example: {symbols[:5]}")
     stats_df, trades_df = run_walk_forward(symbols)
-    logging.info("Saved walk_forward_stats_v2.csv, walk_forward_trades_v2.csv, and breakdown CSVs")
+    logging.info("Saved walk_forward_stats_v21.csv, walk_forward_trades_v21.csv, and breakdown CSVs")

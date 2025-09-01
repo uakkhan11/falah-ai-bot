@@ -178,10 +178,9 @@ def backtest_rules_15m(symbols):
         cross_up = (fast > slow) & (fast.shift(1) <= slow.shift(1))
 
         # entries as 1-D integer positions
-        entries = np.where(cross_up.values)  # ensure np.where(...) is used [1]
+        entries = np.where(cross_up.to_numpy(dtype=bool))  # 1-D int array [1]
 
-        for i in entries:
-            i = int(i)
+        for i in entries.tolist():  # ensure plain Python ints
             if i + 1 >= len(df):
                 continue
 
@@ -197,8 +196,7 @@ def backtest_rules_15m(symbols):
             exit_reason = "TIME"
             bars_held = 0
 
-            # iterate forward with explicit scalar checks
-            for j, (h, l) in enumerate(zip(highs.values, lows.values), start=1):
+            for j, (h, l) in enumerate(zip(highs.to_numpy(), lows.to_numpy()), start=1):
                 if l <= sl_price:
                     exit_price = sl_price
                     exit_reason = "SL"
@@ -210,7 +208,6 @@ def backtest_rules_15m(symbols):
                     bars_held = j
                     break
                 if j >= RULES_CONF["max_hold_bars"]:
-                    # guard index; time exit at last available bar close within window
                     end_loc = min(i + j, len(df) - 1)
                     exit_price = float(df["close"].iloc[end_loc])
                     exit_reason = "TIME"

@@ -34,13 +34,29 @@ ENTRY_AT_NEXT_BAR = True
 
 # ---------- Helpers ----------
 def load_and_filter_2025(symbol):
+    symbol = str(symbol).strip().strip("()[]'")  # ensure clean string
+
     def filter_year(df):
         df['date'] = pd.to_datetime(df['date'])
         return df[df['date'].dt.year == YEAR_FILTER].reset_index(drop=True)
-    daily = pd.read_csv(os.path.join(DATA_PATHS['daily'], f"{symbol}.csv"))
-    hourly = pd.read_csv(os.path.join(DATA_PATHS['1hour'], f"{symbol}.csv"))
-    m15 = pd.read_csv(os.path.join(DATA_PATHS['15minute'], f"{symbol}.csv"))
+
+    paths = {
+        'daily': os.path.join(DATA_PATHS['daily'], f"{symbol}.csv"),
+        '1hour': os.path.join(DATA_PATHS['1hour'], f"{symbol}.csv"),
+        '15minute': os.path.join(DATA_PATHS['15minute'], f"{symbol}.csv"),
+    }
+
+    # Option A: skip symbols missing any timeframe
+    missing = [k for k, p in paths.items() if not os.path.isfile(p)]
+    if missing:
+        raise FileNotFoundError(f"Missing data files for {symbol}: {missing}")
+
+    daily = pd.read_csv(paths['daily'])
+    hourly = pd.read_csv(paths['1hour'])
+    m15 = pd.read_csv(paths['15minute'])
+
     return filter_year(daily), filter_year(hourly), filter_year(m15)
+
 
 def add_indicators(df):
     df = df.sort_values('date').reset_index(drop=True)
@@ -311,6 +327,10 @@ def run_walk_forward(symbols):
     return stats_df, trades_df
 
 if __name__ == '__main__':
-    symbols = [os.path.splitext(f) for f in os.listdir(DATA_PATHS['daily']) if f.endswith('.csv')]
-    stats_df, trades_df = run_walk_forward(symbols)
-    print(stats_df.head())
+    files = [f for f in os.listdir(DATA_PATHS['daily']) if f.lower().endswith('.csv')]
+symbols = []
+for f in files:
+    base, ext = os.path.splitext(f)
+    base = base.strip().strip("()[]'")  # remove stray tuple-like chars if any
+    if base:
+        symbols.append(base)

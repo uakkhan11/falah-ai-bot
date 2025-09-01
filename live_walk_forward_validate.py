@@ -25,7 +25,7 @@ STRAT_EVENT_CONTINUATION = True
 
 # Universe curation (optional: leave empty to include all)
 SYMBOL_WHITELIST = set([])  # e.g., {"INFIBEAM","HINDCOPPER","TDPOWERSYS"}
-SYMBOL_BLACKLIST = set(["LLOYDSENGG","SAGILITY","WELSPUNLIV"])  # from prior run’s chronic ATR SLs
+SYMBOL_BLACKLIST = set(["LLOYDSENGG","SAGILITY","WELSPUNLIV"])  # example blacklist from prior run
 
 # Entries and filters
 VOLUME_MULT_BREAKOUT = 2.0
@@ -37,7 +37,7 @@ DAILY_ADX_MIN = 20
 # Exits
 ATR_SL_MULT = 1.3
 PROFIT_TARGET = 0.02
-TRAIL_TRIGGER = 0.02  # a bit later to avoid early trail
+TRAIL_TRIGGER = 0.02  # delay to avoid early trail
 PARTIAL_TP_FRACTION = 0.5
 
 # Risk & capacity
@@ -62,7 +62,7 @@ ML_PROBA_THRESHOLD = 0.5
 ML_COMPOSITE_MIN = 0.6  # proba * (hour_adx/50 capped) must exceed this
 
 # Portfolio layer
-DAILY_LOSS_LIMIT = -0.015  # -1.5% of capital in PnL; stop new entries after breach
+DAILY_LOSS_LIMIT = -0.015  # -1.5% of capital; stop new entries for the day after breach
 MAX_NEW_ENTRIES_PER_15M = 3
 
 # ---------- Data loading ----------
@@ -86,6 +86,9 @@ def load_and_filter_2025(symbol):
 
 def add_indicators(df):
     df = df.sort_values('date').reset_index(drop=True)
+
+    # Ensure datetime
+    df['date'] = pd.to_datetime(df['date'])
 
     # Weekly Donchian
     df_weekly = df.set_index('date').resample('W-MON').agg({
@@ -130,13 +133,17 @@ def add_indicators(df):
     df['obv'] = talib.OBV(close, volume)
     df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
 
-    # Safety: ensure required columns exist
+    # Safety
     for f in ["hour_adx", "adosc", "roc", "obv", "vwap", "volume_sma", "ema50"]:
         if f not in df.columns:
             df[f] = np.nan
     return df
 
 def add_hourly_features_to_m15(m15_df, hourly_df):
+    hourly_df = hourly_df.copy()
+    m15_df = m15_df.copy()
+    hourly_df['date'] = pd.to_datetime(hourly_df['date'])
+    m15_df['date'] = pd.to_datetime(m15_df['date'])
     hourly_df = hourly_df.set_index('date')
     m15_df = m15_df.set_index('date')
     for col in ['adx','atr','macd_hist']:
@@ -144,17 +151,26 @@ def add_hourly_features_to_m15(m15_df, hourly_df):
             m15_df['hour_'+col] = hourly_df[col].reindex(m15_df.index, method='ffill')
     return m15_df.reset_index()
 
-# ---------- Strategy signals ----------
+# ---------- Strategy signals (with datetime alignment) ----------
 def trend_breakout_signal(df, daily_df, hourly_df):
-    # Daily filters
-    d_ok = (daily_df['ema50'] > daily_df['ema200']) & (daily_df['adx'] >= DAILY_ADX_MIN)
-    daily_gate = d_ok.reindex(df['date'], method='ffill').fillna(False)
+    df = df.copy()
+    daily_df = daily_df.copy()
+    hourly_df = hourly_df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    daily_df['date'] = pd.to_datetime(daily_df['date'])
+    hourly_df['date'] = pd.to_datetime(hourly_df['date'])
+    m15_idx = df['date']
 
-    # Hourly filter
-    h_ok = (hourly_df.set_index('date')['adx'] >= HOURLY_ADX_MIN)
-    hourly_gate = h_ok.reindex(df['date'], method='ffill').fillna(False)
+    # Daily gate
+    d_ok = ((daily_df['ema50'] > daily_df['ema200']) & (daily_df['adx'] >= DAILY_ADX_MIN)).rename('d_ok')
+    d_ok.index = daily_df['date']
+    daily_gate = d_ok.reindex(m15_idx, method='ffill').fillna(False)
 
-    # 15m breakout with volume
+    # Hourly gate
+    h_ok_series = (hourly_df.set_index('date')['adx'] >= HOURLY_ADX_MIN)
+    hourly_gate = h_ok_series.reindex(m15_idx, method='ffill').fillna(False)
+
+    # 15m breakout with volume & weekly context
     cond_don = df['close'] > df['donchian_high'].shift(1)
     cond_vol = df['volume'] > VOLUME_MULT_BREAKOUT * df['vol_sma20']
     cond_wk = df['close'] > df['weekly_donchian_high'].shift(1)
@@ -164,13 +180,23 @@ def trend_breakout_signal(df, daily_df, hourly_df):
     return sig
 
 def with_trend_pullback_signal(df, daily_df, hourly_df):
-    # Daily uptrend + hourly momentum
-    d_ok = (daily_df['ema50'] > daily_df['ema200']) & (daily_df['adx'] >= DAILY_ADX_MIN)
-    daily_gate = d_ok.reindex(df['date'], method='ffill').fillna(False)
-    h_ok = (hourly_df.set_index('date')['adx'] >= HOURLY_ADX_MIN)
-    hourly_gate = h_ok.reindex(df['date'], method='ffill').fillna(False)
+    df = df.copy()
+    daily_df = daily_df.copy()
+    hourly_df = hourly_df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    daily_df['date'] = pd.to_datetime(daily_df['date'])
+    hourly_df['date'] = pd.to_datetime(hourly_df['date'])
+    m15_idx = df['date']
 
-    # Pullback to EMA20-EMA50 band, RSI in 35-45 range, reclaim above VWAP and EMA20 on this bar
+    # Daily & hourly gates
+    d_ok = ((daily_df['ema50'] > daily_df['ema200']) & (daily_df['adx'] >= DAILY_ADX_MIN)).rename('d_ok')
+    d_ok.index = daily_df['date']
+    daily_gate = d_ok.reindex(m15_idx, method='ffill').fillna(False)
+
+    h_ok_series = (hourly_df.set_index('date')['adx'] >= HOURLY_ADX_MIN)
+    hourly_gate = h_ok_series.reindex(m15_idx, method='ffill').fillna(False)
+
+    # Pullback & reclaim logic on 15m
     ema20 = ta.trend.ema_indicator(df['close'], window=20)
     ema50_15 = ta.trend.ema_indicator(df['close'], window=50)
     rsi = df['rsi']
@@ -184,24 +210,33 @@ def with_trend_pullback_signal(df, daily_df, hourly_df):
     return sig
 
 def event_continuation_signal(df, daily_df, hourly_df):
-    # Proxy for event day: very high intraday relative volume in first hour
-    # Mark day as event if first-hour volume > 2.5x median 15m volume of last 20 days
+    df = df.copy()
+    daily_df = daily_df.copy()
+    hourly_df = hourly_df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    daily_df['date'] = pd.to_datetime(daily_df['date'])
+    hourly_df['date'] = pd.to_datetime(hourly_df['date'])
+    m15_idx = df['date']
+
+    # Daily & hourly gates for trend/momentum
+    d_ok_series = (daily_df['ema50'] > daily_df['ema200'])
+    d_ok_series.index = daily_df['date']
+    d_ok = d_ok_series.reindex(m15_idx, method='ffill').fillna(False)
+    h_ok_series = (hourly_df.set_index('date')['adx'] >= HOURLY_ADX_MIN)
+    h_ok = h_ok_series.reindex(m15_idx, method='ffill').fillna(False)
+
+    # Event proxy: very high relative vol in first hour
     x = df.copy()
     x['date_only'] = pd.to_datetime(x['date']).dt.date
     day_meds = x.groupby('date_only')['volume'].transform('median')
-    first_hour = pd.to_datetime(x['date']).dt.hour == 9  # adjust if market hour differs
+    first_hour = pd.to_datetime(x['date']).dt.hour == 9  # adjust if market open differs
     event_day = (first_hour & (x['volume'] > 2.5 * day_meds)).groupby(x['date_only']).transform('max')
     event_gate = pd.Series(event_day.values, index=x.index).reindex(x.index, method='ffill').fillna(False)
 
-    # Basic ORB continuation: after first hour, break of day high with volume
     day_high = x.groupby('date_only')['high'].transform('cummax')
     after_first_hour = pd.to_datetime(x['date']).dt.hour >= 10
     vol_ok = x['volume'] > VOLUME_MULT_BREAKOUT * x['vol_sma20']
     cont = after_first_hour & vol_ok & (x['close'] > day_high.shift(1))
-
-    # Require hourly momentum and daily trend to avoid false moves
-    d_ok = (daily_df['ema50'] > daily_df['ema200']).reindex(x['date'], method='ffill').fillna(False)
-    h_ok = (hourly_df.set_index('date')['adx'] >= HOURLY_ADX_MIN).reindex(x['date'], method='ffill').fillna(False)
 
     sig = (event_gate & cont & d_ok & h_ok).astype(int)
     return sig
@@ -261,6 +296,7 @@ def walk_forward_predict(m15_df, hourly_df, period='M'):
         model = fit_xgb(X_train, y_train)
         proba.loc[val_idx] = model.predict_proba(df.loc[val_idx, FEATURES])[:, 1]
 
+        # v2.1 ML gate: prob threshold and hour_adx alignment (50 scale)
         hour_adx = df.loc[val_idx, 'hour_adx'].fillna(0)
         align_factor = (hour_adx / 50.0).clip(upper=1.0)
         composite = proba.loc[val_idx].fillna(0) * align_factor
@@ -290,15 +326,12 @@ def backtest_live_like(df, symbol, capital=INITIAL_CAPITAL, day_loss_limit=DAILY
     # Portfolio-level trackers (per day)
     df['day'] = pd.to_datetime(df['date']).dt.date
     daily_realized_pnl = {}
-    last_entry_time = None
     new_entries_window = {}
 
     def can_enter(now_dt):
-        nonlocal last_entry_time
-        # Daily loss check
+        # Daily loss check (realized PnL only)
         day = now_dt.date()
-        eq = cash + sum(pos['shares'] * df.loc[pos['entry_idx'], 'close'] for pos in positions.values())
-        realized = sum(p for d,p in daily_realized_pnl.items() if d == day)
+        realized = daily_realized_pnl.get(day, 0.0)
         if realized < day_loss_limit * capital:
             return False
         # Entry throttle per 15m window
@@ -398,7 +431,6 @@ def backtest_live_like(df, symbol, capital=INITIAL_CAPITAL, day_loss_limit=DAILY
             if buy_val + entry_costs > cash:
                 continue
 
-            # record entry
             cash -= buy_val
             positions[len(positions)+1] = {
                 'entry_date': df.iloc[exec_idx]['date'],

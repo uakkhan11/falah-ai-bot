@@ -82,13 +82,18 @@ def add_indicators(df):
     high = df['high'].values.astype(float)
     low = df['low'].values.astype(float)
     volume = df['volume'].values.astype(float)
-    df['macd_hist'] = talib.MACD(close)
+    macd, macd_signal, macd_hist = talib.MACD(close)
+    df['macd_hist'] = macd_hist
     df['roc'] = talib.ROC(close, timeperiod=10)
     df['obv'] = talib.OBV(close, volume)
     df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
     df['volume_ratio'] = df['volume'] / df['vol_sma20']
+    df['volume_sma'] = df['volume'].rolling(20, min_periods=1).mean()
     df['vwap'] = (df['close'] * df['volume']).cumsum() / df['volume'].cumsum()
     return df
+    for f in ["hour_adx", "adosc", "roc", "obv", "vwap"]:
+    if f not in df.columns:
+        df[f] = np.nan
 
 def add_hourly_features_to_m15(m15_df, hourly_df):
     hourly_df = hourly_df.set_index('date')

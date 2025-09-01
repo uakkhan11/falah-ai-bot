@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import talib
 import ta
+import logging
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
 from xgboost import XGBClassifier
 
 # ---------- Config ----------
@@ -310,10 +312,23 @@ def walk_forward_predict_gate(m15, hourly):
 
 def run_walk_forward(symbols):
     all_stats, all_trades = [], []
-    for symbol in symbols:
-        _, hourly, m15 = prepare_data(symbol)
+    logging.info(f"Discovered {len(symbols)} symbols")
+    for idx, symbol in enumerate(symbols, 1):
+        logging.info(f"[{idx}/{len(symbols)}] Preparing {symbol}")
+        try:
+            _, hourly, m15 = prepare_data(symbol)
+        except FileNotFoundError as e:
+            logging.warning(str(e))
+            continue
+        if m15.empty:
+            logging.warning(f"No 2025 data after warmup for {symbol}; skipping")
+            continue
+        logging.info(f"Walk-forward ML for {symbol} with {len(m15)} bars")
         m15_ml = walk_forward_predict_gate(m15, hourly)
+        n_sig = int(m15_ml['entry_signal'].sum())
+        logging.info(f"Signals for {symbol}: {n_sig}")
         trades = backtest_live_like(m15_ml, symbol)
+        logging.info(f"Trades for {symbol}: {len(trades)}")
         stats = extract_trade_stats(trades)
         stats.update({'Symbol': symbol, 'Strategy': 'ML+All Features Walk-Forward'})
         all_stats.append(stats)
@@ -322,15 +337,20 @@ def run_walk_forward(symbols):
         all_trades.extend(trades)
     stats_df = pd.DataFrame(all_stats)
     trades_df = pd.DataFrame(all_trades)
+    logging.info(f"Completed. Symbols processed: {len(stats_df)}; Total trades: {len(trades_df)}")
     stats_df.to_csv('walk_forward_stats.csv', index=False)
     trades_df.to_csv('walk_forward_trades.csv', index=False)
     return stats_df, trades_df
 
+
 if __name__ == '__main__':
     files = [f for f in os.listdir(DATA_PATHS['daily']) if f.lower().endswith('.csv')]
-symbols = []
-for f in files:
-    base, ext = os.path.splitext(f)
-    base = base.strip().strip("()[]'")  # remove stray tuple-like chars if any
-    if base:
-        symbols.append(base)
+    symbols = []
+    for f in files:
+        base, _ = os.path.splitext(f)
+        base = base.strip().strip("()[]'")
+        if base:
+            symbols.append(base)
+    logging.info(f"Symbols: {len(symbols)} discovered. Example: {symbols[:5]}")
+    stats_df, trades_df = run_walk_forward(symbols)
+    logging.info("Saved walk_forward_stats.csv and walk_forward_trades.csv")

@@ -8,6 +8,11 @@ import warnings
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
+import os, joblib
+os.makedirs(os.path.join(BASE_DIR, "models"), exist_ok=True)
+joblib.dump(model, os.path.join(BASE_DIR, "models", "best_rf_1h.pkl"))
+joblib.dump(scaler, os.path.join(BASE_DIR, "models", "best_scaler_1h.pkl"))
+print("✅ Saved model and scaler to /root/falah-ai-bot/models")
 import time
 from datetime import datetime
 

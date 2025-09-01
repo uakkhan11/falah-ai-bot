@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 
 
-BOT_TOKEN = "7763450358:AAH32bWYyu_hXR6l-UaVMaarFGZ4YFOv6q8"  # replace
+BOT_TOKEN = "7763450358:AAEFPtC-2E2qlWEAPt8dUduOw9wwk758TrE"  # replace
 DATA_DIR = "/root/falah-ai-bot"
 CSV_PATH = os.path.join(DATA_DIR, "trades.csv")
 

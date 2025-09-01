@@ -24,9 +24,9 @@ ADX_THRESHOLD_BREAKOUT = 25
 ADX_THRESHOLD_DEFAULT = 20
 
 # Exits (v2 adjustments)
-ATR_SL_MULT = 1.3           # was 1.0
-PROFIT_TARGET = 0.02        # was 0.03, now partial TP
-TRAIL_TRIGGER = 0.015       # was 0.01
+ATR_SL_MULT = 1.3           # widened from 1.0 to reduce whipsaws
+PROFIT_TARGET = 0.02        # lower target with partial TP for earlier bank
+TRAIL_TRIGGER = 0.015       # delay trailing activation
 PARTIAL_TP_FRACTION = 0.5   # 50% scale-out at target
 
 # Risk & capacity
@@ -38,16 +38,16 @@ MAX_POSITION_FRACTION = 0.2
 BASE_RISK = 0.02
 
 # Holding horizon (v2)
-MAX_HOLD_BARS = 48          # allow more bars to capture swing follow-through
+MAX_HOLD_BARS = 48          # extend hold to let winners run
 
 # Costs & execution
-ROUND_TRIP_BPS = 0.002      # 20 bps total cost/slippage
-ADV_PARTICIPATION = 0.02    # ≤2% of bar value
-ENTRY_AT_NEXT_BAR = True
+ROUND_TRIP_BPS = 0.002      # 20 bps total slippage+fees round trip
+ADV_PARTICIPATION = 0.02    # ≤2% of bar value traded to respect liquidity
+ENTRY_AT_NEXT_BAR = True    # next-bar execution for realism
 
 # ML gate (v2)
 FEATURES = ["adx","atr","volume_ratio","adosc","hour_adx","volume_sma","macd_hist","vwap","roc","obv"]
-ML_PROBA_THRESHOLD = 0.5    # was 0.4
+ML_PROBA_THRESHOLD = 0.5    # tightened threshold
 
 # ---------- Data loading ----------
 def load_and_filter_2025(symbol):
@@ -114,7 +114,7 @@ def add_indicators(df):
     # VWAP cumulative
     df['vwap'] = (df['close'] * df['volume']).cumsum() / df['volume'].cumsum()
 
-    # Safety: ensure needed columns exist
+    # Safety: ensure needed feature cols exist
     for f in ["hour_adx", "adosc", "roc", "obv", "vwap", "volume_sma"]:
         if f not in df.columns:
             df[f] = np.nan
@@ -191,7 +191,7 @@ def walk_forward_predict(m15_df, hourly_df, period='M'):
         model = fit_xgb(X_train, y_train)
         proba.loc[val_idx] = model.predict_proba(df.loc[val_idx, FEATURES])[:, 1]
 
-        # v2 ML gate: prob threshold and hour_adx alignment if available
+        # v2 ML gate: prob threshold and hour_adx momentum alignment
         hour_adx = df.loc[val_idx, 'hour_adx'].fillna(0)
         align_factor = (hour_adx / 40.0).clip(upper=1.0)  # 0..1
         composite = proba.loc[val_idx].fillna(0) * align_factor
@@ -358,6 +358,7 @@ def extract_trade_stats(trades):
 
 def walk_forward_predict_gate(m15, hourly):
     m15_ml = walk_forward_predict(m15, hourly)
+    # Gate requires both strategy signal and ML approval
     m15_ml['entry_signal'] = ((m15_ml['entry_signal'] == 1) & (m15_ml['ml_signal'] == 1)).astype(int)
     return m15_ml
 

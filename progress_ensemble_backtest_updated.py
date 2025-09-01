@@ -11,7 +11,7 @@ from pathlib import Path
 from datetime import datetime
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
-mport os, sys
+import os, sys
 try:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # path to this script file [3]
 except NameError:

@@ -24,10 +24,10 @@ ADX_THRESHOLD_BREAKOUT = 25
 ADX_THRESHOLD_DEFAULT = 20
 
 # Exits (v2 adjustments)
-ATR_SL_MULT = 1.3           # widened from 1.0 to reduce whipsaws
-PROFIT_TARGET = 0.02        # lower target with partial TP for earlier bank
-TRAIL_TRIGGER = 0.015       # delay trailing activation
-PARTIAL_TP_FRACTION = 0.5   # 50% scale-out at target
+ATR_SL_MULT = 1.3
+PROFIT_TARGET = 0.02
+TRAIL_TRIGGER = 0.015
+PARTIAL_TP_FRACTION = 0.5
 
 # Risk & capacity
 MAX_TRADES = 500
@@ -37,17 +37,17 @@ MIN_TRADE_VALUE = 1.0
 MAX_POSITION_FRACTION = 0.2
 BASE_RISK = 0.02
 
-# Holding horizon (v2)
-MAX_HOLD_BARS = 48          # extend hold to let winners run
+# Holding horizon
+MAX_HOLD_BARS = 48
 
 # Costs & execution
-ROUND_TRIP_BPS = 0.002      # 20 bps total slippage+fees round trip
-ADV_PARTICIPATION = 0.02    # ≤2% of bar value traded to respect liquidity
-ENTRY_AT_NEXT_BAR = True    # next-bar execution for realism
+ROUND_TRIP_BPS = 0.002
+ADV_PARTICIPATION = 0.02
+ENTRY_AT_NEXT_BAR = True
 
 # ML gate (v2)
 FEATURES = ["adx","atr","volume_ratio","adosc","hour_adx","volume_sma","macd_hist","vwap","roc","obv"]
-ML_PROBA_THRESHOLD = 0.5    # tightened threshold
+ML_PROBA_THRESHOLD = 0.5
 
 # ---------- Data loading ----------
 def load_and_filter_2025(symbol):
@@ -114,7 +114,7 @@ def add_indicators(df):
     # VWAP cumulative
     df['vwap'] = (df['close'] * df['volume']).cumsum() / df['volume'].cumsum()
 
-    # Safety: ensure needed feature cols exist
+    # Ensure needed columns exist
     for f in ["hour_adx", "adosc", "roc", "obv", "vwap", "volume_sma"]:
         if f not in df.columns:
             df[f] = np.nan
@@ -191,9 +191,9 @@ def walk_forward_predict(m15_df, hourly_df, period='M'):
         model = fit_xgb(X_train, y_train)
         proba.loc[val_idx] = model.predict_proba(df.loc[val_idx, FEATURES])[:, 1]
 
-        # v2 ML gate: prob threshold and hour_adx momentum alignment
+        # v2 ML gate with hour-ADX alignment
         hour_adx = df.loc[val_idx, 'hour_adx'].fillna(0)
-        align_factor = (hour_adx / 40.0).clip(upper=1.0)  # 0..1
+        align_factor = (hour_adx / 40.0).clip(upper=1.0)
         composite = proba.loc[val_idx].fillna(0) * align_factor
         gate.loc[val_idx] = ((proba.loc[val_idx] >= ML_PROBA_THRESHOLD) & (composite >= 0.5)).astype(int)
 
@@ -236,7 +236,7 @@ def backtest_live_like(df, symbol, capital=INITIAL_CAPITAL):
             if pos['trail_active'] and row['chandelier_exit'] > pos['trail_stop']:
                 pos['trail_stop'] = row['chandelier_exit']
 
-            # Partial take-profit
+            # Partial TP
             if (not pos.get('partial_taken', False)) and ret >= PROFIT_TARGET:
                 part_shares = pos['shares'] * PARTIAL_TP_FRACTION
                 sell_val = part_shares * price
@@ -292,7 +292,6 @@ def backtest_live_like(df, symbol, capital=INITIAL_CAPITAL):
             prob = float(row.get('ml_proba', 0.5))
             atr = float(row['atr']) if not np.isnan(row['atr']) else 1.0
             size_val = dynamic_position_sizing(prob, atr, cash)
-            # Liquidity cap
             bar_val = float(row['close']) * float(row['volume'])
             liq_cap = ADV_PARTICIPATION * bar_val
             size_val = min(size_val, liq_cap)
@@ -358,9 +357,50 @@ def extract_trade_stats(trades):
 
 def walk_forward_predict_gate(m15, hourly):
     m15_ml = walk_forward_predict(m15, hourly)
-    # Gate requires both strategy signal and ML approval
     m15_ml['entry_signal'] = ((m15_ml['entry_signal'] == 1) & (m15_ml['ml_signal'] == 1)).astype(int)
     return m15_ml
+
+# ---------- Summary Reporting ----------
+def summarize_and_save(trades_df, stats_df):
+    # Overall totals
+    total_trades = len(trades_df)
+    wins = int((trades_df['pnl'] > 0).sum())
+    losses = int((trades_df['pnl'] <= 0).sum())
+    win_rate = round((wins / total_trades) * 100, 2) if total_trades else 0.0
+    total_pnl = round(trades_df['pnl'].sum(), 2) if total_trades else 0.0
+    avg_pnl = round(trades_df['pnl'].mean(), 2) if total_trades else 0.0
+
+    # By exit reason
+    by_exit = (trades_df.groupby('exit_reason')['pnl']
+                          .agg(['count','sum','mean'])
+                          .rename(columns={'count':'trades','sum':'total_pnl','mean':'avg_pnl'})
+                          .reset_index())
+    by_exit.to_csv('walk_forward_by_exit_v2.csv', index=False)
+
+    # By entry type
+    by_entry = (trades_df.groupby('entry_type')['pnl']
+                           .agg(['count','sum','mean'])
+                           .rename(columns={'count':'trades','sum':'total_pnl','mean':'avg_pnl'})
+                           .reset_index())
+    by_entry.to_csv('walk_forward_by_entry_v2.csv', index=False)
+
+    # Per-symbol stats already in stats_df
+    stats_df.to_csv('walk_forward_stats_v2.csv', index=False)
+
+    # Console print summary
+    print('\n===== Walk-Forward Summary (v2) =====')
+    print(f'Total trades: {total_trades}')
+    print(f'Wins: {wins} | Losses: {losses} | Win rate: {win_rate}%')
+    print(f'Total PnL: {total_pnl} | Avg PnL/trade: {avg_pnl}')
+    print('Top 5 symbols by Total PnL:')
+    if not stats_df.empty and 'Total PnL' in stats_df.columns:
+        print(stats_df.sort_values('Total PnL', ascending=False).head(5))
+    else:
+        print('(no stats)')
+    print('\nBy exit reason (saved to walk_forward_by_exit_v2.csv):')
+    print(by_exit.head())
+    print('\nBy entry type (saved to walk_forward_by_entry_v2.csv):')
+    print(by_entry.head())
 
 def run_walk_forward(symbols):
     all_stats, all_trades = [], []
@@ -389,9 +429,18 @@ def run_walk_forward(symbols):
 
     stats_df = pd.DataFrame(all_stats)
     trades_df = pd.DataFrame(all_trades)
-    logging.info(f"Completed. Symbols processed: {len(stats_df)}; Total trades: {len(trades_df)}")
+
+    # Save primary CSVs
     stats_df.to_csv('walk_forward_stats_v2.csv', index=False)
     trades_df.to_csv('walk_forward_trades_v2.csv', index=False)
+
+    # Print and save summary/breakdowns
+    if not trades_df.empty:
+        summarize_and_save(trades_df, stats_df)
+    else:
+        print("No trades generated; summary skipped.")
+
+    logging.info(f"Completed. Symbols processed: {len(stats_df)}; Total trades: {len(trades_df)}")
     return stats_df, trades_df
 
 if __name__ == '__main__':
@@ -404,4 +453,4 @@ if __name__ == '__main__':
             symbols.append(base)
     logging.info(f"Symbols: {len(symbols)} discovered. Example: {symbols[:5]}")
     stats_df, trades_df = run_walk_forward(symbols)
-    logging.info("Saved walk_forward_stats_v2.csv and walk_forward_trades_v2.csv")
+    logging.info("Saved walk_forward_stats_v2.csv, walk_forward_trades_v2.csv, and breakdown CSVs")

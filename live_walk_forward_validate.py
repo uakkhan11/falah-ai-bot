@@ -25,7 +25,7 @@ ADX_THRESHOLD_DEFAULT = 20
 
 # Exits (v2 adjustments)
 ATR_SL_MULT = 1.3           # was 1.0
-PROFIT_TARGET = 0.02        # was 0.03, now lower target with partial take profit
+PROFIT_TARGET = 0.02        # was 0.03, now partial TP
 TRAIL_TRIGGER = 0.015       # was 0.01
 PARTIAL_TP_FRACTION = 0.5   # 50% scale-out at target
 
@@ -89,7 +89,7 @@ def add_indicators(df):
 
     bb = ta.volatility.BollingerBands(df['close'], window=20, window_dev=2)
     df['bb_upper'] = bb.bollinger_hband()
-    df['bb_lower'] = bb.lbb = bb.bollinger_lband()
+    df['bb_lower'] = bb.bollinger_lband()
 
     high14 = df['high'].rolling(14).max(); low14 = df['low'].rolling(14).min()
     df['wpr'] = (high14 - df['close']) / (high14 - low14) * -100
@@ -193,7 +193,7 @@ def walk_forward_predict(m15_df, hourly_df, period='M'):
 
         # v2 ML gate: prob threshold and hour_adx alignment if available
         hour_adx = df.loc[val_idx, 'hour_adx'].fillna(0)
-        align_factor = (hour_adx / 40.0).clip(upper=1.0)  # 0..1, favor hour momentum
+        align_factor = (hour_adx / 40.0).clip(upper=1.0)  # 0..1
         composite = proba.loc[val_idx].fillna(0) * align_factor
         gate.loc[val_idx] = ((proba.loc[val_idx] >= ML_PROBA_THRESHOLD) & (composite >= 0.5)).astype(int)
 
@@ -238,11 +238,10 @@ def backtest_live_like(df, symbol, capital=INITIAL_CAPITAL):
 
             # Partial take-profit
             if (not pos.get('partial_taken', False)) and ret >= PROFIT_TARGET:
-                # Sell PARTIAL_TP_FRACTION shares now
                 part_shares = pos['shares'] * PARTIAL_TP_FRACTION
                 sell_val = part_shares * price
                 buy_val = part_shares * pos['entry_price']
-                costs = ROUND_TRIP_BPS * (buy_val + sell_val)  # costs on the partial
+                costs = ROUND_TRIP_BPS * (buy_val + sell_val)
                 pnl = sell_val - buy_val - costs
                 cash += sell_val
                 trades.append({
@@ -255,8 +254,7 @@ def backtest_live_like(df, symbol, capital=INITIAL_CAPITAL):
                 })
                 pos['shares'] -= part_shares
                 pos['partial_taken'] = True
-                # tighten trail by lifting to current chandelier (already handled)
-                continue  # evaluate full exit on next bars
+                continue
 
             # Full exit rules
             exit_reason = None
@@ -340,7 +338,6 @@ def prepare_data(symbol):
     m15 = bb_breakout_signal(m15)
     m15 = bb_pullback_signal(m15)
     m15 = combine_signals(m15)
-    # Warmup cut
     m15 = m15.dropna(subset=['ema200']).reset_index(drop=True)
     return daily, hourly, m15
 
@@ -361,7 +358,6 @@ def extract_trade_stats(trades):
 
 def walk_forward_predict_gate(m15, hourly):
     m15_ml = walk_forward_predict(m15, hourly)
-    # Gate: require both strategy signal and ML gate
     m15_ml['entry_signal'] = ((m15_ml['entry_signal'] == 1) & (m15_ml['ml_signal'] == 1)).astype(int)
     return m15_ml
 

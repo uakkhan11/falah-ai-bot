@@ -1,289 +1,318 @@
-import os, json, warnings
-import numpy as np, pandas as pd
-import ta, joblib
-warnings.filterwarnings("ignore")
+#!/usr/bin/env python3
+import os
+import csv
+import json
+import math
+import time
+import joblib
+import numpy as np
+import pandas as pd
+from datetime import datetime, timedelta
 
-BASE_DIR = "/root/falah-ai-bot"
-DATA_PATHS = {
-    "15minute": os.path.join(BASE_DIR, "scalping_data"),
-    "1hour": os.path.join(BASE_DIR, "intraday_swing_data"),
-    "daily": os.path.join(BASE_DIR, "swing_data"),
+# -------------------------
+# Paths & config
+# -------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+OUT_DIR = BASE_DIR
+MODELS_DIR = os.path.join(BASE_DIR, "models")
+
+# Output files
+RULES_TRADES_CSV = os.path.join(OUT_DIR, "results_rules_15m.csv")
+ML_TRADES_CSV = os.path.join(OUT_DIR, "results_ml_1h.csv")
+SUMMARY_CSV = os.path.join(OUT_DIR, "summary_compare.csv")
+
+# Universe and params
+RULES_TIMEFRAME = "15m"
+ML_TIMEFRAME = "1h"
+
+# Rules strategy parameters (example)
+RULES_CONF = {
+    "profit_target": 0.02,   # 2%
+    "stop_loss": 0.01,       # 1%
+    "max_hold_bars": 24*4,   # e.g., 4 days worth of 15m bars (~96 bars)
 }
-YEAR_FILTER = 2025
 
-# --- Rules strategy parameters (15m baseline) ---
-RULES = {
-    "RSI_OVERBOUGHT": 70,
-    "ADX_MIN": 20,
-    "VOLUME_MULT": 1.5,
-    "SMA_PERIOD": 20,
-    "PROFIT_TARGET": 0.025,
-    "STOP_LOSS": 0.015,
-    "MAX_HOLD_BARS": 25,
-}
-
-# --- ML strategy parameters (1h) ---
+# ML configuration (must match training artifacts/features)
 ML_CONF = {
-    "model_path": os.path.join(BASE_DIR, "models", "best_rf_1h.pkl"),
-    "scaler_path": os.path.join(BASE_DIR, "models", "best_scaler_1h.pkl"),
-    "feature_columns": ["returns", "rsi", "bb_position", "bb_width", "adx", "momentum_5", "roc_5"],
+    "model_path": os.path.join(MODELS_DIR, "best_rf_1h.pkl"),
+    "scaler_path": os.path.join(MODELS_DIR, "best_scaler_1h.pkl"),
+    "feature_columns": ["ret", "rsi", "sma"],
     "proba_threshold": 0.65,
-    "profit_target": 0.035,
-    "stop_loss": 0.020,
-    "max_hold_bars": 12,
+    "profit_target": 0.03,   # can be tuned
+    "stop_loss": 0.015,
+    "max_hold_bars": 48,     # e.g., 2 days on 1h bars
 }
 
-def list_symbols(source="daily", limit=None):
-    path = DATA_PATHS[source]
-    files = [f for f in os.listdir(path) if f.endswith(".csv")] if os.path.exists(path) else []
-    syms = sorted([f[:-4] for f in files])
-    return syms if limit is None else syms[:limit]
+# -------------------------
+# Data loading
+# -------------------------
+def list_symbols():
+    # Use a stable set known to have data; extend as needed
+    return sorted(list(set([
+        "KANSAINER","BERGEPAINT","RHIM","WABAG","CONCORDBIO",
+        "AXISCADES-BE","LUMAXTECH","POWERINDIA","SHARDACROP","GALLANTT",
+        "KIOCL","SYRMA","TARIL","TRANSRAILL","WEBELSOLAR","FORCEMOT",
+        "POKARNA","THYROCARE","YATHARTH","SKIPPER","PRIVISCL","SHARDAMOTR",
+        "GABRIEL","PTCIL","NETWEB","LLOYDSENGG","BANCOINDIA","SHANTIGEAR",
+        "TDPOWERSYS","CEWATER","WAAREEENER","SUNFLAG","WOCKPHARMA",
+        "EMAMILTD","AVANTIFEED","LUXIND","FINPIPE","RAINBOW",
+        "BHARTIARTL","HINDALCO","TORNTPHARM","ULTRACEMCO","OIL","JUBLFOOD","VOLTAS"
+    ])))
 
-def load_df(symbol, source):
-    p = os.path.join(DATA_PATHS[source], f"{symbol}.csv")
-    if not os.path.exists(p): return None
-    df = pd.read_csv(p)
-    if "date" not in df.columns: return None
-    df["date"] = pd.to_datetime(df["date"])
-    df = df[df["date"].dt.year == YEAR_FILTER].sort_values("date").reset_index(drop=True)
+def load_ohlcv(symbol: str, timeframe: str) -> pd.DataFrame:
+    pq_path = os.path.join(DATA_DIR, timeframe, f"{symbol}.parquet")
+    csv_path = os.path.join(DATA_DIR, timeframe, f"{symbol}.csv")
+    if os.path.exists(pq_path):
+        df = pd.read_parquet(pq_path)
+    elif os.path.exists(csv_path):
+        df = pd.read_csv(csv_path, parse_dates=["timestamp"])
+        df = df.set_index("timestamp")
+    else:
+        raise FileNotFoundError(f"No data for {symbol} {timeframe}")
+    df.columns = [c.lower() for c in df.columns]
+    needed = ["open","high","low","close","volume"]
+    missing = [c for c in needed if c not in df.columns]
+    if missing:
+        raise ValueError(f"{symbol} {timeframe}: missing {missing}")
+    df = df[needed].copy()
+    df = df[~df.index.duplicated(keep="last")].sort_index()
+    df = df.replace([np.inf,-np.inf], np.nan).dropna()
     return df
 
-# -------- Indicators & Signals (shared with live) --------
-def add_base_indicators(df, sma_period=20, rsi_p=14, adx_p=14):
+# -------------------------
+# Feature engineering (align with trainer)
+# -------------------------
+def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    out["rsi"] = ta.momentum.rsi(out["close"], window=rsi_p)
-    out["adx"] = ta.trend.adx(out["high"], out["low"], out["close"], window=adx_p)
-    out["volume_sma"] = out["volume"].rolling(sma_period).mean()
-    out["volume_ratio"] = out["volume"] / out["volume_sma"]
-    out["sma_20"] = out["close"].rolling(sma_period).mean()
-    out["high_20"] = out["high"].rolling(sma_period).max()
-    out = out.fillna(method="ffill").fillna(method="bfill")
+    out["ret"] = out["close"].pct_change().fillna(0.0)
+    delta = out["close"].diff()
+    up = np.where(delta > 0, delta, 0.0)
+    down = np.where(delta < 0, -delta, 0.0)
+    roll = 14
+    avg_gain = pd.Series(up, index=out.index).rolling(roll).mean().fillna(0.0)
+    avg_loss = pd.Series(down, index=out.index).rolling(roll).mean().fillna(1e-9)
+    rs = avg_gain / avg_loss
+    out["rsi"] = 100 - (100 / (1 + rs))
+    out["rsi"] = out["rsi"].fillna(50.0)
+    out["sma"] = out["close"].rolling(20).mean().bfill()
     return out
 
-def four_of_six_signals(df, params):
-    p = params
-    out = add_base_indicators(df, sma_period=p["SMA_PERIOD"])
-    out["signal"] = 0
-    start = max(50, len(out)//4)
-    for i in range(start, len(out)):
-        cur, prev = out.iloc[i], out.iloc[i-1]
-        conds = [
-            cur["close"] > cur["high_20"],
-            cur["volume_ratio"] > p["VOLUME_MULT"],
-            cur["adx"] > p["ADX_MIN"],
-            cur["rsi"] < p["RSI_OVERBOUGHT"],
-            cur["close"] > cur["sma_20"],
-            cur["rsi"] > prev["rsi"],
-        ]
-        if sum(conds) >= 4:
-            out.iat[i, out.columns.get_loc("signal")] = 1
-    return out
+# -------------------------
+# Execution helpers
+# -------------------------
+def exit_trade(entry_price, highs, lows, profit_target, stop_loss, max_hold_bars):
+    """
+    Simulate an entry at t, then iterate forward to find exit by TP, SL, or time.
+    highs/lows are forward arrays starting at the first bar after entry.
+    Returns (exit_price, bars_held, exit_reason).
+    """
+    tp = entry_price * (1 + profit_target)
+    sl = entry_price * (1 - stop_loss)
+    bars = 0
+    for h, l in zip(highs, lows):
+        bars += 1
+        if l <= sl:
+            return sl, bars, "SL"
+        if h >= tp:
+            return tp, bars, "TP"
+        if bars >= max_hold_bars:
+            return highs.index[bars-1], bars, "TIME"  # overwrite below with close
+    # Fallback on last bar close (shouldn’t hit if max_hold works)
+    return highs.index[-1], bars, "TIME"
 
-def add_ml_features(df, lookback=20):
-    f = df.copy()
-    f["returns"] = f["close"].pct_change().fillna(0)
-    f["rsi"] = ta.momentum.rsi(f["close"], window=14)
-    bb_u = ta.volatility.bollinger_hband(f["close"])
-    bb_l = ta.volatility.bollinger_lband(f["close"])
-    bb_m = ta.volatility.bollinger_mavg(f["close"])
-    f["bb_position"] = (f["close"] - bb_l) / (bb_u - bb_l)
-    f["bb_width"] = (bb_u - bb_l) / bb_m
-    f["adx"] = ta.trend.adx(f["high"], f["low"], f["close"], window=14)
-    for period in [12]:
-        f[f"momentum_{period}"] = f["close"] / f["close"].shift(period)
-        f[f"roc_{period}"] = ((f["close"] - f["close"].shift(period))/f["close"].shift(period))*100
-    # clean
-    num_cols = f.select_dtypes(include=[np.number]).columns
-    for c in num_cols:
-        f[c] = f[c].replace([np.inf, -np.inf], np.nan)
-        f[c] = f[c].fillna(method="ffill").fillna(method="bfill")
-        f[c] = f[c].fillna(f[c].median())
-    return f
-
-def ml_proba_series(df, model, scaler, feature_columns, proba_threshold):
-    feats = add_ml_features(df)
-    sig = np.zeros(len(feats), dtype=int)
-    start = 25
-    for i in range(start, len(feats)):
-        x = feats.iloc[i][feature_columns].values.reshape(1, -1)
-        if np.isnan(x).any() or np.isinf(x).any(): continue
-        x_scaled = scaler.transform(x)
-        proba = model.predict_proba(x_scaled)[13]
-        sig[i] = 1 if proba >= proba_threshold else 0
-    return sig
-
-# -------- Backtest Engines --------
-def backtest_rules_15m(symbol):
-    df15 = load_df(symbol, "15minute")
-    if df15 is None or len(df15) < 200: return None, None
-    dfd = load_df(symbol, "daily")
-    if dfd is None or len(dfd) < 50: return None, None
-    dfd = add_base_indicators(dfd, sma_period=RULES["SMA_PERIOD"])
-    df15 = four_of_six_signals(df15, RULES)
-    # simple daily trend filter: close above SMA
-    daily_up = dfd.iloc[-1]["close"] > dfd.iloc[-1]["sma_20"]
-
-    cash = 100000
-    positions = {}
-    trades = []
-    for i in range(1, len(df15)):
-        cur = df15.iloc[i]
-        # exits
-        to_close = []
-        for pid, pos in positions.items():
-            ret = (cur["close"] - pos["entry_price"]) / pos["entry_price"]
-            bars = i - pos["entry_bar"]
-            exit_reason = None
-            if ret >= RULES["PROFIT_TARGET"]:
-                exit_reason = "Profit Target"
-            elif ret <= -RULES["STOP_LOSS"]:
-                exit_reason = "Stop Loss"
-            elif bars >= RULES["MAX_HOLD_BARS"]:
-                exit_reason = "Time Exit"
-            if exit_reason:
-                shares = pos["shares"]
-                exit_price = cur["close"] * 0.9995
-                pnl = (exit_price - pos["entry_price"]) * shares
-                commission = (pos["entry_price"] + exit_price) * shares * 0.0005
-                net = pnl - commission
-                trades.append({
-                    "symbol": symbol, "entry_date": pos["entry_date"], "exit_date": cur["date"],
-                    "entry_price": pos["entry_price"], "exit_price": exit_price, "shares": shares,
-                    "pnl": net, "return_pct": ret, "exit_reason": exit_reason, "bars_held": bars
-                })
-                cash += pos["entry_value"] + net
-                to_close.append(pid)
-        for pid in to_close: del positions[pid]
-
-        # entries
-        if cur.get("signal", 0) == 1 and daily_up and len(positions) < 3 and cash > 5000:
-            position_value = cash * 0.02
-            entry_price = cur["close"] * 1.0005
-            shares = position_value / entry_price
-            if shares > 0:
-                positions[len(positions)] = {
-                    "entry_date": cur["date"], "entry_price": entry_price,
-                    "shares": shares, "entry_bar": i, "entry_value": position_value
-                }
-                cash -= position_value
-    return pd.DataFrame(trades), {"cash_final": cash}
-
-def backtest_ml_1h(symbol, bundle):
-    df1h = load_df(symbol, "1hour")
-    if df1h is None or len(df1h) < 100: return None, None
-    sig = ml_proba_series(df1h, bundle["model"], bundle["scaler"], bundle["feature_columns"], bundle["proba_threshold"])
-    cash = 100000
-    pos = {}
-    trades = []
-    for i in range(1, len(df1h)):
-        cur = df1h.iloc[i]
-        # exit
-        to_close = []
-        for pid, p in pos.items():
-            ret = (cur["close"] - p["entry_price"]) / p["entry_price"]
-            bars = i - p["entry_bar"]
-            exit_reason = None
-            if ret >= ML_CONF["profit_target"]:
-                exit_reason = "Profit Target"
-            elif ret <= -ML_CONF["stop_loss"]:
-                exit_reason = "Stop Loss"
-            elif bars >= ML_CONF["max_hold_bars"]:
-                exit_reason = "Time Exit"
-            if exit_reason:
-                shares = p["shares"]
-                exit_price = cur["close"] * 0.999
-                pnl = (exit_price - p["entry_price"]) * shares
-                commission = (p["entry_price"] + exit_price) * shares * 0.0003
-                net = pnl - commission
-                trades.append({
-                    "symbol": symbol, "entry_date": p["entry_date"], "exit_date": cur["date"],
-                    "entry_price": p["entry_price"], "exit_price": exit_price, "shares": shares,
-                    "pnl": net, "return_pct": ret, "exit_reason": exit_reason, "bars_held": bars
-                })
-                cash += p["entry_value"] + net
-                to_close.append(pid)
-        for pid in to_close: del pos[pid]
-        # entry
-        if len(pos)==0 and cash>10000 and sig[i]==1:
-            position_value = cash * 0.02
-            entry_price = cur["close"] * 1.001
-            shares = position_value / entry_price
-            if shares>0:
-                pos = {
-                    "entry_date": cur["date"], "entry_price": entry_price,
-                    "shares": shares, "entry_bar": i, "entry_value": position_value
-                }
-                cash -= position_value
-    return pd.DataFrame(trades), {"cash_final": cash}
-
-def summarize(trades_df, label):
-    if trades_df is None or len(trades_df)==0:
-        return {"label": label, "total_trades": 0, "total_pnl": 0.0, "win_rate": 0.0, "profit_factor": 0.0}
-    wins = trades_df[trades_df["pnl"]>0]
-    losses = trades_df[trades_df["pnl"]<=0]
-    pf = abs(wins["pnl"].sum()/losses["pnl"].sum()) if len(losses)>0 else np.inf
-    wr = len(wins)/len(trades_df)*100
+def summarize_trades(trades_df: pd.DataFrame) -> dict:
+    if trades_df.empty:
+        return {"total_trades":0,"total_pnl":0.0,"win_rate":0.0,"profit_factor":0.0,"avg_pnl_per_trade":0.0,
+                "best_trade":0.0,"worst_trade":0.0}
+    total_trades = len(trades_df)
+    total_pnl = trades_df["pnl"].sum()
+    wins = (trades_df["pnl"] > 0).sum()
+    losses = (trades_df["pnl"] < 0).sum()
+    win_rate = 100.0 * wins / total_trades if total_trades else 0.0
+    gross_profit = trades_df.loc[trades_df["pnl"] > 0, "pnl"].sum()
+    gross_loss = -trades_df.loc[trades_df["pnl"] < 0, "pnl"].sum()
+    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (gross_profit if gross_profit > 0 else 0.0)
+    avg_pnl = total_pnl / total_trades if total_trades else 0.0
+    best_trade = trades_df["pnl"].max() if total_trades else 0.0
+    worst_trade = trades_df["pnl"].min() if total_trades else 0.0
     return {
-        "label": label,
-        "total_trades": int(len(trades_df)),
-        "total_pnl": float(trades_df["pnl"].sum()),
-        "win_rate": float(wr),
-        "profit_factor": float(pf),
-        "avg_pnl_per_trade": float(trades_df["pnl"].mean()),
-        "best_trade": float(trades_df["pnl"].max()),
-        "worst_trade": float(trades_df["pnl"].min()),
+        "total_trades": total_trades,
+        "total_pnl": total_pnl,
+        "win_rate": win_rate,
+        "profit_factor": profit_factor,
+        "avg_pnl_per_trade": avg_pnl,
+        "best_trade": best_trade,
+        "worst_trade": worst_trade,
     }
 
+# -------------------------
+# Rules 15m backtest
+# -------------------------
+def backtest_rules_15m(symbols):
+    rows = []
+    for sym in symbols:
+        try:
+            df = load_ohlcv(sym, RULES_TIMEFRAME)
+        except Exception as e:
+            print(f"[rules warn] {sym}: {e}")
+            continue
+        # Example entry rule: simple momentum crossover proxy
+        f = compute_features(df)
+        fast = f["close"].rolling(10).mean()
+        slow = f["close"].rolling(30).mean()
+        signal = (fast > slow) & (fast.shift(1) <= slow.shift(1))
+        entries = np.where(signal.values)
+
+        for i in entries:
+            if i+1 >= len(df):
+                continue
+            entry_time = df.index[i]
+            entry_price = float(df["close"].iloc[i])
+            highs = df["high"].iloc[i+1:]
+            lows = df["low"].iloc[i+1:]
+            # Determine exit
+            tp_price = entry_price * (1 + RULES_CONF["profit_target"])
+            sl_price = entry_price * (1 - RULES_CONF["stop_loss"])
+            exit_price = entry_price  # default
+            exit_reason = "TIME"
+            bars_held = 0
+            for j, (h, l) in enumerate(zip(highs.values, lows.values), start=1):
+                if l <= sl_price:
+                    exit_price = sl_price
+                    exit_reason = "SL"
+                    bars_held = j
+                    break
+                if h >= tp_price:
+                    exit_price = tp_price
+                    exit_reason = "TP"
+                    bars_held = j
+                    break
+                if j >= RULES_CONF["max_hold_bars"]:
+                    # time exit at close of the last considered bar
+                    exit_price = float(df["close"].iloc[i+j])
+                    exit_reason = "TIME"
+                    bars_held = j
+                    break
+            pnl = exit_price - entry_price
+            rows.append([sym, entry_time, entry_price, exit_price, pnl, bars_held, exit_reason])
+
+    cols = ["symbol","entry_time","entry_price","exit_price","pnl","bars_held","exit_reason"]
+    trades = pd.DataFrame(rows, columns=cols)
+    trades.to_csv(RULES_TRADES_CSV, index=False)
+    return trades
+
+# -------------------------
+# ML 1h backtest
+# -------------------------
+def load_ml_artifacts():
+    if not (os.path.exists(ML_CONF["model_path"]) and os.path.exists(ML_CONF["scaler_path"])):
+        print("No ML trades or ML not loaded")
+        return None, None
+    model = joblib.load(ML_CONF["model_path"])
+    scaler = joblib.load(ML_CONF["scaler_path"])
+    print("Loaded ML model & scaler")
+    return model, scaler
+
+def backtest_ml_1h(symbols):
+    model, scaler = load_ml_artifacts()
+    if model is None or scaler is None:
+        return pd.DataFrame(columns=["symbol","entry_time","entry_price","exit_price","pnl","bars_held","exit_reason"])
+
+    rows = []
+    for sym in symbols:
+        try:
+            df = load_ohlcv(sym, ML_TIMEFRAME)
+        except Exception as e:
+            print(f"[ml warn] {sym}: {e}")
+            continue
+        f = compute_features(df)
+        X = f[ML_CONF["feature_columns"]].copy()
+        mask = X.notna().all(axis=1)
+        if mask.sum() == 0:
+            continue
+        X = X[mask]
+        df_masked = f.loc[X.index]  # aligned
+        Xs = scaler.transform(X.values)
+        proba = model.predict_proba(Xs)[:, 1]
+        entries = np.where(proba >= ML_CONF["proba_threshold"])
+
+        for i in entries:
+            # Entry at masked index position i
+            entry_pos = df_masked.index[i]
+            entry_loc = int(df.index.searchsorted(entry_pos))
+            if entry_loc >= len(df)-1:
+                continue
+            entry_time = df.index[entry_loc]
+            entry_price = float(df["close"].iloc[entry_loc])
+            highs = df["high"].iloc[entry_loc+1:]
+            lows = df["low"].iloc[entry_loc+1:]
+
+            tp_price = entry_price * (1 + ML_CONF["profit_target"])
+            sl_price = entry_price * (1 - ML_CONF["stop_loss"])
+
+            exit_price = entry_price
+            exit_reason = "TIME"
+            bars_held = 0
+            for j, (h, l) in enumerate(zip(highs.values, lows.values), start=1):
+                if l <= sl_price:
+                    exit_price = sl_price
+                    exit_reason = "SL"
+                    bars_held = j
+                    break
+                if h >= tp_price:
+                    exit_price = tp_price
+                    exit_reason = "TP"
+                    bars_held = j
+                    break
+                if j >= ML_CONF["max_hold_bars"]:
+                    exit_price = float(df["close"].iloc[entry_loc + j])
+                    exit_reason = "TIME"
+                    bars_held = j
+                    break
+            pnl = exit_price - entry_price
+            rows.append([sym, entry_time, entry_price, exit_price, pnl, bars_held, exit_reason])
+
+    cols = ["symbol","entry_time","entry_price","exit_price","pnl","bars_held","exit_reason"]
+    trades = pd.DataFrame(rows, columns=cols)
+    trades.to_csv(ML_TRADES_CSV, index=False)
+    return trades
+
+# -------------------------
+# Aggregate summary
+# -------------------------
+def write_summary(rules_trades: pd.DataFrame, ml_trades: pd.DataFrame):
+    rows = []
+    # RULES
+    rsum = summarize_trades(rules_trades)
+    rows.append([
+        "RULES_15M",
+        rsum["total_trades"], rsum["total_pnl"], rsum["win_rate"], rsum["profit_factor"],
+        rsum["avg_pnl_per_trade"], rsum["best_trade"], rsum["worst_trade"]
+    ])
+    # ML
+    msum = summarize_trades(ml_trades)
+    rows.append([
+        "ML_1H",
+        msum["total_trades"], msum["total_pnl"], msum["win_rate"], msum["profit_factor"],
+        msum["avg_pnl_per_trade"], msum["best_trade"], msum["worst_trade"]
+    ])
+    cols = ["label","total_trades","total_pnl","win_rate","profit_factor",
+            "avg_pnl_per_trade","best_trade","worst_trade"]
+    pd.DataFrame(rows, columns=cols).to_csv(SUMMARY_CSV, index=False)
+    print(f"✅ Completed. Files written:\n - {os.path.basename(RULES_TRADES_CSV)} (trades)\n - {os.path.basename(ML_TRADES_CSV)} (ML trades)\n - {os.path.basename(SUMMARY_CSV)} (aggregate metrics)")
+
+# -------------------------
+# Main
+# -------------------------
+def main():
+    symbols = list_symbols()
+    # Backtest rules (15m)
+    rules_trades = backtest_rules_15m(symbols)
+    # Backtest ML (1h)
+    ml_trades = backtest_ml_1h(symbols)
+    # Summarize
+    write_summary(rules_trades, ml_trades)
+
 if __name__ == "__main__":
-    print("🚀 Unified Backtest: 15m Rules vs 1h ML")
-
-    symbols = list_symbols("daily")  # master list from daily directory
-    print(f"Symbols discovered: {len(symbols)}")
-
-    # load ML artifacts if present
-    ml_bundle = None
-    if os.path.exists(ML_CONF["model_path"]) and os.path.exists(ML_CONF["scaler_path"]):
-        ml_bundle = {
-            "model": joblib.load(ML_CONF["model_path"]),
-            "scaler": joblib.load(ML_CONF["scaler_path"]),
-            "feature_columns": ML_CONF["feature_columns"],
-            "proba_threshold": ML_CONF["proba_threshold"],
-        }
-        print("Loaded ML model & scaler")
-
-    results_rules = []
-    results_ml = []
-
-    for i, sym in enumerate(symbols, 1):
-        print(f"[{i}/{len(symbols)}] {sym}")
-        # Rules 15m
-        tr15, meta15 = backtest_rules_15m(sym)
-        if tr15 is not None and len(tr15)>0:
-            tr15["strategy"] = "RULES_15M"
-            results_rules.append(tr15)
-        # ML 1h
-        if ml_bundle:
-            trml, metaml = backtest_ml_1h(sym, ml_bundle)
-            if trml is not None and len(trml)>0:
-                trml["strategy"] = "ML_1H"
-                results_ml.append(trml)
-
-    df_rules = pd.concat(results_rules, ignore_index=True) if results_rules else pd.DataFrame()
-    df_ml = pd.concat(results_ml, ignore_index=True) if results_ml else pd.DataFrame()
-
-    # Save detailed trades
-    if len(df_rules)>0:
-        df_rules.to_csv("results_rules_15m.csv", index=False)
-    if len(df_ml)>0:
-        df_ml.to_csv("results_ml_1h.csv", index=False)
-
-    # Summaries
-    sum_rules = summarize(df_rules, "RULES_15M")
-    sum_ml = summarize(df_ml, "ML_1H") if len(df_ml)>0 else summarize(None,"ML_1H")
-    summary_df = pd.DataFrame([sum_rules, sum_ml])
-    summary_df.to_csv("summary_compare.csv", index=False)
-
-    print("\n✅ Completed. Files written:")
-    print(" - results_rules_15m.csv (trades)") if len(df_rules)>0 else print(" - No RULES trades")
-    print(" - results_ml_1h.csv (trades)") if len(df_ml)>0 else print(" - No ML trades or ML not loaded")
-    print(" - summary_compare.csv (aggregate metrics)")
+    main()

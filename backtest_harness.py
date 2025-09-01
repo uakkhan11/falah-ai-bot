@@ -38,10 +38,10 @@ ML_CONF = {
     "model_path": os.path.join(MODELS_DIR, "best_rf_1h.pkl"),
     "scaler_path": os.path.join(MODELS_DIR, "best_scaler_1h.pkl"),
     "feature_columns": ["ret", "rsi", "sma"],
-    "proba_threshold": 0.65,
-    "profit_target": 0.03,   # can be tuned
-    "stop_loss": 0.015,
-    "max_hold_bars": 48,     # e.g., 2 days on 1h bars
+    "proba_threshold": 0.7,
+    "profit_target": 0.04,   # can be tuned
+    "stop_loss": 0.01,
+    "max_hold_bars": 36,     # e.g., 2 days on 1h bars
 }
 
 # -------------------------

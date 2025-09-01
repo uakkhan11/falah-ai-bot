@@ -28,7 +28,7 @@ SYMBOL_WHITELIST = set([])  # e.g., {"INFIBEAM","HINDCOPPER","TDPOWERSYS"}
 SYMBOL_BLACKLIST = set(["LLOYDSENGG","SAGILITY","WELSPUNLIV"])
 
 # Entries and filters (loosened)
-VOLUME_MULT_BREAKOUT = 2.0
+VOLUME_MULT_BREAKOUT = 1.5
 ADX_THRESHOLD_BREAKOUT = 25
 ADX_THRESHOLD_DEFAULT = 20
 HOURLY_ADX_MIN = 22     # was 25
@@ -168,8 +168,9 @@ def trend_breakout_signal(df, daily_df, hourly_df):
     # 15m breakout with volume & weekly context
     cond_don = df['close'] > df['donchian_high'].shift(1)
     cond_vol = df['volume'] > VOLUME_MULT_BREAKOUT * df['vol_sma20']
-    cond_wk = df['close'] > df['weekly_donchian_high'].shift(1)
-    brk = cond_don & cond_vol & cond_wk
+    # cond_wk = df['close'] > df['weekly_donchian_high'].shift(1)
+    # brk = cond_don & cond_vol & cond_wk
+    brk = cond_don & cond_vol
 
     sig = (brk & daily_gate & hourly_gate).astype(int)
     return sig
@@ -465,7 +466,8 @@ def extract_trade_stats(trades):
 
 def walk_forward_predict_gate(m15, hourly):
     m15_ml = walk_forward_predict(m15, hourly)
-    m15_ml['entry_signal'] = ((m15_ml['entry_signal'] == 1) & (m15_ml['ml_signal'] == 1)).astype(int)
+    # m15_ml['entry_signal'] = ((m15_ml['entry_signal'] == 1) & (m15_ml['ml_signal'] == 1)).astype(int)
+    m15_ml['entry_signal'] = (m15_ml['entry_signal'] == 1).astype(int)
     return m15_ml
 
 # ---------- Summary Reporting ----------

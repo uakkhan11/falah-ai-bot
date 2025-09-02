@@ -275,7 +275,7 @@ class LiveLikeBacktester:
         if hasattr(bar_dt, "tz_localize"):
         # If tz-aware, strip tz to keep clock time
         try:
-        bar_dt = bar_dt.tz_localize(None)
+            bar_dt = bar_dt.tz_localize(None)
         except Exception:
         # If already naive, ignore
         pass

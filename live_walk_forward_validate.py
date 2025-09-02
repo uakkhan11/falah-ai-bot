@@ -274,7 +274,7 @@ class LiveLikeBacktester:
         try:
             # Get naive local time; if timezone-aware, drop tz
             if hasattr(t, 'tz_convert'):
-            bar_dt = t.tz_localize(None) # convert to naive keeping clock time
+                bar_dt = t.tz_localize(None) # convert to naive keeping clock time
             else:
             bar_dt = pd.Timestamp(t)
             except Exception:

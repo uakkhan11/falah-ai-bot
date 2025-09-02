@@ -97,28 +97,7 @@ def discover_symbols():
 
 
 
-def load_frames(symbol):
-    import glob, os
-
-    def pick_one(folder):
-        hits = glob.glob(os.path.join(folder, f"{symbol}*.csv"))
-        # Debug visibility
-        if not hits:
-            print(f"[load_frames] {symbol}: no match in {folder}")
-            return None
-        if len(hits) > 1:
-            print(f"[load_frames] {symbol}: multiple matches in {folder}, picking first: {os.path.basename(hits)}")
-        return hits  # return a single string path
-
-    p15  = pick_one(DATA_PATHS['15minute'])
-    p1h  = pick_one(DATA_PATHS['1hour'])
-    pdly = pick_one(DATA_PATHS['daily'])
-
-    if not (p15 and p1h and pdly):
-        print(f"[load_frames] Missing file(s) for {symbol}: 15m={bool(p15)} 1h={bool(p1h)} dly={bool(pdly)}")
-        return None
-
-    return read_ohlcv_csv(p15), read_ohlcv_csv(p1h), read_ohlcv_csv(pdly)
+def load_frames(symbol):\n import glob, os\n\n def pick_one(folder):\n hits = glob.glob(os.path.join(folder, f"{symbol}*.csv"))\n if not hits:\n print(f"[load_frames v2] {symbol}: no match in {folder}")\n return None\n if len(hits) > 1:\n print(f"[load_frames v2] {symbol}: multiple matches in {folder}, picking {os.path.basename(hits)}")\n return hits\n\n print(f"[load_frames v2] selecting paths for {symbol}")\n p15 = pick_one(DATA_PATHS['15minute'])\n p1h = pick_one(DATA_PATHS['1hour'])\n pdly = pick_one(DATA_PATHS['daily'])\n\n if not (p15 and p1h and pdly):\n print(f"[load_frames v2] Missing file(s) for {symbol}: 15m={bool(p15)} 1h={bool(p1h)} dly={bool(pdly)}")\n return None\n\n return read_ohlcv_csv(p15), read_ohlcv_csv(p1h), read_ohlcv_csv(pdly)
 
 
 # 3) Indicators and features

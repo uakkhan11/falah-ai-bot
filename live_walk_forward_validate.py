@@ -69,9 +69,11 @@ def discover_symbols():
     if not files_15:
         print("[discover_symbols] No 15m files found in", DATA_PATHS['15minute'])
         return []
-    roots = [os.path.splitext(os.path.basename(p)) for p in files_15]  # string root, not tuple
-    symbols = [r.split('_') for r in roots]  # if names like RELIANCE_15m.csv
-    # deduplicate while preserving order
+    # Get root filename (string) without extension
+    roots = [os.path.splitext(os.path.basename(p)) for p in files_15]
+    # If your naming is like RELIANCE_15m.csv, take the token before the first underscore; otherwise keep the whole root
+    symbols = [r.split('_') for r in roots]
+    # Deduplicate while preserving order
     symbols = list(dict.fromkeys(symbols))
     print(f"[discover_symbols] Found {len(symbols)} symbols, sample: {symbols[:10]}")
     return symbols

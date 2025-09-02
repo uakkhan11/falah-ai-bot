@@ -270,27 +270,53 @@ class LiveLikeBacktester:
 # 7) Reporting: indicator attribution, combos, ablation
 def build_reports(trades_path, out_dir):
     df = pd.read_csv(trades_path, parse_dates=['time'])
-    exit_rows = df[df['reason'].isin(['stop','target','eod'])].copy()
+
+    # Ensure required columns exist
+    if df.empty:
+        # Write empty reports and return
+        for name in ["indicator_report.csv","combo_report.csv","ablation_report.csv"]:
+            pd.DataFrame([]).to_csv(os.path.join(out_dir, name), index=False)
+        return
+
+    # Compute trade_id BEFORE any filtering: each 'signal' increments per symbol
+    df = df.sort_values(['symbol','time']).reset_index(drop=True)
+    df['is_entry'] = (df['reason'] == 'signal').astype(int)
+    df['trade_id'] = df.groupby('symbol')['is_entry'].cumsum()
+    # All rows prior to first signal get trade_id 0; mark those as NaN to avoid accidental merges
+    df.loc[df['trade_id'] == 0, 'trade_id'] = np.nan
+
     gate_cols = [c for c in df.columns if c.startswith('gate_')]
 
-    # trade_id per symbol
-    df['trade_id'] = df.groupby('symbol')['reason'].apply(lambda x: (x=='signal').cumsum())
-    entries = df[df['reason']=='signal'][['symbol','trade_id'] + gate_cols]
-    trades = exit_rows.merge(entries, on=['symbol','trade_id'], how='left')
+    # Entries table: only rows where reason == 'signal' and trade_id not null
+    entries = df[df['reason'] == 'signal'][['symbol','trade_id'] + gate_cols].copy()
 
+    # Exits table: rows that close trades; keep trade_id and symbol
+    exits = df[df['reason'].isin(['stop','target','eod'])].copy()
+
+    if exits.empty:
+        for name in ["indicator_report.csv","combo_report.csv","ablation_report.csv"]:
+            pd.DataFrame([]).to_csv(os.path.join(out_dir, name), index=False)
+        return
+
+    # Merge gates from entry into the corresponding exit using symbol + trade_id
+    trades = exits.merge(entries, on=['symbol','trade_id'], how='left', suffixes=('',''))
+
+    # Label profit and proxy R
     trades['label_profit'] = (trades['pnl'] > 0).astype(int)
     trades['R_proxy'] = trades['pnl'] / (trades['price'].abs() * trades['qty'].replace(0,np.nan))
 
-    def profit_factor(x):
-        pos = x[x>0].sum(); neg = -x[x<0].sum()
-        return pos/neg if neg>0 else np.nan
+    def profit_factor(series):
+        pos = series[series > 0].sum()
+        neg = -series[series < 0].sum()
+        return pos/neg if neg > 0 else np.nan
 
     # Indicator report
     rows = []
-    base_hit = trades['label_profit'].mean()
+    base_hit = trades['label_profit'].mean() if len(trades) else np.nan
     for g in gate_cols:
-        sub = trades[trades[g]==True]
-        if len(sub)==0: continue
+        sub = trades[trades[g] == True]
+        if len(sub) == 0:
+            continue
         rows.append({
             'indicator': g,
             'n_trades': len(sub),
@@ -298,41 +324,43 @@ def build_reports(trades_path, out_dir):
             'profit_factor': profit_factor(sub['pnl']),
             'avg_R_proxy': sub['R_proxy'].mean(),
             'precision': sub['label_profit'].mean(),
-            'recall': (sub['label_profit']==1).mean() * len(sub)/max(1, len(trades[trades['label_profit']==1])),
-            'lift_over_baseline': (sub['label_profit'].mean()/base_hit) if base_hit>0 else np.nan
+            'recall': (sub['label_profit'].sum() / max(1, trades['label_profit'].sum())) if len(trades) else np.nan,
+            'lift_over_baseline': (sub['label_profit'].mean()/base_hit) if base_hit not in [0, np.nan] else np.nan
         })
-    ind_rep = pd.DataFrame(rows).sort_values(['profit_factor','win_rate'], ascending=False)
+    ind_rep = pd.DataFrame(rows).sort_values(['profit_factor','win_rate'], ascending=False) if rows else pd.DataFrame([])
     ind_rep.to_csv(os.path.join(out_dir, "indicator_report.csv"), index=False)
 
     # Combo report (pairs)
     from itertools import combinations
     rows = []
-    for a,b in combinations(gate_cols, 2):
-        sub = trades[(trades[a]==True) & (trades[b]==True)]
-        if len(sub) < 20: continue
+    for a, b in combinations(gate_cols, 2):
+        sub = trades[(trades[a] == True) & (trades[b] == True)]
+        if len(sub) < 20:
+            continue
         rows.append({
             'combo': f"{a}+{b}",
             'n_trades': len(sub),
             'win_rate': sub['label_profit'].mean(),
             'profit_factor': profit_factor(sub['pnl']),
             'avg_R_proxy': sub['R_proxy'].mean(),
-            'lift_over_baseline': (sub['label_profit'].mean()/base_hit) if base_hit>0 else np.nan
+            'lift_over_baseline': (sub['label_profit'].mean()/base_hit) if base_hit not in [0, np.nan] else np.nan
         })
-    combo_rep = pd.DataFrame(rows).sort_values(['profit_factor','win_rate'], ascending=False)
+    combo_rep = pd.DataFrame(rows).sort_values(['profit_factor','win_rate'], ascending=False) if rows else pd.DataFrame([])
     combo_rep.to_csv(os.path.join(out_dir, "combo_report.csv"), index=False)
 
-    # Ablation (drop-one gate)
+    # Ablation report (drop-one gate)
     def metrics(d):
         return pd.Series({
             'n_trades': len(d),
-            'win_rate': d['label_profit'].mean(),
-            'avg_R_proxy': d['R_proxy'].mean(),
-            'profit_factor': profit_factor(d['pnl'])
+            'win_rate': d['label_profit'].mean() if len(d) else np.nan,
+            'avg_R_proxy': d['R_proxy'].mean() if len(d) else np.nan,
+            'profit_factor': profit_factor(d['pnl']) if len(d) else np.nan,
         })
+
     base_m = metrics(trades)
     rows = []
     for g in gate_cols:
-        sub = trades[~(trades[g]==True)]
+        sub = trades[~(trades[g] == True)]
         m = metrics(sub)
         rows.append({
             'drop_gate': g,
@@ -342,12 +370,13 @@ def build_reports(trades_path, out_dir):
             'drop_win_rate': m['win_rate'],
             'drop_profit_factor': m['profit_factor'],
             'drop_avg_R_proxy': m['avg_R_proxy'],
-            'delta_win': m['win_rate'] - base_m['win_rate'],
-            'delta_profit_factor': m['profit_factor'] - base_m['profit_factor'],
-            'delta_avg_R_proxy': m['avg_R_proxy'] - base_m['avg_R_proxy'],
+            'delta_win': (m['win_rate'] - base_m['win_rate']) if pd.notna(base_m['win_rate']) else np.nan,
+            'delta_profit_factor': (m['profit_factor'] - base_m['profit_factor']) if pd.notna(base_m['profit_factor']) else np.nan,
+            'delta_avg_R_proxy': (m['avg_R_proxy'] - base_m['avg_R_proxy']) if pd.notna(base_m['avg_R_proxy']) else np.nan,
         })
-    abl_rep = pd.DataFrame(rows).sort_values(['delta_profit_factor','delta_win'], ascending=False)
+    abl_rep = pd.DataFrame(rows).sort_values(['delta_profit_factor','delta_win'], ascending=False) if rows else pd.DataFrame([])
     abl_rep.to_csv(os.path.join(out_dir, "ablation_report.csv"), index=False)
+
 
 # 8) Batch run over universe and write outputs
 def run_universe(symbols, cash=1_000_000):

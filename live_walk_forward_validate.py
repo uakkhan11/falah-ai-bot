@@ -41,7 +41,7 @@ def read_ohlcv_csv(path):
 
 def discover_symbols():
     files_15 = glob.glob(os.path.join(DATA_PATHS['15minute'], "*.csv"))
-    syms = [os.path.splitext(os.path.basename(p)).split('_') for p in files_15]
+    syms = list({os.path.splitext(os.path.basename(p)) for p in files_15})
     return list(dict.fromkeys(syms))
 
 def load_frames(symbol):

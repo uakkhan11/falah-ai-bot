@@ -274,10 +274,10 @@ class LiveLikeBacktester:
         bar_dt = pd.Timestamp(t)
         if hasattr(bar_dt, "tz_localize"):
         # If tz-aware, strip tz to keep clock time
-        try:
-            bar_dt = bar_dt.tz_localize(None)
-        except Exception:
-        # If already naive, ignore
+            try:
+                bar_dt = bar_dt.tz_localize(None)
+            except Exception:
+            # If already naive, ignore
         pass
         bar_time = bar_dt.to_pydatetime().time()
             allow_opening = (bar_time >= datetime.time(9, 15)) and (bar_time <= datetime.time(10, 45))

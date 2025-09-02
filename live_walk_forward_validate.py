@@ -100,20 +100,19 @@ def discover_symbols():
 def load_frames(symbol):
     import glob, os
 
-    def pick(folder):
+    def pick_one(folder):
         hits = glob.glob(os.path.join(folder, f"{symbol}*.csv"))
-        return hits if hits else None
+        return hits if hits else None  # return a single path string
 
-    p15 = pick(DATA_PATHS['15minute'])
-    p1h = pick(DATA_PATHS['1hour'])
-    pdly = pick(DATA_PATHS['daily'])
+    p15  = pick_one(DATA_PATHS['15minute'])
+    p1h  = pick_one(DATA_PATHS['1hour'])
+    pdly = pick_one(DATA_PATHS['daily'])
 
-    if not p15 or not p1h or not pdly:
+    if not (p15 and p1h and pdly):
         print(f"[load_frames] Missing file(s) for {symbol}: 15m={bool(p15)} 1h={bool(p1h)} dly={bool(pdly)}")
         return None
 
     return read_ohlcv_csv(p15), read_ohlcv_csv(p1h), read_ohlcv_csv(pdly)
-
 
 # 3) Indicators and features
 def ema(x, span): return x.ewm(span=span, adjust=False).mean()

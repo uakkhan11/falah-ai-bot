@@ -278,9 +278,8 @@ class LiveLikeBacktester:
             else:
                 bar_dt = pd.Timestamp(t)
             except Exception:
-                bar_dt = pd.Timestamp(t)
-                
-                bar_time = bar_dt.to_pydatetime().time()
+            bar_dt = pd.Timestamp(t)
+            bar_time = bar_dt.to_pydatetime().time()
         self._last_gates = gates
         # exits
         if self.pos != 0:

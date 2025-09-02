@@ -190,10 +190,10 @@ def signal_gates_row(r):
     gates['pullback_long'] = True # ablation showed it hurts; disable for now
     gates['pullback_short'] = (r['close'] >= r['ema9']*0.99)
     gates['momo_long'] = (r['macd'] > r['macd_sig']) and (r['rsi14'] > 55)
-    gates['momo_short'] = (r['macd'] < r['macd_sig']) and (r['rsi14'] < 50)
+    gates['momo_short'] = (r['macd'] < r['macd_sig']) and (r['rsi14'] < 48)
     gates['orb_long'] = (r['close'] > r['or_hi']*1.001) if not pd.isna(r['or_hi']) else False
     gates['orb_short'] = (r['close'] < r['or_lo']) if not pd.isna(r['or_lo']) else False
-    long_signal = regime_up AND tf1_up AND value_long AND orb_long AND momo_long
+    long_signal = gates['regime_up'] and gates['tf1_up'] and gates['value_long'] and gates['orb_long'] and gates['momo_long']
     short_signal = False
     return bool(long_signal), bool(short_signal), gates
 

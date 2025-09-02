@@ -100,7 +100,7 @@ def discover_symbols():
 def load_frames(symbol):
     import glob, os
     
-        def pick_one(folder):
+    def pick_one(folder):
         hits = glob.glob(os.path.join(folder, f"{symbol}*.csv"))
         if not hits:
             print(f"[load_frames v2] {symbol}: no match in {folder}")

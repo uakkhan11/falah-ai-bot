@@ -25,36 +25,33 @@ SLIP_STD_BP = 1.0            # slippage std dev
 
 # 2) Data loading
 def read_ohlcv_csv(path):
+    import pandas as pd
     df = pd.read_csv(path)
 
-    # Build a case-insensitive map for incoming columns
-    cols_lower = {c.lower(): c for c in df.columns}
+    # Case-insensitive column map
+    cmap = {c.lower(): c for c in df.columns}
 
-    # Accept either 'datetime' or 'date' as timestamp
-    ts_src = cols_lower.get('datetime') or cols_lower.get('date')
-    if not ts_src:
-        raise ValueError(f"No datetime/date column found in {path}")
+    ts_col = cmap.get('datetime') or cmap.get('date')
+    if not ts_col:
+        # fallback to first column
+        ts_col = df.columns
 
-    # Parse timestamp (set utc=True if timestamps are UTC; if they are local naive, set utc=False)
-    df[ts_src] = pd.to_datetime(df[ts_src], utc=True, errors='coerce')
+    # Parse timestamp
+    df[ts_col] = pd.to_datetime(df[ts_col], utc=True, errors='coerce')
 
-    # Map standard OHLCV names case-insensitively
-    open_src = cols_lower.get('open')
-    high_src = cols_lower.get('high')
-    low_src  = cols_lower.get('low')
-    close_src= cols_lower.get('close')
-    vol_src  = cols_lower.get('volume')
+    # Required OHLCV sources, case-insensitive
+    open_src  = cmap.get('open')
+    high_src  = cmap.get('high')
+    low_src   = cmap.get('low')
+    close_src = cmap.get('close')
+    vol_src   = cmap.get('volume')
 
-    missing = [name for name, src in [
-        ('open', open_src), ('high', high_src), ('low', low_src),
-        ('close', close_src), ('volume', vol_src)
-    ] if src is None]
+    missing = [n for n, s in [('open',open_src),('high',high_src),('low',low_src),('close',close_src),('volume',vol_src)] if s is None]
     if missing:
         raise ValueError(f"Missing columns {missing} in {path}")
 
-    # Rename to canonical names and select only needed columns
     df = df.rename(columns={
-        ts_src: 'datetime',
+        ts_col: 'datetime',
         open_src: 'open',
         high_src: 'high',
         low_src: 'low',
@@ -64,20 +61,28 @@ def read_ohlcv_csv(path):
 
     df = df[['datetime','open','high','low','close','volume']].dropna()
     df = df.sort_values('datetime').reset_index(drop=True)
-    df = df.set_index('datetime')
-    return df
+    return df.set_index('datetime')
+
 
 def discover_symbols():
     files_15 = glob.glob(os.path.join(DATA_PATHS['15minute'], "*.csv"))
-    syms = list({os.path.splitext(os.path.basename(p)) for p in files_15})
-    return list(dict.fromkeys(syms))
+    # base name without extension
+    roots = [os.path.splitext(os.path.basename(p)) for p in files_15]
+    # if names like RELIANCE_15m.csv, strip suffix after first underscore
+    symbols = [r.split('_') for r in roots]
+    # preserve order and deduplicate
+    return list(dict.fromkeys(symbols))
 
 def load_frames(symbol):
-    def find(fldr):
-        c = glob.glob(os.path.join(fldr, f"*{symbol}*.csv"))
-        return c if c else None
-    p15 = find(DATA_PATHS['15minute']); p1h = find(DATA_PATHS['1hour']); pdly = find(DATA_PATHS['daily'])
-    if not (p15 and p1h and pdly): return None
+    def pick(folder):
+        hits = glob.glob(os.path.join(folder, f"{symbol}*.csv"))
+        return hits if hits else None
+
+    p15 = pick(DATA_PATHS['15minute'])
+    p1h = pick(DATA_PATHS['1hour'])
+    pdly = pick(DATA_PATHS['daily'])
+    if not (p15 and p1h and pdly):
+        return None
     return read_ohlcv_csv(p15), read_ohlcv_csv(p1h), read_ohlcv_csv(pdly)
 
 # 3) Indicators and features
@@ -409,16 +414,27 @@ def build_reports(trades_path, out_dir):
 # 8) Batch run over universe and write outputs
 def run_universe(symbols, cash=1_000_000):
     all_trades, all_equity = [], []
+    print(f"Symbols discovered: {len(symbols)} -> {symbols[:8]}")  # diagnostic
+
     for sym in symbols:
         frames = load_frames(sym)
-        if frames is None: continue
+        if frames is None:
+            print(f"[skip] {sym}: missing one of 15m/1h/daily files")
+            continue
         df15, df1h, dfd = frames
+
         start = max(df15.index.min(), df1h.index.min(), dfd.index.min())
-        end = min(df15.index.max(), df1h.index.max(), dfd.index.max())
+        end   = min(df15.index.max(), df1h.index.max(), dfd.index.max())
         df15 = df15[(df15.index>=start)&(df15.index<=end)]
         df1h = df1h[(df1h.index>=start)&(df1h.index<=end)]
-        dfd = dfd[(dfd.index>=start)&(dfd.index<=end)]
-        if len(df15) < 2000: continue
+        dfd  = dfd[(dfd.index>=start)&(dfd.index<=end)]
+
+        print(f"[info] {sym}: 15m={len(df15)} 1h={len(df1h)} dly={len(dfd)} window=({start} -> {end})")
+
+        # Lower for smoke test; raise to 2000 later
+        if len(df15) < 300 or start >= end:
+            print(f"[skip] {sym}: insufficient overlap or bars")
+            continue
 
         eng = LiveLikeBacktester(sym, df15, df1h, dfd, cash=cash)
         trades, eq = eng.run()
@@ -426,7 +442,7 @@ def run_universe(symbols, cash=1_000_000):
         if not eq.empty: all_equity.append(eq)
 
     trades_df = pd.concat(all_trades, ignore_index=True) if all_trades else pd.DataFrame(columns=['time','symbol','side','reason','qty','price','fee','slip_bp','pnl','equity'])
-    eq_df = pd.concat(all_equity, ignore_index=True) if all_equity else pd.DataFrame(columns=['time','symbol','equity','cash','pos','qty'])
+    eq_df     = pd.concat(all_equity, ignore_index=True) if all_equity else pd.DataFrame(columns=['time','symbol','equity','cash','pos','qty'])
     return trades_df, eq_df
 
 if __name__ == "__main__":

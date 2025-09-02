@@ -19,6 +19,7 @@ DATA_DIRS = {
     'daily': os.path.join(BASE_DIR, "swing_data"),
     '15minute': os.path.join(BASE_DIR, "scalping_data"),
     '1hour': os.path.join(BASE_DIR, "intraday_swing_data"),
+    '5minute': os.path.join(BASE_DIR, "five_minute_data"),
     'backup': os.path.join(BASE_DIR, "data_backup")
 }
 
@@ -26,6 +27,7 @@ SMART_TIMEFRAMES = {
     'daily':    {'interval': 'day',       'lookback_days': 1825, 'output_dir': DATA_DIRS['daily'],     'min_bars_required': 200},
     '15minute': {'interval': '15minute',  'lookback_days': 120,  'output_dir': DATA_DIRS['15minute'], 'min_bars_required': 100},
     '1hour':    {'interval': 'hour',      'lookback_days': 300,  'output_dir': DATA_DIRS['1hour'],    'min_bars_required': 150}
+    '5minute': {'interval': '5minute', 'lookback_days': 60, 'output_dir': os.path.join(BASE_DIR, "five_minute_data"), 'min_bars_required': 100}
 }
 
 RATE_LIMIT_DELAY = 0.5   # seconds between API calls
@@ -179,6 +181,8 @@ class SmartHalalFetcher:
                     start_date = last_date + pd.Timedelta(minutes=15)
                 elif tf_name == '1hour':
                     start_date = last_date + pd.Timedelta(hours=1)
+                elif tf_name == '5minute':
+                    start_date = last_date + pd.Timedelta(minutes=5)
                 else:
                     start_date = last_date
             except Exception as e:

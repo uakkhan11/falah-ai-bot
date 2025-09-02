@@ -392,7 +392,21 @@ def build_reports(trades_path, out_dir):
             pd.DataFrame([]).to_csv(os.path.join(out_dir, name), index=False)
         return
 
-    trades = exits.merge(entries, on=['symbol','trade_id'], how='left', suffixes=('',''))
+    trades = exits.merge(entries, on=['symbol','trade_id'], how='left', suffixes=('_exit','_entry'))
+
+    gate_cols = [c for c in entries.columns if c.startswith('gate_')]
+    
+        for g in gate_cols:
+        
+            if f"{g}_entry" in trades:
+            
+            trades[g] = trades[f"{g}_entry"] # take entry-time gate value
+    
+    drop_cols = [c for c in trades.columns if c.endswith('_entry') or c.endswith('_exit')]
+    
+    trades = trades.drop(columns=drop_cols)
+
+
 
     trades['label_profit'] = (trades['pnl'] > 0).astype(int)
     trades['R_proxy'] = trades['pnl'] / (trades['price'].abs() * trades['qty'].replace(0,np.nan))

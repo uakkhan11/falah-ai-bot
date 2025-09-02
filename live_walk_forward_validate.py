@@ -118,7 +118,7 @@ def load_frames(symbol):
         print(f"[load_frames v2] Missing file(s) for {symbol}: 15m={bool(p15)} 1h={bool(p1h)} dly={bool(pdly)}")
         return None
     
-    return read_ohlcv_csv(p15), read_ohlcv_csv(p1h), read_ohlcv_csv(pdly)[4][3]
+return read_ohlcv_csv(p15), read_ohlcv_csv(p1h), read_ohlcv_csv(pdly)[4][3]
 
 
 # 3) Indicators and features

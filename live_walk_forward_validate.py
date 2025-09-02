@@ -398,7 +398,7 @@ def build_reports(trades_path, out_dir):
     
     for g in gate_cols:
         
-            if f"{g}_entry" in trades:
+        if f"{g}_entry" in trades:
             
             trades[g] = trades[f"{g}_entry"] # take entry-time gate value
     

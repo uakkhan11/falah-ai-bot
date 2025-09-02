@@ -181,22 +181,20 @@ def build_features(df15, df1h, dfd):
 # 4) Signal gates
 def signal_gates_row(r):
     gates = {}
-    gates['regime_up'] = (r['close'] > r['ema200_d']) and (r['rsi14_d'] >= 45)
+    gates['regime_up'] = (r['close'] > r['ema200_d']) and (r['rsi14_d'] >= 50) # stricter daily regime
     gates['regime_dn'] = (r['close'] < r['ema200_d']) and (r['rsi14_d'] <= 55)
     gates['tf1_up'] = (r['ema9_h'] > r['ema21_h'])
     gates['tf1_dn'] = (r['ema9_h'] < r['ema21_h'])
     gates['value_long'] = (r['close'] >= r['vwap']) and (r['close'] >= r['ema21'])
     gates['value_short'] = (r['close'] <= r['vwap']) and (r['close'] <= r['ema21'])
-    gates['pullback_long'] = (r['close'] <= r['ema9']*1.01)
+    gates['pullback_long'] = True # ablation showed it hurts; disable for now
     gates['pullback_short'] = (r['close'] >= r['ema9']*0.99)
-    gates['momo_long'] = (r['macd'] > r['macd_sig']) and (r['rsi14'] > 50)
+    gates['momo_long'] = (r['macd'] > r['macd_sig']) and (r['rsi14'] > 52) # slightly stricter 15m momentum
     gates['momo_short'] = (r['macd'] < r['macd_sig']) and (r['rsi14'] < 50)
     gates['orb_long'] = (r['close'] > r['or_hi']) if not pd.isna(r['or_hi']) else False
     gates['orb_short'] = (r['close'] < r['or_lo']) if not pd.isna(r['or_lo']) else False
-    long_signal = (gates['regime_up'] and gates['tf1_up'] and gates['value_long'] and
-                   (gates['pullback_long'] or gates['orb_long']) and gates['momo_long'])
-    short_signal = (gates['regime_dn'] and gates['tf1_dn'] and gates['value_short'] and
-                    (gates['pullback_short'] or gates['orb_short']) and gates['momo_short'])
+    long_signal = (gates['regime_up'] and gates['tf1_up'] and gates['value_long'] and gates['orb_long'] and gates['momo_long']) # force ORB confluence
+    short_signal = False # disable shorts for now (reports show dilution)
     return bool(long_signal), bool(short_signal), gates
 
 # 5) Event classes and execution model
@@ -208,7 +206,7 @@ class MarketEvent:
 # Configuration constants (place these at the very top)
 RISK_PER_TRADE = 0.01
 
-ATR_MULT_STOP = 1.5
+ATR_MULT_STOP = 2.0
 
 TARGET_R = 2.0
 

@@ -196,7 +196,7 @@ def signal_gates_row(r):
     long_signal = gates['regime_up'] and gates['tf1_up'] and gates['value_long'] and gates['orb_long'] and gates['momo_long']
     short_signal = False
     if pd.notna(r.get('or_hi')) and pd.notna(r.get('or_lo')):
-    or_width_ok = ((r['or_hi'] - r['or_lo']) / max(1e-9, r['close'])) >= 0.002  # 0.2% minimum[2]
+        or_width_ok = ((r['or_hi'] - r['or_lo']) / max(1e-9, r['close'])) >= 0.002  # 0.2% minimum[2]
     else:
         or_width_ok = False
     

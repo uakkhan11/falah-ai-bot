@@ -1,52 +1,47 @@
-# live_like_backtest.py
-# 1) Configuration
+#!/usr/bin/env python3
 import os, glob, math, random
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass
 
+# 1) Configuration
 BASE_DIR = "/root/falah-ai-bot"
+
 DATA_PATHS = {
     'daily': os.path.join(BASE_DIR, "swing_data"),
     '1hour': os.path.join(BASE_DIR, "intraday_swing_data"),
     '15minute': os.path.join(BASE_DIR, "scalping_data"),
 }
+
 RESULTS_DIR = os.path.join(BASE_DIR, "results_live_like")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-# Execution and sizing parameters
-RISK_PER_TRADE = 0.01        # 1% risk
-ATR_MULT_STOP = 1.5          # ATR multiplier for stops
-TARGET_R = 2.0               # take-profit in R multiples
-COMMISSION_BPS = 1.0         # commission per side
-SPREAD_BP = 1.0              # half-spread cost
-SLIP_MEAN_BP = 2.0           # avg slippage
-SLIP_STD_BP = 1.0            # slippage std dev
-
-# 2) Data loading
+# 2) Data Loading
 def read_ohlcv_csv(path):
     assert isinstance(path, str), f"Expected string path, got {type(path)}: {path}"
     df = pd.read_csv(path)
 
-    # Case-insensitive column map
+    # Map columns case-insensitively
     cmap = {c.lower(): c for c in df.columns}
 
+    # Select timestamp column
     ts_col = cmap.get('datetime') or cmap.get('date')
     if not ts_col:
-        # fallback to first column
-        ts_col = df.columns
+        # fallback: use first column name as string
+        ts_col = df.columns[0]
 
     # Parse timestamp
     df[ts_col] = pd.to_datetime(df[ts_col], utc=True, errors='coerce')
 
-    # Required OHLCV sources, case-insensitive
-    open_src  = cmap.get('open')
-    high_src  = cmap.get('high')
-    low_src   = cmap.get('low')
+    # Standard OHLCV columns case-insensitive
+    open_src = cmap.get('open')
+    high_src = cmap.get('high')
+    low_src = cmap.get('low')
     close_src = cmap.get('close')
-    vol_src   = cmap.get('volume')
+    vol_src = cmap.get('volume')
 
-    missing = [n for n, s in [('open',open_src),('high',high_src),('low',low_src),('close',close_src),('volume',vol_src)] if s is None]
+    missing = [name for name, col in [('open', open_src), ('high', high_src), ('low', low_src),
+                                       ('close', close_src), ('volume', vol_src)] if col is None]
     if missing:
         raise ValueError(f"Missing columns {missing} in {path}")
 
@@ -56,96 +51,102 @@ def read_ohlcv_csv(path):
         high_src: 'high',
         low_src: 'low',
         close_src: 'close',
-        vol_src: 'volume',
+        vol_src: 'volume'
     })
 
-    df = df[['datetime','open','high','low','close','volume']].dropna()
+    df = df[['datetime', 'open', 'high', 'low', 'close', 'volume']].dropna()
     df = df.sort_values('datetime').reset_index(drop=True)
     return df.set_index('datetime')
 
-
 def discover_symbols():
-    import glob, os
+    dir15 = DATA_PATHS['15minute']
+    files_15 = glob.glob(os.path.join(dir15, "*.csv"))
 
-    fifteen_dir = DATA_PATHS['15minute']
-    files_15 = glob.glob(os.path.join(fifteen_dir, "*.csv"))
-
-    print(f"[discover_symbols] 15m dir: {fifteen_dir}")
-    print(f"[discover_symbols] 15m count: {len(files_15)}")
+    print(f"[discover_symbols] 15m dir: {dir15}")
+    print(f"[discover_symbols] count: {len(files_15)}")
     if files_15[:5]:
         print("[discover_symbols] sample files:", [os.path.basename(p) for p in files_15[:5]])
 
     if not files_15:
-        print("[discover_symbols] No 15m files found")
+        print("[discover_symbols] No 15m files found.")
         return []
 
-    # Remove extension without using splitext (avoids tuples entirely)
-    roots = [os.path.basename(p).rsplit(".", 1)[0] for p in files_15]
-
-    # If filenames like RELIANCE_15m.csv, take token before first underscore; else entire root
-    symbols = [r.split("_")[0] for r in roots]
-
-    # Deduplicate while preserving order
+    # Build roots
+    roots = [os.path.basename(p).rsplit(".",1)[0] for p in files_15]
+    # For filenames like RELIANCE_15m.csv, take before first underscore
+    symbols = [r.split('_')[0] for r in roots]
+    # Deduplicate preserving order
     symbols = list(dict.fromkeys(symbols))
 
     # Sanity checks
-    assert all(isinstance(s, str) for s in symbols), f"Non-string symbol detected: {symbols[:5]}"
-    assert all(s for s in symbols), f"Empty symbol detected: {symbols[:5]}"
+    assert all(isinstance(s, str) for s in symbols), f"Non-string symbol in discover: {symbols[:5]}"
+    assert all(s for s in symbols), f"Empty symbol in discover: {symbols[:5]}"
 
     print(f"[discover_symbols] Found {len(symbols)} symbols, sample: {symbols[:10]}")
     return symbols
 
-
-
 def load_frames(symbol):
-    import glob, os
-    
     def pick_one(folder):
-    hits = glob.glob(os.path.join(folder, f"{symbol}*.csv"))
-    if not hits:
-        print(f"[load_frames v2] {symbol}: no match in {folder}")
+        hits = glob.glob(os.path.join(folder, f"{symbol}*.csv"))
+        if not hits:
+            print(f"[load_frames v2] {symbol}: no match in {folder}")
+            return None
+        if len(hits) > 1:
+            print(f"[load_frames v2] {symbol}: multiple matches in {folder}, picking {os.path.basename(hits[0])}")
+        return hits[0]  # only the first match path
+
+    print(f"[load_frames v2] selecting paths for {symbol}")
+    p15 = pick_one(DATA_PATHS['15minute'])
+    p1h = pick_one(DATA_PATHS['1hour'])
+    pdly = pick_one(DATA_PATHS['daily'])
+
+    if not (p15 and p1h and pdly):
+        print(f"[load_frames v2] Missing files for {symbol}: 15m={p15} 1h={p1h} 1d={pdly}")
         return None
-    if len(hits) > 1:
-        print(f"[load_frames v2] {symbol}: multiple matches in {folder}, picking {os.path.basename(hits)}")
-    return hits  # single string path, never a list[3][5]
 
-print(f"[load_frames v2] selecting paths for {symbol}")
-p15  = pick_one(DATA_PATHS['15minute'])
-p1h  = pick_one(DATA_PATHS['1hour'])
-pdly = pick_one(DATA_PATHS['daily'])
+    return read_ohlcv_csv(p15), read_ohlcv_csv(p1h), read_ohlcv_csv(pdly)
 
-if not (p15 and p1h and pdly):
-    print(f"[load_frames v2] Missing file(s) for {symbol}: 15m={bool(p15)} 1h={bool(p1h)} dly={bool(pdly)}")
-    return None
-
-return read_ohlcv_csv(p15), read_ohlcv_csv(p1h), read_ohlcv_csv(pdly)[2][1][3]
-
-
-# 3) Indicators and features
+# 3) Indicators & Features
 def ema(x, span): return x.ewm(span=span, adjust=False).mean()
+
 def rsi(x, period=14):
-    d = x.diff(); up = d.clip(lower=0); dn = -d.clip(upper=0)
+    d = x.diff()
+    up = d.clip(lower=0)
+    dn = -d.clip(upper=0)
     rg = up.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
     rl = dn.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
     rs = rg / rl.replace(0, np.nan)
-    return (100 - (100/(1+rs))).fillna(50)
+    return (100 - (100 / (1 + rs))).fillna(50)
+
 def macd(x, fast=12, slow=26, signal=9):
-    m = ema(x, fast) - ema(x, slow); s = ema(m, signal); h = m - s
+    m = ema(x, fast) - ema(x, slow)
+    s = ema(m, signal)
+    h = m - s
     return m, s, h
+
 def bollinger(x, window=20, k=2.0):
-    m = x.rolling(window).mean(); sd = x.rolling(window).std(ddof=0)
-    return m, m + k*sd, m - k*sd
+    m = x.rolling(window).mean()
+    sd = x.rolling(window).std(ddof=0)
+    return m, m + k * sd, m - k * sd
+
 def atr(df, period=14):
     pc = df['close'].shift(1)
-    tr = pd.concat([(df['high']-df['low']).abs(), (df['high']-pc).abs(), (df['low']-pc).abs()], axis=1).max(axis=1)
+    tr = pd.concat([
+        (df['high'] - df['low']).abs(),
+        (df['high'] - pc).abs(),
+        (df['low'] - pc).abs()
+    ], axis=1).max(axis=1)
     return tr.rolling(period).mean()
+
 def vwap_session(df, session='D'):
     g = df.groupby(pd.Grouper(freq=session))
-    pv = g.apply(lambda x: (x['close']*x['volume']).cumsum()).reset_index(level=0, drop=True)
+    pv = g.apply(lambda x: (x['close'] * x['volume']).cumsum()).reset_index(level=0, drop=True)
     vv = g['volume'].cumsum()
     return pv / vv
+
 def resample_no_lookahead(lower_df, higher_df, cols):
     return higher_df[cols].shift(1).reindex(lower_df.index, method='ffill')
+
 def opening_range(df, minutes=15):
     bars = max(1, minutes // 15)
     grp = df.groupby(pd.Grouper(freq='D'))
@@ -156,7 +157,8 @@ def opening_range(df, minutes=15):
 def build_features(df15, df1h, dfd):
     X = df15.copy()
     X['vwap'] = vwap_session(X, 'D')
-    X['ema9'] = ema(X['close'], 9); X['ema21'] = ema(X['close'], 21)
+    X['ema9'] = ema(X['close'], 9)
+    X['ema21'] = ema(X['close'], 21)
     X['bb_mid'], X['bb_up'], X['bb_dn'] = bollinger(X['close'], 20, 2.0)
     X['rsi14'] = rsi(X['close'], 14)
     X['macd'], X['macd_sig'], X['macd_hist'] = macd(X['close'])
@@ -164,15 +166,19 @@ def build_features(df15, df1h, dfd):
     X['or_hi'], X['or_lo'] = opening_range(X, 15)
 
     H = df1h.copy()
-    H['ema9_h'] = ema(H['close'], 9); H['ema21_h'] = ema(H['close'], 21); H['rsi14_h'] = rsi(H['close'], 14)
+    H['ema9_h'] = ema(H['close'], 9)
+    H['ema21_h'] = ema(H['close'], 21)
+    H['rsi14_h'] = rsi(H['close'], 14)
+
     D = dfd.copy()
-    D['ema200_d'] = ema(D['close'], 200); D['rsi14_d'] = rsi(D['close'], 14)
+    D['ema200_d'] = ema(D['close'], 200)
+    D['rsi14_d'] = rsi(D['close'], 14)
 
     X = X.join(resample_no_lookahead(X, H, ['ema9_h','ema21_h','rsi14_h']))
     X = X.join(resample_no_lookahead(X, D, ['ema200_d','rsi14_d']))
     return X
 
-# 4) Signal gates with attribution flags
+# 4) Signal gates
 def signal_gates_row(r):
     gates = {}
     gates['regime_up'] = (r['close'] > r['ema200_d']) and (r['rsi14_d'] >= 45)
@@ -187,10 +193,11 @@ def signal_gates_row(r):
     gates['momo_short'] = (r['macd'] < r['macd_sig']) and (r['rsi14'] < 50)
     gates['orb_long'] = (r['close'] > r['or_hi']) if not pd.isna(r['or_hi']) else False
     gates['orb_short'] = (r['close'] < r['or_lo']) if not pd.isna(r['or_lo']) else False
-
-    long_sig = gates['regime_up'] and gates['tf1_up'] and gates['value_long'] and (gates['pullback_long'] or gates['orb_long']) and gates['momo_long']
-    short_sig = gates['regime_dn'] and gates['tf1_dn'] and gates['value_short'] and (gates['pullback_short'] or gates['orb_short']) and gates['momo_short']
-    return bool(long_sig), bool(short_sig), gates
+    long_signal = (gates['regime_up'] and gates['tf1_up'] and gates['value_long'] and
+                   (gates['pullback_long'] or gates['orb_long']) and gates['momo_long'])
+    short_signal = (gates['regime_dn'] and gates['tf1_dn'] and gates['value_short'] and
+                    (gates['pullback_short'] or gates['orb_short']) and gates['momo_short'])
+    return bool(long_signal), bool(short_signal), gates
 
 # 5) Event classes and execution model
 @dataclass
@@ -199,7 +206,8 @@ class MarketEvent:
     o: float; h: float; l: float; c: float; v: float
 
 class ExecModel:
-    def __init__(self, commission_bps=COMMISSION_BPS, spread_bp=SPREAD_BP, slip_mean_bp=SLIP_MEAN_BP, slip_std_bp=SLIP_STD_BP):
+    def __init__(self, commission_bps=COMMISSION_BPS, spread_bp=SPREAD_BP,
+                 slip_mean_bp=SLIP_MEAN_BP, slip_std_bp=SLIP_STD_BP):
         self.com_bps = commission_bps
         self.spread_bp = spread_bp
         self.slip_mu = slip_mean_bp
@@ -210,7 +218,7 @@ class ExecModel:
         return ref * mult
     def slippage_bps(self): return max(0.0, random.gauss(self.slip_mu, self.slip_sd))
 
-# 6) Live-like backtester (event-driven)
+# 6) Live-like backtester
 class LiveLikeBacktester:
     def __init__(self, symbol, df15, df1h, dfd, cash=1_000_000):
         self.symbol = symbol
@@ -228,62 +236,65 @@ class LiveLikeBacktester:
         self.equity_curve = []
         self._last_gates = {}
 
-    def size_from_atr(self, open_price, atr_val):
-        if np.isnan(atr_val) or atr_val <= 0: return 0, 0.0
-        stop_dist = max(atr_val * ATR_MULT_STOP, open_price*0.002)
+    def size_from_atr(self, open_px, atr_val):
+        if np.isnan(atr_val) or atr_val <= 0:
+            return 0, 0.0
+        stop_dist = max(atr_val * ATR_MULT_STOP, open_px*0.002)
         risk_cash = self.equity * RISK_PER_TRADE
         qty = int(risk_cash // stop_dist)
-        return max(qty,0), stop_dist
+        return max(qty, 0), stop_dist
 
     def on_bar(self, t, row):
         feats = self.feats.loc[t]
-        r = {**feats.to_dict(), 'open': row['open'], 'high': row['high'], 'low': row['low'], 'close': row['close']}
+        r = {**feats.to_dict(), 'open': row['open'], 'high': row['high'],
+             'low': row['low'], 'close': row['close']}
         long_sig, short_sig, gates = signal_gates_row(r)
         self._last_gates = gates
-
         # exits
         if self.pos != 0:
             if self.pos > 0:
                 if row['low'] <= self.stop:
                     px = self.exec.apply_spread(self.stop, 'sell')
                     slip = self.exec.slippage_bps(); px *= 1 - slip/10000.0
-                    fee = self.exec.fee(px*self.qty)
-                    pnl = self.qty*(px - self.avg) - fee
+                    fee = self.exec.fee(px * self.qty)
+                    pnl = self.qty * (px - self.avg) - fee
                     self.equity += pnl
-                    self.ledger.append({'time':t,'symbol':self.symbol,'side':'sell','reason':'stop','qty':self.qty,'price':px,'fee':fee,'slip_bp':slip,'pnl':pnl,'equity':self.equity})
+                    self.ledger.append({'time': t,'symbol': self.symbol,'side': 'sell',
+                        'reason': 'stop','qty': self.qty,'price': px,'fee': fee,'slip_bp': slip,'pnl': pnl,'equity': self.equity})
                     self.pos, self.qty, self.avg = 0, 0, np.nan
                 elif row['high'] >= self.target:
                     px = self.exec.apply_spread(self.target, 'sell')
                     slip = self.exec.slippage_bps(); px *= 1 - slip/10000.0
-                    fee = self.exec.fee(px*self.qty)
-                    pnl = self.qty*(px - self.avg) - fee
+                    fee = self.exec.fee(px * self.qty)
+                    pnl = self.qty * (px - self.avg) - fee
                     self.equity += pnl
-                    self.ledger.append({'time':t,'symbol':self.symbol,'side':'sell','reason':'target','qty':self.qty,'price':px,'fee':fee,'slip_bp':slip,'pnl':pnl,'equity':self.equity})
+                    self.ledger.append({'time': t,'symbol': self.symbol,'side': 'sell',
+                        'reason': 'target','qty': self.qty,'price': px,'fee': fee,'slip_bp': slip,'pnl': pnl,'equity': self.equity})
                     self.pos, self.qty, self.avg = 0, 0, np.nan
             else:
                 if row['high'] >= self.stop:
                     px = self.exec.apply_spread(self.stop, 'buy')
                     slip = self.exec.slippage_bps(); px *= 1 + slip/10000.0
-                    fee = self.exec.fee(px*self.qty)
-                    pnl = (self.avg - px)*self.qty - fee
+                    fee = self.exec.fee(px * self.qty)
+                    pnl = (self.avg - px) * self.qty - fee
                     self.equity += pnl
-                    self.ledger.append({'time':t,'symbol':self.symbol,'side':'buy','reason':'stop','qty':self.qty,'price':px,'fee':fee,'slip_bp':slip,'pnl':pnl,'equity':self.equity})
+                    self.ledger.append({'time': t,'symbol': self.symbol,'side': 'buy',
+                        'reason': 'stop','qty': self.qty,'price': px,'fee': fee,'slip_bp': slip,'pnl': pnl,'equity': self.equity})
                     self.pos, self.qty, self.avg = 0, 0, np.nan
                 elif row['low'] <= self.target:
                     px = self.exec.apply_spread(self.target, 'buy')
                     slip = self.exec.slippage_bps(); px *= 1 + slip/10000.0
-                    fee = self.exec.fee(px*self.qty)
-                    pnl = (self.avg - px)*self.qty - fee
+                    fee = self.exec.fee(px * self.qty)
+                    pnl = (self.avg - px) * self.qty - fee
                     self.equity += pnl
-                    self.ledger.append({'time':t,'symbol':self.symbol,'side':'buy','reason':'target','qty':self.qty,'price':px,'fee':fee,'slip_bp':slip,'pnl':pnl,'equity':self.equity})
+                    self.ledger.append({'time': t,'symbol': self.symbol,'side': 'buy',
+                        'reason': 'target','qty': self.qty,'price': px,'fee': fee,'slip_bp': slip,'pnl': pnl,'equity': self.equity})
                     self.pos, self.qty, self.avg = 0, 0, np.nan
-
         return long_sig, short_sig
 
     def run(self):
         pending_entry = None
         for i, (t, row) in enumerate(self.df.iterrows()):
-            # execute pending entry at open
             if pending_entry is not None and self.pos == 0:
                 side = pending_entry
                 atrv = self.feats.loc[t, 'atr14']
@@ -294,21 +305,23 @@ class LiveLikeBacktester:
                     if side == 'long':
                         px = self.exec.apply_spread(open_px, 'buy')
                         slip = self.exec.slippage_bps(); px *= 1 + slip/10000.0
-                        fee = self.exec.fee(px*qty); self.equity -= fee
+                        fee = self.exec.fee(px * qty); self.equity -= fee
                         self.pos, self.qty, self.avg = 1, qty, px
-                        self.stop = px - stop_dist; self.target = px + TARGET_R*stop_dist
-                        self.ledger.append({'time':t,'symbol':self.symbol,'side':'buy','reason':'signal','qty':qty,'price':px,'fee':fee,'slip_bp':slip,'pnl':0.0,'equity':self.equity, **gates_pref})
+                        self.stop = px - stop_dist
+                        self.target = px + TARGET_R*stop_dist
+                        self.ledger.append({'time': t,'symbol': self.symbol,'side': 'buy',
+                            'reason': 'signal', 'qty': qty,'price': px,'fee': fee,'slip_bp': slip,'pnl': 0.0,'equity': self.equity, **gates_pref})
                     else:
                         px = self.exec.apply_spread(open_px, 'sell')
                         slip = self.exec.slippage_bps(); px *= 1 - slip/10000.0
-                        fee = self.exec.fee(px*qty); self.equity -= fee
+                        fee = self.exec.fee(px * qty); self.equity -= fee
                         self.pos, self.qty, self.avg = -1, qty, px
-                        self.stop = px + stop_dist; self.target = px - TARGET_R*stop_dist
-                        self.ledger.append({'time':t,'symbol':self.symbol,'side':'sell','reason':'signal','qty':qty,'price':px,'fee':fee,'slip_bp':slip,'pnl':0.0,'equity':self.equity, **gates_pref})
+                        self.stop = px + stop_dist
+                        self.target = px - TARGET_R*stop_dist
+                        self.ledger.append({'time': t,'symbol': self.symbol,'side': 'sell',
+                            'reason': 'signal', 'qty': qty,'price': px,'fee': fee,'slip_bp': slip,'pnl': 0.0,'equity': self.equity, **gates_pref})
                 pending_entry = None
-
             long_sig, short_sig = self.on_bar(t, row)
-
             if self.pos == 0:
                 if long_sig: pending_entry = 'long'
                 elif short_sig: pending_entry = 'short'
@@ -318,48 +331,45 @@ class LiveLikeBacktester:
             mtm = 0.0
             if self.pos != 0:
                 if self.pos > 0: mtm = self.qty * (row['close'] - self.avg)
-                else:            mtm = self.qty * (self.avg - row['close'])
-            self.equity_curve.append({'time':t,'symbol':self.symbol,'equity':self.equity+mtm,'cash':self.equity,'pos':self.pos,'qty':self.qty})
+                else: mtm = self.qty * (self.avg - row['close'])
+            self.equity_curve.append({'time': t,'symbol': self.symbol,'equity': self.equity + mtm,
+                'cash': self.equity, 'pos': self.pos,'qty': self.qty})
 
-        # force-close at final close
+        # close at the end
         if self.pos != 0:
-            t = self.df.index[-1]; px = self.df['close'].iloc[-1]
-            fee = self.exec.fee(px*self.qty)
+            t = self.df.index[-1]
+            px = self.df['close'].iloc[-1]
+            fee = self.exec.fee(px * self.qty)
             if self.pos > 0:
-                pnl = self.qty*(px - self.avg) - fee
-                self.ledger.append({'time':t,'symbol':self.symbol,'side':'sell','reason':'eod','qty':self.qty,'price':px,'fee':fee,'slip_bp':0.0,'pnl':pnl,'equity':self.equity+pnl})
+                pnl = self.qty * (px - self.avg) - fee
+                self.ledger.append({'time': t,'symbol': self.symbol,'side': 'sell','reason':'eod',
+                    'qty': self.qty,'price': px,'fee': fee,'slip_bp': 0.0,'pnl': pnl,'equity': self.equity + pnl})
             else:
-                pnl = (self.avg - px)*self.qty - fee
-                self.ledger.append({'time':t,'symbol':self.symbol,'side':'buy','reason':'eod','qty':self.qty,'price':px,'fee':fee,'slip_bp':0.0,'pnl':pnl,'equity':self.equity+pnl})
+                pnl = (self.avg - px) * self.qty - fee
+                self.ledger.append({'time': t,'symbol': self.symbol,'side': 'buy','reason':'eod',
+                    'qty': self.qty,'price': px,'fee': fee,'slip_bp': 0.0,'pnl': pnl,'equity': self.equity + pnl})
             self.equity += pnl
-            self.pos = 0; self.qty = 0
+            self.pos = 0
+            self.qty = 0
 
         return pd.DataFrame(self.ledger), pd.DataFrame(self.equity_curve)
 
-# 7) Reporting: indicator attribution, combos, ablation
+# 7) Reports
 def build_reports(trades_path, out_dir):
     df = pd.read_csv(trades_path, parse_dates=['time'])
-
-    # Ensure required columns exist
     if df.empty:
-        # Write empty reports and return
         for name in ["indicator_report.csv","combo_report.csv","ablation_report.csv"]:
             pd.DataFrame([]).to_csv(os.path.join(out_dir, name), index=False)
         return
 
-    # Compute trade_id BEFORE any filtering: each 'signal' increments per symbol
     df = df.sort_values(['symbol','time']).reset_index(drop=True)
     df['is_entry'] = (df['reason'] == 'signal').astype(int)
     df['trade_id'] = df.groupby('symbol')['is_entry'].cumsum()
-    # All rows prior to first signal get trade_id 0; mark those as NaN to avoid accidental merges
     df.loc[df['trade_id'] == 0, 'trade_id'] = np.nan
 
     gate_cols = [c for c in df.columns if c.startswith('gate_')]
 
-    # Entries table: only rows where reason == 'signal' and trade_id not null
     entries = df[df['reason'] == 'signal'][['symbol','trade_id'] + gate_cols].copy()
-
-    # Exits table: rows that close trades; keep trade_id and symbol
     exits = df[df['reason'].isin(['stop','target','eod'])].copy()
 
     if exits.empty:
@@ -367,10 +377,8 @@ def build_reports(trades_path, out_dir):
             pd.DataFrame([]).to_csv(os.path.join(out_dir, name), index=False)
         return
 
-    # Merge gates from entry into the corresponding exit using symbol + trade_id
     trades = exits.merge(entries, on=['symbol','trade_id'], how='left', suffixes=('',''))
 
-    # Label profit and proxy R
     trades['label_profit'] = (trades['pnl'] > 0).astype(int)
     trades['R_proxy'] = trades['pnl'] / (trades['price'].abs() * trades['qty'].replace(0,np.nan))
 
@@ -379,7 +387,6 @@ def build_reports(trades_path, out_dir):
         neg = -series[series < 0].sum()
         return pos/neg if neg > 0 else np.nan
 
-    # Indicator report
     rows = []
     base_hit = trades['label_profit'].mean() if len(trades) else np.nan
     for g in gate_cols:
@@ -399,15 +406,13 @@ def build_reports(trades_path, out_dir):
     ind_rep = pd.DataFrame(rows).sort_values(['profit_factor','win_rate'], ascending=False) if rows else pd.DataFrame([])
     ind_rep.to_csv(os.path.join(out_dir, "indicator_report.csv"), index=False)
 
-    # Combo report (pairs)
     from itertools import combinations
     rows = []
     for a, b in combinations(gate_cols, 2):
         sub = trades[(trades[a] == True) & (trades[b] == True)]
         if len(sub) < 20:
             continue
-        rows.append({
-            'combo': f"{a}+{b}",
+        rows.append({'combo': f"{a}+{b}",
             'n_trades': len(sub),
             'win_rate': sub['label_profit'].mean(),
             'profit_factor': profit_factor(sub['pnl']),
@@ -417,7 +422,6 @@ def build_reports(trades_path, out_dir):
     combo_rep = pd.DataFrame(rows).sort_values(['profit_factor','win_rate'], ascending=False) if rows else pd.DataFrame([])
     combo_rep.to_csv(os.path.join(out_dir, "combo_report.csv"), index=False)
 
-    # Ablation report (drop-one gate)
     def metrics(d):
         return pd.Series({
             'n_trades': len(d),
@@ -431,8 +435,7 @@ def build_reports(trades_path, out_dir):
     for g in gate_cols:
         sub = trades[~(trades[g] == True)]
         m = metrics(sub)
-        rows.append({
-            'drop_gate': g,
+        rows.append({'drop_gate': g,
             'base_win_rate': base_m['win_rate'],
             'base_profit_factor': base_m['profit_factor'],
             'base_avg_R_proxy': base_m['avg_R_proxy'],
@@ -446,12 +449,10 @@ def build_reports(trades_path, out_dir):
     abl_rep = pd.DataFrame(rows).sort_values(['delta_profit_factor','delta_win'], ascending=False) if rows else pd.DataFrame([])
     abl_rep.to_csv(os.path.join(out_dir, "ablation_report.csv"), index=False)
 
-
-# 8) Batch run over universe and write outputs
+# 8) Run the whole universe and save results
 def run_universe(symbols, cash=1_000_000):
     all_trades, all_equity = [], []
-    print(f"Symbols discovered: {len(symbols)} -> {symbols[:8]}")  # diagnostic
-
+    print(f"Symbols discovered: {len(symbols)} -> {symbols[:8]}")  # diagnostic info
     for sym in symbols:
         frames = load_frames(sym)
         if frames is None:
@@ -461,37 +462,35 @@ def run_universe(symbols, cash=1_000_000):
 
         start = max(df15.index.min(), df1h.index.min(), dfd.index.min())
         end   = min(df15.index.max(), df1h.index.max(), dfd.index.max())
-        df15 = df15[(df15.index>=start)&(df15.index<=end)]
-        df1h = df1h[(df1h.index>=start)&(df1h.index<=end)]
-        dfd  = dfd[(dfd.index>=start)&(dfd.index<=end)]
+
+        df15 = df15[(df15.index >= start) & (df15.index <= end)]
+        df1h = df1h[(df1h.index >= start) & (df1h.index <= end)]
+        dfd  = dfd[(dfd.index >= start) & (dfd.index <= end)]
 
         print(f"[info] {sym}: 15m={len(df15)} 1h={len(df1h)} dly={len(dfd)} window=({start} -> {end})")
 
-        # Lower for smoke test; raise to 2000 later
         if len(df15) < 300 or start >= end:
             print(f"[skip] {sym}: insufficient overlap or bars")
             continue
 
+        # Instantiate backtest
         eng = LiveLikeBacktester(sym, df15, df1h, dfd, cash=cash)
         trades, eq = eng.run()
-        if not trades.empty: all_trades.append(trades)
-        if not eq.empty: all_equity.append(eq)
+        if not trades.empty:
+            all_trades.append(trades)
+        if not eq.empty:
+            all_equity.append(eq)
 
-    trades_df = pd.concat(all_trades, ignore_index=True) if all_trades else pd.DataFrame(columns=['time','symbol','side','reason','qty','price','fee','slip_bp','pnl','equity'])
-    eq_df     = pd.concat(all_equity, ignore_index=True) if all_equity else pd.DataFrame(columns=['time','symbol','equity','cash','pos','qty'])
+    # Save results
+    trades_df = pd.concat(all_trades).reset_index(drop=True) if all_trades else pd.DataFrame()
+    eq_df = pd.concat(all_equity).reset_index(drop=True) if all_equity else pd.DataFrame()
     return trades_df, eq_df
 
 if __name__ == "__main__":
     syms = discover_symbols()
-    trades, equity = run_universe(syms)
-    trades_path = os.path.join(RESULTS_DIR, "trades.csv")
-    equity_path = os.path.join(RESULTS_DIR, "equity_curve.csv")
-    positions_path = os.path.join(RESULTS_DIR, "positions.csv")
-
-    trades.to_csv(trades_path, index=False)
-    equity.to_csv(equity_path, index=False)
-    equity[['time','symbol','pos','qty']].to_csv(positions_path, index=False)
-
-    # Build indicator attribution reports
-    build_reports(trades_path, RESULTS_DIR)
+    trades, eq = run_universe(syms)
+    trades.to_csv(os.path.join(RESULTS_DIR, "trades.csv"), index=False)
+    eq.to_csv(os.path.join(RESULTS_DIR, "equity_curve.csv"), index=False)
+    eq[['time','symbol','pos','qty']].to_csv(os.path.join(RESULTS_DIR, "positions.csv"), index=False)
+    build_reports(os.path.join(RESULTS_DIR, "trades.csv"), RESULTS_DIR)
     print("Wrote trades.csv, equity_curve.csv, positions.csv, indicator_report.csv, combo_report.csv, ablation_report.csv to", RESULTS_DIR)

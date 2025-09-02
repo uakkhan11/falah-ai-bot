@@ -396,7 +396,7 @@ def build_reports(trades_path, out_dir):
 
     gate_cols = [c for c in entries.columns if c.startswith('gate_')]
     
-        for g in gate_cols:
+    for g in gate_cols:
         
             if f"{g}_entry" in trades:
             

@@ -65,15 +65,36 @@ def read_ohlcv_csv(path):
 
 
 def discover_symbols():
-    files_15 = glob.glob(os.path.join(DATA_PATHS['15minute'], "*.csv"))
+    import glob, os
+
+    fifteen_dir = DATA_PATHS['15minute']
+    files_15 = glob.glob(os.path.join(fifteen_dir, "*.csv"))
+
+    print(f"[discover_symbols] 15m dir: {fifteen_dir}")
+    print(f"[discover_symbols] 15m count: {len(files_15)}")
+    if files_15[:5]:
+        print("[discover_symbols] sample files:", [os.path.basename(p) for p in files_15[:5]])
+
     if not files_15:
-        print("[discover_symbols] No 15m files found in", DATA_PATHS['15minute'])
+        print("[discover_symbols] No 15m files found")
         return []
-    roots = [os.path.basename(p).rsplit('.', 1) for p in files_15]  # remove extension safely
-    symbols = [r.split('_') for r in roots]
+
+    # Remove extension without using splitext (avoids tuples entirely)
+    roots = [os.path.basename(p).rsplit(".", 1)[0] for p in files_15]
+
+    # If filenames like RELIANCE_15m.csv, take token before first underscore; else entire root
+    symbols = [r.split("_")[0] for r in roots]
+
+    # Deduplicate while preserving order
     symbols = list(dict.fromkeys(symbols))
-    print(f"[discover_symbols] Found {len}(symbols) symbols, sample: {symbols[:10]}")
+
+    # Sanity checks
+    assert all(isinstance(s, str) for s in symbols), f"Non-string symbol detected: {symbols[:5]}"
+    assert all(s for s in symbols), f"Empty symbol detected: {symbols[:5]}"
+
+    print(f"[discover_symbols] Found {len(symbols)} symbols, sample: {symbols[:10]}")
     return symbols
+
 
 
 def load_frames(symbol):

@@ -25,27 +25,47 @@ SLIP_STD_BP = 1.0            # slippage std dev
 
 # 2) Data loading
 def read_ohlcv_csv(path):
-df = pd.read_csv(path)
-cols_lower = {c.lower(): c for c in df.columns}
-ts_col = cols_lower.get('datetime') or cols_lower.get('date')
-if not ts_col:
-raise ValueError(f"No datetime/date column found in {path}")
-df[ts_col] = pd.to_datetime(df[ts_col], utc=True, errors='coerce')
-rename = {
-ts_col: 'datetime',
-cols_lower.get('open','open'): 'open',
-cols_lower.get('high','high'): 'high',
-cols_lower.get('low','low'): 'low',
-cols_lower.get('close','close'): 'close',
-cols_lower.get('volume','volume'): 'volume',
-}
-df = df.rename(columns=rename)
-need = ['datetime','open','high','low','close','volume']
-for c in need:
-if c not in df.columns:
-raise ValueError(f"Missing {c} in {path}")
-df = df[need].dropna().sort_values('datetime').reset_index(drop=True).set_index('datetime')
-return df
+    df = pd.read_csv(path)
+
+    # Build a case-insensitive map for incoming columns
+    cols_lower = {c.lower(): c for c in df.columns}
+
+    # Accept either 'datetime' or 'date' as timestamp
+    ts_src = cols_lower.get('datetime') or cols_lower.get('date')
+    if not ts_src:
+        raise ValueError(f"No datetime/date column found in {path}")
+
+    # Parse timestamp (set utc=True if timestamps are UTC; if they are local naive, set utc=False)
+    df[ts_src] = pd.to_datetime(df[ts_src], utc=True, errors='coerce')
+
+    # Map standard OHLCV names case-insensitively
+    open_src = cols_lower.get('open')
+    high_src = cols_lower.get('high')
+    low_src  = cols_lower.get('low')
+    close_src= cols_lower.get('close')
+    vol_src  = cols_lower.get('volume')
+
+    missing = [name for name, src in [
+        ('open', open_src), ('high', high_src), ('low', low_src),
+        ('close', close_src), ('volume', vol_src)
+    ] if src is None]
+    if missing:
+        raise ValueError(f"Missing columns {missing} in {path}")
+
+    # Rename to canonical names and select only needed columns
+    df = df.rename(columns={
+        ts_src: 'datetime',
+        open_src: 'open',
+        high_src: 'high',
+        low_src: 'low',
+        close_src: 'close',
+        vol_src: 'volume',
+    })
+
+    df = df[['datetime','open','high','low','close','volume']].dropna()
+    df = df.sort_values('datetime').reset_index(drop=True)
+    df = df.set_index('datetime')
+    return df
 
 def discover_symbols():
     files_15 = glob.glob(os.path.join(DATA_PATHS['15minute'], "*.csv"))

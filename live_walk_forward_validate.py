@@ -276,7 +276,7 @@ class LiveLikeBacktester:
         # If tz-aware, strip tz to keep clock time
             try:
                 bar_dt = bar_dt.tz_localize(None)
-        except Exception:
+            except Exception:
             # If already naive, ignore
         pass
         bar_time = bar_dt.to_pydatetime().time()

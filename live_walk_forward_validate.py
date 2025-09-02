@@ -116,7 +116,7 @@ pdly = pick_one(DATA_PATHS['daily'])
 
 if not (p15 and p1h and pdly):
     print(f"[load_frames v2] Missing file(s) for {symbol}: 15m={bool(p15)} 1h={bool(p1h)} dly={bool(pdly)}")
-    return None
+return None
 
 return read_ohlcv_csv(p15), read_ohlcv_csv(p1h), read_ohlcv_csv(pdly)[3][1]
 

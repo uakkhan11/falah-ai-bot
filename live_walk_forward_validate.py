@@ -102,7 +102,13 @@ def load_frames(symbol):
 
     def pick_one(folder):
         hits = glob.glob(os.path.join(folder, f"{symbol}*.csv"))
-        return hits if hits else None  # return a single path string
+        # Debug visibility
+        if not hits:
+            print(f"[load_frames] {symbol}: no match in {folder}")
+            return None
+        if len(hits) > 1:
+            print(f"[load_frames] {symbol}: multiple matches in {folder}, picking first: {os.path.basename(hits)}")
+        return hits  # return a single string path
 
     p15  = pick_one(DATA_PATHS['15minute'])
     p1h  = pick_one(DATA_PATHS['1hour'])
@@ -113,6 +119,7 @@ def load_frames(symbol):
         return None
 
     return read_ohlcv_csv(p15), read_ohlcv_csv(p1h), read_ohlcv_csv(pdly)
+
 
 # 3) Indicators and features
 def ema(x, span): return x.ewm(span=span, adjust=False).mean()

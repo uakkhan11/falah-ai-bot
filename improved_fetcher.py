@@ -129,7 +129,8 @@ class SmartHalalFetcher:
             params = {
                 'daily':    {'rsi': 14, 'ema_fast': 10, 'ema_slow': 21, 'atr': 14},
                 '15minute': {'rsi': 9,  'ema_fast': 5,  'ema_slow': 13, 'atr': 9},
-                '1hour':    {'rsi': 14, 'ema_fast': 9,  'ema_slow': 21, 'atr': 14}
+                '1hour':    {'rsi': 14, 'ema_fast': 9,  'ema_slow': 21, 'atr': 14},
+                '5minute':  {'rsi': 14, 'ema_fast': 5,  'ema_slow': 20, 'atr': 14}
             }[tf]
 
             # Calculate indicators with error handling

@@ -1,567 +1,388 @@
-import os
-import logging
-import pandas as pd
+# live_like_backtest.py
+# 1) Configuration
+import os, glob, math, random
 import numpy as np
-import talib
-import ta
-from xgboost import XGBClassifier
+import pandas as pd
+from dataclasses import dataclass
 
-# ---------- Logging ----------
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
-
-# ---------- Config ----------
 BASE_DIR = "/root/falah-ai-bot"
 DATA_PATHS = {
     'daily': os.path.join(BASE_DIR, "swing_data"),
     '1hour': os.path.join(BASE_DIR, "intraday_swing_data"),
-    '15minute': os.path.join(BASE_DIR, "scalping_data")
+    '15minute': os.path.join(BASE_DIR, "scalping_data"),
 }
-YEAR_FILTER = 2025
+RESULTS_DIR = os.path.join(BASE_DIR, "results_live_like")
+os.makedirs(RESULTS_DIR, exist_ok=True)
 
-# Strategy toggles (start simple, add later)
-STRAT_TREND_BREAKOUT = True
-STRAT_WITH_TREND_PULLBACK = False
-STRAT_EVENT_CONTINUATION = False
+# Execution and sizing parameters
+RISK_PER_TRADE = 0.01        # 1% risk
+ATR_MULT_STOP = 1.5          # ATR multiplier for stops
+TARGET_R = 2.0               # take-profit in R multiples
+COMMISSION_BPS = 1.0         # commission per side
+SPREAD_BP = 1.0              # half-spread cost
+SLIP_MEAN_BP = 2.0           # avg slippage
+SLIP_STD_BP = 1.0            # slippage std dev
 
-# Universe curation (optional)
-SYMBOL_WHITELIST = set([])  # e.g., {"INFIBEAM","HINDCOPPER","TDPOWERSYS"}
-SYMBOL_BLACKLIST = set(["LLOYDSENGG","SAGILITY","WELSPUNLIV"])
-
-# Entries and filters (loosened)
-VOLUME_MULT_BREAKOUT = 1.5
-ADX_THRESHOLD_BREAKOUT = 25
-ADX_THRESHOLD_DEFAULT = 20
-HOURLY_ADX_MIN = 22     # was 25
-DAILY_ADX_MIN = 18      # was 20
-
-# Exits
-ATR_SL_MULT = 1.3
-PROFIT_TARGET = 0.02
-TRAIL_TRIGGER = 0.02
-PARTIAL_TP_FRACTION = 0.5
-
-# Risk & capacity
-MAX_TRADES = 500
-MAX_POSITIONS = 5
-INITIAL_CAPITAL = 100000
-MIN_TRADE_VALUE = 1.0
-MAX_POSITION_FRACTION = 0.2
-BASE_RISK = 0.02
-
-# Holding horizon
-MAX_HOLD_BARS = 48
-
-# Costs & execution
-ROUND_TRIP_BPS = 0.002
-ADV_PARTICIPATION = 0.02
-ENTRY_AT_NEXT_BAR = True
-
-# ML gate (loosened composite)
-FEATURES = ["adx","atr","volume_ratio","adosc","hour_adx","volume_sma","macd_hist","vwap","roc","obv"]
-ML_PROBA_THRESHOLD = 0.5
-ML_COMPOSITE_MIN = 0.55   # was 0.6
-
-# Portfolio layer
-DAILY_LOSS_LIMIT = -0.015
-MAX_NEW_ENTRIES_PER_15M = 3
-
-# ---------- Data loading ----------
-def load_and_filter_2025(symbol):
-    symbol = str(symbol).strip().strip("()[]'")
-    def filter_year(df):
-        df['date'] = pd.to_datetime(df['date'])
-        return df[df['date'].dt.year == YEAR_FILTER].reset_index(drop=True)
-    paths = {
-        'daily': os.path.join(DATA_PATHS['daily'], f"{symbol}.csv"),
-        '1hour': os.path.join(DATA_PATHS['1hour'], f"{symbol}.csv"),
-        '15minute': os.path.join(DATA_PATHS['15minute'], f"{symbol}.csv"),
-    }
-    missing = [k for k,p in paths.items() if not os.path.isfile(p)]
-    if missing:
-        raise FileNotFoundError(f"Missing data files for {symbol}: {missing}")
-    daily = pd.read_csv(paths['daily'])
-    hourly = pd.read_csv(paths['1hour'])
-    m15 = pd.read_csv(paths['15minute'])
-    return filter_year(daily), filter_year(hourly), filter_year(m15)
-
-def add_indicators(df):
-    df = df.sort_values('date').reset_index(drop=True)
-    df['date'] = pd.to_datetime(df['date'])
-
-    # Weekly Donchian
-    df_weekly = df.set_index('date').resample('W-MON').agg({
-        'open':'first','high':'max','low':'min','close':'last','volume':'sum'
-    }).dropna().reset_index()
-    df_weekly['weekly_donchian_high'] = df_weekly['high'].rolling(20, min_periods=1).max()
-    df['weekly_donchian_high'] = df_weekly.set_index('date')['weekly_donchian_high'] \
-        .reindex(df['date'], method='ffill').values
-
-    # Trend & volatility
-    df['donchian_high'] = df['high'].rolling(20, min_periods=1).max()
-    df['ema50'] = ta.trend.ema_indicator(df['close'], window=50)
-    df['ema200'] = ta.trend.ema_indicator(df['close'], window=200)
-    adx_df = ta.trend.ADXIndicator(df['high'], df['low'], df['close'], window=14)
-    df['adx'] = adx_df.adx()
-    df['vol_sma20'] = df['volume'].rolling(20, min_periods=1).mean()
-    df['volume_sma'] = df['volume'].rolling(20, min_periods=1).mean()
-
-    bb = ta.volatility.BollingerBands(df['close'], window=20, window_dev=2)
-    df['bb_upper'] = bb.bollinger_hband()
-    df['bb_lower'] = bb.bollinger_lband()
-
-    # RSI and VWAP
-    df['rsi'] = ta.momentum.rsi(df['close'], window=14)
-    df['vwap'] = (df['close'] * df['volume']).cumsum() / (df['volume'].cumsum().replace(0, np.nan))
-
-    # ATR & chandelier
-    df['atr'] = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range()
-    atr_ce = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=22).average_true_range()
-    high22 = df['high'].rolling(22, min_periods=1).max()
-    df['chandelier_exit'] = high22 - 3.0 * atr_ce
-
-    # TA-Lib series
-    close = df['close'].values.astype(float)
-    high = df['high'].values.astype(float)
-    low = df['low'].values.astype(float)
-    volume = df['volume'].values.astype(float)
-
-    macd, macd_signal, macd_hist = talib.MACD(close)
-    df['macd_hist'] = macd_hist
-    df['roc'] = talib.ROC(close, timeperiod=10)
-    df['obv'] = talib.OBV(close, volume)
-    df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
-
-    for f in ["hour_adx", "adosc", "roc", "obv", "vwap", "volume_sma", "ema50"]:
-        if f not in df.columns:
-            df[f] = np.nan
+# 2) Data loading
+def read_ohlcv_csv(path):
+    df = pd.read_csv(path)
+    dt_col = 'datetime' if 'datetime' in df.columns else 'Date' if 'Date' in df.columns else df.columns
+    df[dt_col] = pd.to_datetime(df[dt_col], utc=True, errors='coerce')
+    df = df.rename(columns={
+        dt_col:'datetime',
+        'Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'
+    })
+    for c in ['open','high','low','close','volume']:
+        if c not in df.columns:
+            raise ValueError(f"Missing column {c} in {path}")
+    df = df[['datetime','open','high','low','close','volume']].dropna().sort_values('datetime').reset_index(drop=True)
+    df = df.set_index('datetime')
     return df
 
-def add_hourly_features_to_m15(m15_df, hourly_df):
-    hourly_df = hourly_df.copy()
-    m15_df = m15_df.copy()
-    hourly_df['date'] = pd.to_datetime(hourly_df['date'])
-    m15_df['date'] = pd.to_datetime(m15_df['date'])
-    hourly_df = hourly_df.set_index('date')
-    m15_df = m15_df.set_index('date')
-    for col in ['adx','atr','macd_hist']:
-        if col in hourly_df.columns:
-            m15_df['hour_'+col] = hourly_df[col].reindex(m15_df.index, method='ffill')
-    return m15_df.reset_index()
+def discover_symbols():
+    files_15 = glob.glob(os.path.join(DATA_PATHS['15minute'], "*.csv"))
+    syms = [os.path.splitext(os.path.basename(p)).split('_') for p in files_15]
+    return list(dict.fromkeys(syms))
 
-# ---------- Strategy signals (with datetime alignment) ----------
-def trend_breakout_signal(df, daily_df, hourly_df):
-    df = df.copy(); daily_df = daily_df.copy(); hourly_df = hourly_df.copy()
-    df['date'] = pd.to_datetime(df['date'])
-    daily_df['date'] = pd.to_datetime(daily_df['date'])
-    hourly_df['date'] = pd.to_datetime(hourly_df['date'])
-    m15_idx = df['date']
+def load_frames(symbol):
+    def find(fldr):
+        c = glob.glob(os.path.join(fldr, f"*{symbol}*.csv"))
+        return c if c else None
+    p15 = find(DATA_PATHS['15minute']); p1h = find(DATA_PATHS['1hour']); pdly = find(DATA_PATHS['daily'])
+    if not (p15 and p1h and pdly): return None
+    return read_ohlcv_csv(p15), read_ohlcv_csv(p1h), read_ohlcv_csv(pdly)
 
-    # Daily gate
-    d_ok = ((daily_df['ema50'] > daily_df['ema200']) & (daily_df['adx'] >= DAILY_ADX_MIN)).rename('d_ok')
-    d_ok.index = daily_df['date']
-    daily_gate = d_ok.reindex(m15_idx, method='ffill').fillna(False)
+# 3) Indicators and features
+def ema(x, span): return x.ewm(span=span, adjust=False).mean()
+def rsi(x, period=14):
+    d = x.diff(); up = d.clip(lower=0); dn = -d.clip(upper=0)
+    rg = up.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
+    rl = dn.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
+    rs = rg / rl.replace(0, np.nan)
+    return (100 - (100/(1+rs))).fillna(50)
+def macd(x, fast=12, slow=26, signal=9):
+    m = ema(x, fast) - ema(x, slow); s = ema(m, signal); h = m - s
+    return m, s, h
+def bollinger(x, window=20, k=2.0):
+    m = x.rolling(window).mean(); sd = x.rolling(window).std(ddof=0)
+    return m, m + k*sd, m - k*sd
+def atr(df, period=14):
+    pc = df['close'].shift(1)
+    tr = pd.concat([(df['high']-df['low']).abs(), (df['high']-pc).abs(), (df['low']-pc).abs()], axis=1).max(axis=1)
+    return tr.rolling(period).mean()
+def vwap_session(df, session='D'):
+    g = df.groupby(pd.Grouper(freq=session))
+    pv = g.apply(lambda x: (x['close']*x['volume']).cumsum()).reset_index(level=0, drop=True)
+    vv = g['volume'].cumsum()
+    return pv / vv
+def resample_no_lookahead(lower_df, higher_df, cols):
+    return higher_df[cols].shift(1).reindex(lower_df.index, method='ffill')
+def opening_range(df, minutes=15):
+    bars = max(1, minutes // 15)
+    grp = df.groupby(pd.Grouper(freq='D'))
+    or_hi = grp['high'].transform(lambda x: x.iloc[:bars].max() if len(x) else np.nan)
+    or_lo = grp['low'].transform(lambda x: x.iloc[:bars].min() if len(x) else np.nan)
+    return or_hi, or_lo
 
-    # Hourly gate
-    h_ok_series = (hourly_df.set_index('date')['adx'] >= HOURLY_ADX_MIN)
-    hourly_gate = h_ok_series.reindex(m15_idx, method='ffill').fillna(False)
+def build_features(df15, df1h, dfd):
+    X = df15.copy()
+    X['vwap'] = vwap_session(X, 'D')
+    X['ema9'] = ema(X['close'], 9); X['ema21'] = ema(X['close'], 21)
+    X['bb_mid'], X['bb_up'], X['bb_dn'] = bollinger(X['close'], 20, 2.0)
+    X['rsi14'] = rsi(X['close'], 14)
+    X['macd'], X['macd_sig'], X['macd_hist'] = macd(X['close'])
+    X['atr14'] = atr(X, 14)
+    X['or_hi'], X['or_lo'] = opening_range(X, 15)
 
-    # 15m breakout with volume & weekly context
-    cond_don = df['close'] > df['donchian_high'].shift(1)
-    cond_vol = df['volume'] > VOLUME_MULT_BREAKOUT * df['vol_sma20']
-    # cond_wk = df['close'] > df['weekly_donchian_high'].shift(1)
-    # brk = cond_don & cond_vol & cond_wk
-    brk = cond_don & cond_vol
+    H = df1h.copy()
+    H['ema9_h'] = ema(H['close'], 9); H['ema21_h'] = ema(H['close'], 21); H['rsi14_h'] = rsi(H['close'], 14)
+    D = dfd.copy()
+    D['ema200_d'] = ema(D['close'], 200); D['rsi14_d'] = rsi(D['close'], 14)
 
-    sig = (brk & daily_gate & hourly_gate).astype(int)
-    return sig
+    X = X.join(resample_no_lookahead(X, H, ['ema9_h','ema21_h','rsi14_h']))
+    X = X.join(resample_no_lookahead(X, D, ['ema200_d','rsi14_d']))
+    return X
 
-def with_trend_pullback_signal(df, daily_df, hourly_df):
-    # disabled by toggle; keep function for later use
-    df = df.copy(); daily_df = daily_df.copy(); hourly_df = hourly_df.copy()
-    df['date'] = pd.to_datetime(df['date'])
-    daily_df['date'] = pd.to_datetime(daily_df['date'])
-    hourly_df['date'] = pd.to_datetime(hourly_df['date'])
-    m15_idx = df['date']
+# 4) Signal gates with attribution flags
+def signal_gates_row(r):
+    gates = {}
+    gates['regime_up'] = (r['close'] > r['ema200_d']) and (r['rsi14_d'] >= 45)
+    gates['regime_dn'] = (r['close'] < r['ema200_d']) and (r['rsi14_d'] <= 55)
+    gates['tf1_up'] = (r['ema9_h'] > r['ema21_h'])
+    gates['tf1_dn'] = (r['ema9_h'] < r['ema21_h'])
+    gates['value_long'] = (r['close'] >= r['vwap']) and (r['close'] >= r['ema21'])
+    gates['value_short'] = (r['close'] <= r['vwap']) and (r['close'] <= r['ema21'])
+    gates['pullback_long'] = (r['close'] <= r['ema9']*1.01)
+    gates['pullback_short'] = (r['close'] >= r['ema9']*0.99)
+    gates['momo_long'] = (r['macd'] > r['macd_sig']) and (r['rsi14'] > 50)
+    gates['momo_short'] = (r['macd'] < r['macd_sig']) and (r['rsi14'] < 50)
+    gates['orb_long'] = (r['close'] > r['or_hi']) if not pd.isna(r['or_hi']) else False
+    gates['orb_short'] = (r['close'] < r['or_lo']) if not pd.isna(r['or_lo']) else False
 
-    d_ok = ((daily_df['ema50'] > daily_df['ema200']) & (daily_df['adx'] >= DAILY_ADX_MIN)).rename('d_ok')
-    d_ok.index = daily_df['date']
-    daily_gate = d_ok.reindex(m15_idx, method='ffill').fillna(False)
-    h_ok_series = (hourly_df.set_index('date')['adx'] >= HOURLY_ADX_MIN)
-    hourly_gate = h_ok_series.reindex(m15_idx, method='ffill').fillna(False)
+    long_sig = gates['regime_up'] and gates['tf1_up'] and gates['value_long'] and (gates['pullback_long'] or gates['orb_long']) and gates['momo_long']
+    short_sig = gates['regime_dn'] and gates['tf1_dn'] and gates['value_short'] and (gates['pullback_short'] or gates['orb_short']) and gates['momo_short']
+    return bool(long_sig), bool(short_sig), gates
 
-    ema20 = ta.trend.ema_indicator(df['close'], window=20)
-    ema50_15 = ta.trend.ema_indicator(df['close'], window=50)
-    rsi = df['rsi']
-    pulled = (df['low'] <= ema20) | (df['low'] <= ema50_15)
-    reclaim = (df['close'] > df['vwap']) & (df['close'] > ema20)
-    rsi_ok = (rsi >= 35) & (rsi <= 50)
-    obv_rising = df['obv'].diff() > 0
-    adosc_pos = df['adosc'] > 0
+# 5) Event classes and execution model
+@dataclass
+class MarketEvent:
+    time: pd.Timestamp
+    o: float; h: float; l: float; c: float; v: float
 
-    sig = (pulled.shift(1).fillna(False) & reclaim & rsi_ok & obv_rising & adosc_pos & daily_gate & hourly_gate).astype(int)
-    return sig
+class ExecModel:
+    def __init__(self, commission_bps=COMMISSION_BPS, spread_bp=SPREAD_BP, slip_mean_bp=SLIP_MEAN_BP, slip_std_bp=SLIP_STD_BP):
+        self.com_bps = commission_bps
+        self.spread_bp = spread_bp
+        self.slip_mu = slip_mean_bp
+        self.slip_sd = slip_std_bp
+    def fee(self, notional): return notional * (self.com_bps/10000.0)
+    def apply_spread(self, ref, side):
+        mult = 1 + (self.spread_bp/10000.0) * (1 if side=='buy' else -1)
+        return ref * mult
+    def slippage_bps(self): return max(0.0, random.gauss(self.slip_mu, self.slip_sd))
 
-def event_continuation_signal(df, daily_df, hourly_df):
-    # disabled by toggle; keep function for later use
-    df = df.copy(); daily_df = daily_df.copy(); hourly_df = hourly_df.copy()
-    df['date'] = pd.to_datetime(df['date'])
-    daily_df['date'] = pd.to_datetime(daily_df['date'])
-    hourly_df['date'] = pd.to_datetime(hourly_df['date'])
-    m15_idx = df['date']
+# 6) Live-like backtester (event-driven)
+class LiveLikeBacktester:
+    def __init__(self, symbol, df15, df1h, dfd, cash=1_000_000):
+        self.symbol = symbol
+        self.cash = cash
+        self.equity = cash
+        self.exec = ExecModel()
+        self.feats = build_features(df15, df1h, dfd)
+        self.df = df15.loc[self.feats.index]
+        self.pos = 0
+        self.qty = 0
+        self.avg = np.nan
+        self.stop = np.nan
+        self.target = np.nan
+        self.ledger = []
+        self.equity_curve = []
+        self._last_gates = {}
 
-    d_ok_series = (daily_df['ema50'] > daily_df['ema200'])
-    d_ok_series.index = daily_df['date']
-    d_ok = d_ok_series.reindex(m15_idx, method='ffill').fillna(False)
-    h_ok_series = (hourly_df.set_index('date')['adx'] >= HOURLY_ADX_MIN)
-    h_ok = h_ok_series.reindex(m15_idx, method='ffill').fillna(False)
+    def size_from_atr(self, open_price, atr_val):
+        if np.isnan(atr_val) or atr_val <= 0: return 0, 0.0
+        stop_dist = max(atr_val * ATR_MULT_STOP, open_price*0.002)
+        risk_cash = self.equity * RISK_PER_TRADE
+        qty = int(risk_cash // stop_dist)
+        return max(qty,0), stop_dist
 
-    x = df.copy()
-    x['date_only'] = pd.to_datetime(x['date']).dt.date
-    day_meds = x.groupby('date_only')['volume'].transform('median')
-    first_hour = pd.to_datetime(x['date']).dt.hour == 9
-    event_day = (first_hour & (x['volume'] > 2.5 * day_meds)).groupby(x['date_only']).transform('max')
-    event_gate = pd.Series(event_day.values, index=x.index).reindex(x.index, method='ffill').fillna(False)
+    def on_bar(self, t, row):
+        feats = self.feats.loc[t]
+        r = {**feats.to_dict(), 'open': row['open'], 'high': row['high'], 'low': row['low'], 'close': row['close']}
+        long_sig, short_sig, gates = signal_gates_row(r)
+        self._last_gates = gates
 
-    day_high = x.groupby('date_only')['high'].transform('cummax')
-    after_first_hour = pd.to_datetime(x['date']).dt.hour >= 10
-    vol_ok = x['volume'] > VOLUME_MULT_BREAKOUT * x['vol_sma20']
-    cont = after_first_hour & vol_ok & (x['close'] > day_high.shift(1))
+        # exits
+        if self.pos != 0:
+            if self.pos > 0:
+                if row['low'] <= self.stop:
+                    px = self.exec.apply_spread(self.stop, 'sell')
+                    slip = self.exec.slippage_bps(); px *= 1 - slip/10000.0
+                    fee = self.exec.fee(px*self.qty)
+                    pnl = self.qty*(px - self.avg) - fee
+                    self.equity += pnl
+                    self.ledger.append({'time':t,'symbol':self.symbol,'side':'sell','reason':'stop','qty':self.qty,'price':px,'fee':fee,'slip_bp':slip,'pnl':pnl,'equity':self.equity})
+                    self.pos, self.qty, self.avg = 0, 0, np.nan
+                elif row['high'] >= self.target:
+                    px = self.exec.apply_spread(self.target, 'sell')
+                    slip = self.exec.slippage_bps(); px *= 1 - slip/10000.0
+                    fee = self.exec.fee(px*self.qty)
+                    pnl = self.qty*(px - self.avg) - fee
+                    self.equity += pnl
+                    self.ledger.append({'time':t,'symbol':self.symbol,'side':'sell','reason':'target','qty':self.qty,'price':px,'fee':fee,'slip_bp':slip,'pnl':pnl,'equity':self.equity})
+                    self.pos, self.qty, self.avg = 0, 0, np.nan
+            else:
+                if row['high'] >= self.stop:
+                    px = self.exec.apply_spread(self.stop, 'buy')
+                    slip = self.exec.slippage_bps(); px *= 1 + slip/10000.0
+                    fee = self.exec.fee(px*self.qty)
+                    pnl = (self.avg - px)*self.qty - fee
+                    self.equity += pnl
+                    self.ledger.append({'time':t,'symbol':self.symbol,'side':'buy','reason':'stop','qty':self.qty,'price':px,'fee':fee,'slip_bp':slip,'pnl':pnl,'equity':self.equity})
+                    self.pos, self.qty, self.avg = 0, 0, np.nan
+                elif row['low'] <= self.target:
+                    px = self.exec.apply_spread(self.target, 'buy')
+                    slip = self.exec.slippage_bps(); px *= 1 + slip/10000.0
+                    fee = self.exec.fee(px*self.qty)
+                    pnl = (self.avg - px)*self.qty - fee
+                    self.equity += pnl
+                    self.ledger.append({'time':t,'symbol':self.symbol,'side':'buy','reason':'target','qty':self.qty,'price':px,'fee':fee,'slip_bp':slip,'pnl':pnl,'equity':self.equity})
+                    self.pos, self.qty, self.avg = 0, 0, np.nan
 
-    sig = (event_gate & cont & d_ok & h_ok).astype(int)
-    return sig
+        return long_sig, short_sig
 
-def build_entry_signals(m15, daily, hourly):
-    m15 = m15.copy()
-    m15['entry_signal'] = 0
-    m15['entry_type'] = ''
+    def run(self):
+        pending_entry = None
+        for i, (t, row) in enumerate(self.df.iterrows()):
+            # execute pending entry at open
+            if pending_entry is not None and self.pos == 0:
+                side = pending_entry
+                atrv = self.feats.loc[t, 'atr14']
+                open_px = row['open']
+                qty, stop_dist = self.size_from_atr(open_px, atrv)
+                if qty > 0:
+                    gates_pref = {f"gate_{k}": bool(v) for k,v in self._last_gates.items()}
+                    if side == 'long':
+                        px = self.exec.apply_spread(open_px, 'buy')
+                        slip = self.exec.slippage_bps(); px *= 1 + slip/10000.0
+                        fee = self.exec.fee(px*qty); self.equity -= fee
+                        self.pos, self.qty, self.avg = 1, qty, px
+                        self.stop = px - stop_dist; self.target = px + TARGET_R*stop_dist
+                        self.ledger.append({'time':t,'symbol':self.symbol,'side':'buy','reason':'signal','qty':qty,'price':px,'fee':fee,'slip_bp':slip,'pnl':0.0,'equity':self.equity, **gates_pref})
+                    else:
+                        px = self.exec.apply_spread(open_px, 'sell')
+                        slip = self.exec.slippage_bps(); px *= 1 - slip/10000.0
+                        fee = self.exec.fee(px*qty); self.equity -= fee
+                        self.pos, self.qty, self.avg = -1, qty, px
+                        self.stop = px + stop_dist; self.target = px - TARGET_R*stop_dist
+                        self.ledger.append({'time':t,'symbol':self.symbol,'side':'sell','reason':'signal','qty':qty,'price':px,'fee':fee,'slip_bp':slip,'pnl':0.0,'equity':self.equity, **gates_pref})
+                pending_entry = None
 
-    if STRAT_TREND_BREAKOUT:
-        tb = trend_breakout_signal(m15, daily, hourly)
-        m15.loc[tb == 1, ['entry_signal','entry_type']] = [1, 'Trend_Breakout']
+            long_sig, short_sig = self.on_bar(t, row)
 
-    if STRAT_WITH_TREND_PULLBACK:
-        wtp = with_trend_pullback_signal(m15, daily, hourly)
-        idx = (wtp == 1) & (m15['entry_signal'] == 0)
-        m15.loc[idx, ['entry_signal','entry_type']] = [1, 'WithTrend_Pullback']
+            if self.pos == 0:
+                if long_sig: pending_entry = 'long'
+                elif short_sig: pending_entry = 'short'
+                else: pending_entry = None
 
-    if STRAT_EVENT_CONTINUATION:
-        ec = event_continuation_signal(m15, daily, hourly)
-        idx = (ec == 1) & (m15['entry_signal'] == 0)
-        m15.loc[idx, ['entry_signal','entry_type']] = [1, 'Event_Continuation']
+            # mark-to-market
+            mtm = 0.0
+            if self.pos != 0:
+                if self.pos > 0: mtm = self.qty * (row['close'] - self.avg)
+                else:            mtm = self.qty * (self.avg - row['close'])
+            self.equity_curve.append({'time':t,'symbol':self.symbol,'equity':self.equity+mtm,'cash':self.equity,'pos':self.pos,'qty':self.qty})
 
-    return m15
+        # force-close at final close
+        if self.pos != 0:
+            t = self.df.index[-1]; px = self.df['close'].iloc[-1]
+            fee = self.exec.fee(px*self.qty)
+            if self.pos > 0:
+                pnl = self.qty*(px - self.avg) - fee
+                self.ledger.append({'time':t,'symbol':self.symbol,'side':'sell','reason':'eod','qty':self.qty,'price':px,'fee':fee,'slip_bp':0.0,'pnl':pnl,'equity':self.equity+pnl})
+            else:
+                pnl = (self.avg - px)*self.qty - fee
+                self.ledger.append({'time':t,'symbol':self.symbol,'side':'buy','reason':'eod','qty':self.qty,'price':px,'fee':fee,'slip_bp':0.0,'pnl':pnl,'equity':self.equity+pnl})
+            self.equity += pnl
+            self.pos = 0; self.qty = 0
 
-# ---------- ML ----------
-def fit_xgb(X_train, y_train):
-    model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42,
-                          max_depth=5, learning_rate=0.1, subsample=0.8,
-                          colsample_bytree=0.8, n_estimators=200)
-    model.fit(X_train, y_train)
-    return model
+        return pd.DataFrame(self.ledger), pd.DataFrame(self.equity_curve)
 
-def walk_forward_predict(m15_df, hourly_df, period='M'):
-    df = m15_df.copy()
-    df['future_return'] = df['close'].shift(-10) / df['close'] - 1
-    df['label'] = (df['future_return'] > 0.01).astype(int)
-    df = df.dropna(subset=FEATURES + ['label']).copy()
+# 7) Reporting: indicator attribution, combos, ablation
+def build_reports(trades_path, out_dir):
+    df = pd.read_csv(trades_path, parse_dates=['time'])
+    exit_rows = df[df['reason'].isin(['stop','target','eod'])].copy()
+    gate_cols = [c for c in df.columns if c.startswith('gate_')]
 
-    df['date'] = pd.to_datetime(df['date'])
-    df.set_index('date', inplace=True)
-    months = sorted(df.index.to_period(period).unique())
+    # trade_id per symbol
+    df['trade_id'] = df.groupby('symbol')['reason'].apply(lambda x: (x=='signal').cumsum())
+    entries = df[df['reason']=='signal'][['symbol','trade_id'] + gate_cols]
+    trades = exit_rows.merge(entries, on=['symbol','trade_id'], how='left')
 
-    proba = pd.Series(index=df.index, dtype=float)
-    gate = pd.Series(index=df.index, dtype=float)
+    trades['label_profit'] = (trades['pnl'] > 0).astype(int)
+    trades['R_proxy'] = trades['pnl'] / (trades['price'].abs() * trades['qty'].replace(0,np.nan))
 
-    for i in range(1, len(months)):
-        train_end = months[i-1].end_time
-        val_period = months[i]
-        val_start, val_end = val_period.start_time, val_period.end_time
-        train_idx = df.index <= train_end
-        val_idx = (df.index >= val_start) & (df.index <= val_end)
-        if train_idx.sum() < 500 or val_idx.sum() == 0:
-            continue
-        X_train = df.loc[train_idx, FEATURES]
-        y_train = df.loc[train_idx, 'label']
-        model = fit_xgb(X_train, y_train)
-        proba.loc[val_idx] = model.predict_proba(df.loc[val_idx, FEATURES])[:, 1]
+    def profit_factor(x):
+        pos = x[x>0].sum(); neg = -x[x<0].sum()
+        return pos/neg if neg>0 else np.nan
 
-        hour_adx = df.loc[val_idx, 'hour_adx'].fillna(0)
-        align_factor = (hour_adx / 50.0).clip(upper=1.0)
-        composite = proba.loc[val_idx].fillna(0) * align_factor
-        gate.loc[val_idx] = ((proba.loc[val_idx] >= ML_PROBA_THRESHOLD) & (composite >= ML_COMPOSITE_MIN)).astype(int)
+    # Indicator report
+    rows = []
+    base_hit = trades['label_profit'].mean()
+    for g in gate_cols:
+        sub = trades[trades[g]==True]
+        if len(sub)==0: continue
+        rows.append({
+            'indicator': g,
+            'n_trades': len(sub),
+            'win_rate': sub['label_profit'].mean(),
+            'profit_factor': profit_factor(sub['pnl']),
+            'avg_R_proxy': sub['R_proxy'].mean(),
+            'precision': sub['label_profit'].mean(),
+            'recall': (sub['label_profit']==1).mean() * len(sub)/max(1, len(trades[trades['label_profit']==1])),
+            'lift_over_baseline': (sub['label_profit'].mean()/base_hit) if base_hit>0 else np.nan
+        })
+    ind_rep = pd.DataFrame(rows).sort_values(['profit_factor','win_rate'], ascending=False)
+    ind_rep.to_csv(os.path.join(out_dir, "indicator_report.csv"), index=False)
 
-    df['ml_proba'] = proba
-    df['ml_signal'] = gate.fillna(0).astype(int)
-    df.reset_index(inplace=True)
-    return df
+    # Combo report (pairs)
+    from itertools import combinations
+    rows = []
+    for a,b in combinations(gate_cols, 2):
+        sub = trades[(trades[a]==True) & (trades[b]==True)]
+        if len(sub) < 20: continue
+        rows.append({
+            'combo': f"{a}+{b}",
+            'n_trades': len(sub),
+            'win_rate': sub['label_profit'].mean(),
+            'profit_factor': profit_factor(sub['pnl']),
+            'avg_R_proxy': sub['R_proxy'].mean(),
+            'lift_over_baseline': (sub['label_profit'].mean()/base_hit) if base_hit>0 else np.nan
+        })
+    combo_rep = pd.DataFrame(rows).sort_values(['profit_factor','win_rate'], ascending=False)
+    combo_rep.to_csv(os.path.join(out_dir, "combo_report.csv"), index=False)
 
-# ---------- Sizing ----------
-def dynamic_position_sizing(prob, atr, capital):
-    atr = float(atr) if atr and atr > 0 else 1.0
-    size_val = (BASE_RISK * capital) / atr
-    size_val *= max(float(prob), 0.5)
-    size_val = min(size_val, capital * MAX_POSITION_FRACTION)
-    return max(size_val, 0.0)
+    # Ablation (drop-one gate)
+    def metrics(d):
+        return pd.Series({
+            'n_trades': len(d),
+            'win_rate': d['label_profit'].mean(),
+            'avg_R_proxy': d['R_proxy'].mean(),
+            'profit_factor': profit_factor(d['pnl'])
+        })
+    base_m = metrics(trades)
+    rows = []
+    for g in gate_cols:
+        sub = trades[~(trades[g]==True)]
+        m = metrics(sub)
+        rows.append({
+            'drop_gate': g,
+            'base_win_rate': base_m['win_rate'],
+            'base_profit_factor': base_m['profit_factor'],
+            'base_avg_R_proxy': base_m['avg_R_proxy'],
+            'drop_win_rate': m['win_rate'],
+            'drop_profit_factor': m['profit_factor'],
+            'drop_avg_R_proxy': m['avg_R_proxy'],
+            'delta_win': m['win_rate'] - base_m['win_rate'],
+            'delta_profit_factor': m['profit_factor'] - base_m['profit_factor'],
+            'delta_avg_R_proxy': m['avg_R_proxy'] - base_m['avg_R_proxy'],
+        })
+    abl_rep = pd.DataFrame(rows).sort_values(['delta_profit_factor','delta_win'], ascending=False)
+    abl_rep.to_csv(os.path.join(out_dir, "ablation_report.csv"), index=False)
 
-# ---------- Backtest with portfolio risk ----------
-def backtest_live_like(df, symbol, capital=INITIAL_CAPITAL, day_loss_limit=DAILY_LOSS_LIMIT):
-    cash = capital
-    positions = {}
-    trades = []
-    trade_count = 0
-    df = df.copy().reset_index(drop=True)
+# 8) Batch run over universe and write outputs
+def run_universe(symbols, cash=1_000_000):
+    all_trades, all_equity = [], []
+    for sym in symbols:
+        frames = load_frames(sym)
+        if frames is None: continue
+        df15, df1h, dfd = frames
+        start = max(df15.index.min(), df1h.index.min(), dfd.index.min())
+        end = min(df15.index.max(), df1h.index.max(), dfd.index.max())
+        df15 = df15[(df15.index>=start)&(df15.index<=end)]
+        df1h = df1h[(df1h.index>=start)&(df1h.index<=end)]
+        dfd = dfd[(dfd.index>=start)&(dfd.index<=end)]
+        if len(df15) < 2000: continue
 
-    # Portfolio-level trackers (per day)
-    df['day'] = pd.to_datetime(df['date']).dt.date
-    daily_realized_pnl = {}
-    new_entries_window = {}
+        eng = LiveLikeBacktester(sym, df15, df1h, dfd, cash=cash)
+        trades, eq = eng.run()
+        if not trades.empty: all_trades.append(trades)
+        if not eq.empty: all_equity.append(eq)
 
-    def can_enter(now_dt):
-        # Daily loss check (realized PnL only)
-        day = now_dt.date()
-        realized = daily_realized_pnl.get(day, 0.0)
-        if realized < day_loss_limit * capital:
-            return False
-        # Entry throttle per 15m window
-        window_key = (day, now_dt.hour, now_dt.minute//15)
-        count = new_entries_window.get(window_key, 0)
-        if count >= MAX_NEW_ENTRIES_PER_15M:
-            return False
-        return True
+    trades_df = pd.concat(all_trades, ignore_index=True) if all_trades else pd.DataFrame(columns=['time','symbol','side','reason','qty','price','fee','slip_bp','pnl','equity'])
+    eq_df = pd.concat(all_equity, ignore_index=True) if all_equity else pd.DataFrame(columns=['time','symbol','equity','cash','pos','qty'])
+    return trades_df, eq_df
 
-    for i in range(1, len(df)):
-        row = df.iloc[i]
-        date = pd.to_datetime(row['date'])
-        price = float(row['close'])
-        sig = int(row.get('entry_signal', 0))
-        etype = row.get('entry_type', '')
+if __name__ == "__main__":
+    syms = discover_symbols()
+    trades, equity = run_universe(syms)
+    trades_path = os.path.join(RESULTS_DIR, "trades.csv")
+    equity_path = os.path.join(RESULTS_DIR, "equity_curve.csv")
+    positions_path = os.path.join(RESULTS_DIR, "positions.csv")
 
-        # Exits
-        to_close = []
-        for pid, pos in list(positions.items()):
-            ret = (price - pos['entry_price']) / pos['entry_price']
-            bars_held = i - pos['entry_idx']
-            atr_stop = pos['entry_price'] - ATR_SL_MULT * pos['entry_atr']
-            pos['high'] = max(pos['high'], price)
-            # trail logic
-            if (not pos['trail_active']) and ret >= TRAIL_TRIGGER:
-                pos['trail_active'] = True
-                pos['trail_stop'] = row['chandelier_exit']
-            if pos['trail_active'] and row['chandelier_exit'] > pos['trail_stop']:
-                pos['trail_stop'] = row['chandelier_exit']
+    trades.to_csv(trades_path, index=False)
+    equity.to_csv(equity_path, index=False)
+    equity[['time','symbol','pos','qty']].to_csv(positions_path, index=False)
 
-            # Partial TP
-            if (not pos.get('partial_taken', False)) and ret >= PROFIT_TARGET:
-                part_shares = pos['shares'] * PARTIAL_TP_FRACTION
-                sell_val = part_shares * price
-                buy_val = part_shares * pos['entry_price']
-                costs = ROUND_TRIP_BPS * (buy_val + sell_val)
-                pnl = sell_val - buy_val - costs
-                cash += sell_val
-                trades.append({
-                    'symbol': symbol, 'entry_date': pos['entry_date'], 'exit_date': date,
-                    'pnl': pnl, 'entry_type': pos['entry_type'], 'exit_reason': 'Partial_TP'
-                })
-                pos['shares'] -= part_shares
-                pos['partial_taken'] = True
-                daily_realized_pnl[date.date()] = daily_realized_pnl.get(date.date(), 0.0) + pnl
-                continue
-
-            # Full exit
-            exit_reason = None
-            if price <= atr_stop:
-                exit_reason = 'ATR Stop Loss'
-            elif pos['trail_active'] and price <= pos['trail_stop']:
-                exit_reason = 'Chandelier Exit'
-            elif bars_held >= MAX_HOLD_BARS:
-                exit_reason = 'Time Exit'
-
-            if exit_reason:
-                buy_val = pos['shares'] * pos['entry_price']
-                sell_val = pos['shares'] * price
-                costs = ROUND_TRIP_BPS * (buy_val + sell_val)
-                pnl = sell_val - buy_val - costs
-                cash += sell_val
-                trades.append({
-                    'symbol': symbol, 'entry_date': pos['entry_date'], 'exit_date': date,
-                    'pnl': pnl, 'entry_type': pos['entry_type'], 'exit_reason': exit_reason
-                })
-                to_close.append(pid)
-                trade_count += 1
-                daily_realized_pnl[date.date()] = daily_realized_pnl.get(date.date(), 0.0) + pnl
-
-        for pid in to_close:
-            positions.pop(pid, None)
-        if trade_count >= MAX_TRADES:
-            break
-
-        # Entries
-        if sig == 1 and len(positions) < MAX_POSITIONS and cash > 0 and can_enter(date):
-            prob = float(row.get('ml_proba', 0.5))
-            atr = float(row['atr']) if not np.isnan(row['atr']) else 1.0
-            size_val = dynamic_position_sizing(prob, atr, cash)
-            # Liquidity cap
-            bar_val = float(row['close']) * float(row['volume'])
-            liq_cap = ADV_PARTICIPATION * bar_val
-            size_val = min(size_val, liq_cap)
-            if size_val < MIN_TRADE_VALUE:
-                continue
-
-            exec_price = price
-            exec_idx = i
-            if ENTRY_AT_NEXT_BAR and i+1 < len(df):
-                exec_price = float(df.iloc[i+1].get('open', df.iloc[i+1]['close']))
-                exec_idx = i+1
-
-            shares = size_val / exec_price
-            buy_val = shares * exec_price
-            entry_costs = ROUND_TRIP_BPS * buy_val
-            if buy_val + entry_costs > cash:
-                continue
-
-            cash -= buy_val
-            positions[len(positions)+1] = {
-                'entry_date': df.iloc[exec_idx]['date'],
-                'entry_price': exec_price,
-                'shares': shares,
-                'high': exec_price,
-                'trail_active': False,
-                'trail_stop': 0.0,
-                'entry_atr': atr,
-                'entry_type': etype,
-                'entry_idx': exec_idx,
-                'partial_taken': False
-            }
-            window_key = (date.date(), date.hour, date.minute//15)
-            new_entries_window[window_key] = new_entries_window.get(window_key, 0) + 1
-
-    return trades
-
-# ---------- Orchestration ----------
-def prepare_data(symbol):
-    daily, hourly, m15 = load_and_filter_2025(symbol)
-    daily = add_indicators(daily)
-    hourly = add_indicators(hourly)
-    m15 = add_indicators(m15)
-    m15 = add_hourly_features_to_m15(m15, hourly)
-    # build entries
-    m15 = build_entry_signals(m15, daily, hourly)
-    m15 = m15.dropna(subset=['ema200']).reset_index(drop=True)
-    return daily, hourly, m15
-
-def extract_trade_stats(trades):
-    df = pd.DataFrame(trades)
-    if df.empty:
-        return {}
-    return {
-        'Total Trades': len(df),
-        'Winning Trades': int((df['pnl'] > 0).sum()),
-        'Losing Trades': int((df['pnl'] <= 0).sum()),
-        'Win Rate %': round((df['pnl'] > 0).mean() * 100, 2),
-        'Avg PnL per Trade': round(df['pnl'].mean(), 2),
-        'Best PnL': round(df['pnl'].max(), 2),
-        'Worst PnL': round(df['pnl'].min(), 2),
-        'Total PnL': round(df['pnl'].sum(), 2)
-    }
-
-def walk_forward_predict_gate(m15, hourly):
-    m15_ml = walk_forward_predict(m15, hourly)
-    # m15_ml['entry_signal'] = ((m15_ml['entry_signal'] == 1) & (m15_ml['ml_signal'] == 1)).astype(int)
-    m15_ml['entry_signal'] = (m15_ml['entry_signal'] == 1).astype(int)
-    return m15_ml
-
-# ---------- Summary Reporting ----------
-def summarize_and_save(trades_df, stats_df):
-    total_trades = len(trades_df)
-    wins = int((trades_df['pnl'] > 0).sum())
-    losses = int((trades_df['pnl'] <= 0).sum())
-    win_rate = round((wins / total_trades) * 100, 2) if total_trades else 0.0
-    total_pnl = round(trades_df['pnl'].sum(), 2) if total_trades else 0.0
-    avg_pnl = round(trades_df['pnl'].mean(), 2) if total_trades else 0.0
-
-    by_exit = (trades_df.groupby('exit_reason')['pnl']
-               .agg(['count','sum','mean'])
-               .rename(columns={'count':'trades','sum':'total_pnl','mean':'avg_pnl'})
-               .reset_index())
-    by_exit.to_csv('walk_forward_by_exit_v21.csv', index=False)
-
-    by_entry = (trades_df.groupby('entry_type')['pnl']
-               .agg(['count','sum','mean'])
-               .rename(columns={'count':'trades','sum':'total_pnl','mean':'avg_pnl'})
-               .reset_index())
-    by_entry.to_csv('walk_forward_by_entry_v21.csv', index=False)
-
-    stats_df.to_csv('walk_forward_stats_v21.csv', index=False)
-
-    print('\n===== Walk-Forward Summary (v2.1 loosened) =====')
-    print(f'Total trades: {total_trades}')
-    print(f'Wins: {wins} | Losses: {losses} | Win rate: {win_rate}%')
-    print(f'Total PnL: {total_pnl} | Avg PnL/trade: {avg_pnl}')
-    print('Top 5 symbols by Total PnL:')
-    if not stats_df.empty and 'Total PnL' in stats_df.columns:
-        print(stats_df.sort_values('Total PnL', ascending=False).head(5))
-    else:
-        print('(no stats)')
-    print('\nBy exit reason (saved to walk_forward_by_exit_v21.csv):')
-    print(by_exit.head())
-    print('\nBy entry type (saved to walk_forward_by_entry_v21.csv):')
-    print(by_entry.head())
-
-def run_walk_forward(symbols):
-    # Apply universe curation
-    if SYMBOL_WHITELIST:
-        symbols = [s for s in symbols if s in SYMBOL_WHITELIST]
-    if SYMBOL_BLACKLIST:
-        symbols = [s for s in symbols if s not in SYMBOL_BLACKLIST]
-
-    all_stats, all_trades = [], []
-    logging.info(f"Discovered {len(symbols)} symbols (post-curation)")
-    for idx, symbol in enumerate(symbols, 1):
-        logging.info(f"[{idx}/{len(symbols)}] {symbol}")
-        try:
-            daily, hourly, m15 = prepare_data(symbol)
-        except FileNotFoundError as e:
-            logging.warning(str(e))
-            continue
-        if m15.empty:
-            logging.warning(f"No 2025 data after warmup for {symbol}; skipping")
-            continue
-        m15_ml = walk_forward_predict_gate(m15, hourly)
-        n_sig = int(m15_ml['entry_signal'].sum())
-        logging.info(f"Signals: {n_sig}")
-        trades = backtest_live_like(m15_ml, symbol)
-        logging.info(f"Trades: {len(trades)}")
-        stats = extract_trade_stats(trades)
-        stats.update({'Symbol': symbol, 'Strategy': 'ML+Regime Walk-Forward v2.1 loosened'})
-        all_stats.append(stats)
-        for t in trades:
-            t['Symbol'] = symbol
-        all_trades.extend(trades)
-
-    stats_df = pd.DataFrame(all_stats)
-    trades_df = pd.DataFrame(all_trades)
-
-    # Save primary CSVs
-    stats_df.to_csv('walk_forward_stats_v21.csv', index=False)
-    trades_df.to_csv('walk_forward_trades_v21.csv', index=False)
-
-    # Print and save summary/breakdowns
-    if not trades_df.empty:
-        summarize_and_save(trades_df, stats_df)
-    else:
-        print("No trades generated; summary skipped.")
-
-    logging.info(f"Completed. Symbols processed: {len(stats_df)}; Total trades: {len(trades_df)}")
-    return stats_df, trades_df
-
-if __name__ == '__main__':
-    files = [f for f in os.listdir(DATA_PATHS['daily']) if f.lower().endswith('.csv')]
-    symbols = []
-    for f in files:
-        base, _ = os.path.splitext(f)
-        base = base.strip().strip("()[]'")
-        if base:
-            symbols.append(base)
-    logging.info(f"Symbols discovered (pre-curation): {len(symbols)}. Example: {symbols[:5]}")
-    stats_df, trades_df = run_walk_forward(symbols)
-    logging.info("Saved walk_forward_stats_v21.csv, walk_forward_trades_v21.csv, and breakdown CSVs")
+    # Build indicator attribution reports
+    build_reports(trades_path, RESULTS_DIR)
+    print("Wrote trades.csv, equity_curve.csv, positions.csv, indicator_report.csv, combo_report.csv, ablation_report.csv to", RESULTS_DIR)

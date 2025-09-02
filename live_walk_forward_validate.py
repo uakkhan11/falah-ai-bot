@@ -206,9 +206,18 @@ class MarketEvent:
     o: float; h: float; l: float; c: float; v: float
 
 # Configuration constants (place these at the very top)
+RISK_PER_TRADE = 0.01
+
+ATR_MULT_STOP = 1.5
+
+TARGET_R = 2.0
+
 COMMISSION_BPS = 1.0
+
 SPREAD_BP = 1.0
+
 SLIP_MEAN_BP = 2.0
+
 SLIP_STD_BP = 1.0
 
 class ExecModel:

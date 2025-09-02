@@ -272,17 +272,14 @@ class LiveLikeBacktester:
              'low': row['low'], 'close': row['close']}
         long_sig, short_sig, gates = signal_gates_row(r)
         bar_dt = pd.Timestamp(t)
-        if hasattr(bar_dt, "tz_localize"):
-        # If tz-aware, strip tz to keep clock time
-            try:
-                bar_dt = bar_dt.tz_localize(None)
-            except Exception:
-            # If already naive, ignore
-        pass
+        if getattr(bar_dt, "tzinfo", None) is not None:
+            bar_dt = bar_dt.tz_convert(None).tz_localize(None)
+        
         bar_time = bar_dt.to_pydatetime().time()
-            allow_opening = (bar_time >= datetime.time(9, 15)) and (bar_time <= datetime.time(10, 45))
-            allow_power = (bar_time >= datetime.time(14, 30)) and (bar_time <= datetime.time(15, 30))
-            
+        
+        allow_opening = (bar_time >= datetime.time(9, 15)) and (bar_time <= datetime.time(10, 45))
+        allow_power   = (bar_time >= datetime.time(14, 30)) and (bar_time <= datetime.time(15, 30))
+        
         if not (allow_opening or allow_power):
             long_sig = False
             short_sig = False

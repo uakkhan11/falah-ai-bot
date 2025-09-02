@@ -26,7 +26,7 @@ DATA_DIRS = {
 SMART_TIMEFRAMES = {
     'daily':    {'interval': 'day',       'lookback_days': 1825, 'output_dir': DATA_DIRS['daily'],     'min_bars_required': 200},
     '15minute': {'interval': '15minute',  'lookback_days': 120,  'output_dir': DATA_DIRS['15minute'], 'min_bars_required': 100},
-    '1hour':    {'interval': 'hour',      'lookback_days': 300,  'output_dir': DATA_DIRS['1hour'],    'min_bars_required': 150}
+    '1hour':    {'interval': 'hour',      'lookback_days': 300,  'output_dir': DATA_DIRS['1hour'],    'min_bars_required': 150},
     '5minute': {'interval': '5minute', 'lookback_days': 60, 'output_dir': os.path.join(BASE_DIR, "five_minute_data"), 'min_bars_required': 100}
 }
 

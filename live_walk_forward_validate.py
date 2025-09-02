@@ -2,6 +2,7 @@
 import os, glob, math, random
 import numpy as np
 import pandas as pd
+import your_ta_library as ta
 import datetime
 from dataclasses import dataclass
 
@@ -71,6 +72,15 @@ def discover_symbols():
     if not files_15:
         print("[discover_symbols] No 15m files found.")
         return []
+
+    df_5m = load_5m_data(...)
+    df_15m = load_15m_data(...)
+    
+    # Merge 5m features onto 15m
+    df_15m = merge_5m_features_onto_15m(df_15m, df_5m)
+    
+    # Now start backtesting with df_15m (which now includes 5m features)
+    results = backtest_strategy(df_15m)
 
     # Build roots
     roots = [os.path.basename(p).rsplit(".",1)[0] for p in files_15]
@@ -182,6 +192,17 @@ def build_features(df15, df1h, dfd):
 # 4) Signal gates
 def signal_gates_row(r):
     gates = {}
+    gate_ltf_entry = False
+    if 'rsi14_5m' in r and 'ema5_5m' in r and 'ema20_5m' in r and 'vol_surge_5m' in r:
+        gate_ltf_entry = (
+            (r['ema5_5m'] > r['ema20_5m']) and (r['rsi14_5m'] > 55)
+        ) or (r['vol_surge_5m'] == True)
+    else:
+        # If 5m data missing, default to True to not block entries
+        gate_ltf_entry = True
+
+    # Update long_signal to include lower timeframe gate
+    long_signal = long_signal and gate_ltf_entry
     gates['regime_up'] = (r['close'] > r['ema200_d']) and (r['rsi14_d'] >= 55)  # strong uptrends[1]
     gates['tf1_up'] = (r['ema9_h'] > r['ema21_h'])
     gates['tf1_dn'] = (r['ema9_h'] < r['ema21_h'])
@@ -204,8 +225,21 @@ def signal_gates_row(r):
         and gates['momo_long']
         and or_width_ok
     )
+
+    # Lower timeframe confirmation gate (5-minute)
+    gate_ltf_entry = False
+    if 'rsi14_5m' in r and 'ema5_5m' in r and 'ema20_5m' in r and 'vol_surge_5m' in r:
+        gate_ltf_entry = (
+            (r['ema5_5m'] > r['ema20_5m']) and (r['rsi14_5m'] > 55)
+        ) or (r['vol_surge_5m'] == True)
+    else:
+        gate_ltf_entry = True
+
+    # Combine with previous
+    long_signal = long_signal and gate_ltf_entry
+
     short_signal = False
-    
+
     return bool(long_signal), bool(short_signal), gates
 
 # 5) Event classes and execution model

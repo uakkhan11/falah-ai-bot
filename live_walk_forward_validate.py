@@ -271,15 +271,21 @@ class LiveLikeBacktester:
         r = {**feats.to_dict(), 'open': row['open'], 'high': row['high'],
              'low': row['low'], 'close': row['close']}
         long_sig, short_sig, gates = signal_gates_row(r)
+        bar_dt = pd.Timestamp(t)
+        if hasattr(bar_dt, "tz_localize"):
+        # If tz-aware, strip tz to keep clock time
         try:
-            # Get naive local time; if timezone-aware, drop tz
-            if hasattr(t, 'tz_convert'):
-                bar_dt = t.tz_localize(None) # convert to naive keeping clock time
-            else:
-                bar_dt = pd.Timestamp(t)
-            except Exception:
-            bar_dt = pd.Timestamp(t)
-            bar_time = bar_dt.to_pydatetime().time()
+        bar_dt = bar_dt.tz_localize(None)
+        except Exception:
+        # If already naive, ignore
+        pass
+        bar_time = bar_dt.to_pydatetime().time()
+            allow_opening = (bar_time >= datetime.time(9, 15)) and (bar_time <= datetime.time(10, 45))
+            allow_power = (bar_time >= datetime.time(14, 30)) and (bar_time <= datetime.time(15, 30))
+            
+            if not (allow_opening or allow_power):
+            long_sig = False
+            short_sig = False
         self._last_gates = gates
         # exits
         if self.pos != 0:

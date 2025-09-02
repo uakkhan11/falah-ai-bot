@@ -98,7 +98,7 @@ def discover_symbols():
 
 
 def load_frames(symbol):
-import glob, os
+    import glob, os
     
     def pick_one(folder):
     hits = glob.glob(os.path.join(folder, f"{symbol}*.csv"))

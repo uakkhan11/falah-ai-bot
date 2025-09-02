@@ -183,18 +183,27 @@ def signal_gates_row(r):
     gates = {}
     gates['regime_up'] = (r['close'] > r['ema200_d']) and (r['rsi14_d'] >= 50) # stricter daily regime
     gates['regime_up'] = (r['close'] > r['ema200_d']) and (r['rsi14_d'] >= 55)
-    gates['tf1_up'] = (r['ema9_h'] > r['ema21_h']*1.001) # optional gap
+    gates['tf1_up'] = (r['ema9_h'] > r['ema21_h'])  # was *1.001; relax to regain good breakouts[2]
     gates['tf1_dn'] = (r['ema9_h'] < r['ema21_h'])
-    gates['value_long'] = (r['close'] >= r['vwap']) and (r['close'] >= r['ema21'])
+    gates['value_long']  = (r['close'] >= r['vwap']) and (r['close'] >= r['ema21'])
     gates['value_short'] = (r['close'] <= r['vwap']) and (r['close'] <= r['ema21'])
     gates['pullback_long'] = True # ablation showed it hurts; disable for now
     gates['pullback_short'] = (r['close'] >= r['ema9']*0.99)
-    gates['momo_long'] = (r['macd'] > r['macd_sig']) and (r['rsi14'] > 55)
+    gates['momo_long']  = (r['macd'] > r['macd_sig']) and (r['rsi14'] > 52)  # or 55 based on trade count[2]
     gates['momo_short'] = (r['macd'] < r['macd_sig']) and (r['rsi14'] < 48)
-    gates['orb_long'] = (r['close'] > r['or_hi']*1.001) if not pd.isna(r['or_hi']) else False
+    gates['orb_long']  = (r['close'] > r['or_hi']) if not pd.isna(r['or_hi']) else False  # buffer 0–0.1% max[1]
     gates['orb_short'] = (r['close'] < r['or_lo']) if not pd.isna(r['or_lo']) else False
     long_signal = gates['regime_up'] and gates['tf1_up'] and gates['value_long'] and gates['orb_long'] and gates['momo_long']
     short_signal = False
+    if pd.notna(r.get('or_hi')) and pd.notna(r.get('or_lo')):
+        or_width_ok = ((r['or_hi'] - r['or_lo']) / max(1e-9, r['close'])) >= 0.002  # 0.2% min OR width[3]
+    else:
+        or_width_ok = False
+
+    # Long-only confluence + OR width
+    long_signal  = gates['regime_up'] and gates['tf1_up'] and gates['value_long'] and gates['orb_long'] and gates['momo_long'] and or_width_ok[1][3]
+    short_signal = False
+    
     return bool(long_signal), bool(short_signal), gates
 
 # 5) Event classes and execution model
@@ -206,7 +215,7 @@ class MarketEvent:
 # Configuration constants (place these at the very top)
 RISK_PER_TRADE = 0.01
 
-ATR_MULT_STOP = 2.0
+ATR_MULT_STOP = 1.8
 
 TARGET_R = 1.5
 

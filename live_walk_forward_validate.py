@@ -25,7 +25,7 @@ SLIP_STD_BP = 1.0            # slippage std dev
 
 # 2) Data loading
 def read_ohlcv_csv(path):
-    import pandas as pd
+    assert isinstance(path, str), f"Expected string path, got {type(path)}: {path}"
     df = pd.read_csv(path)
 
     # Case-insensitive column map

@@ -201,7 +201,7 @@ def signal_gates_row(r):
         or_width_ok = False
 
     # Long-only confluence + OR width
-    long_signal  = gates['regime_up'] and gates['tf1_up'] and gates['value_long'] and gates['orb_long'] and gates['momo_long'] and or_width_ok[1][3]
+    long_signal = gates['regime_up'] and gates['tf1_up'] and gates['value_long'] and gates['orb_long'] and gates['momo_long'] and or_width_ok
     short_signal = False
     
     return bool(long_signal), bool(short_signal), gates

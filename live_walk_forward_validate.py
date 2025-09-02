@@ -66,12 +66,15 @@ def read_ohlcv_csv(path):
 
 def discover_symbols():
     files_15 = glob.glob(os.path.join(DATA_PATHS['15minute'], "*.csv"))
-    # base name without extension
-    roots = [os.path.splitext(os.path.basename(p)) for p in files_15]
-    # if names like RELIANCE_15m.csv, strip suffix after first underscore
-    symbols = [r.split('_') for r in roots]
-    # preserve order and deduplicate
-    return list(dict.fromkeys(symbols))
+    if not files_15:
+        print("[discover_symbols] No 15m files found in", DATA_PATHS['15minute'])
+        return []
+    roots = [os.path.splitext(os.path.basename(p)) for p in files_15]  # string root, not tuple
+    symbols = [r.split('_') for r in roots]  # if names like RELIANCE_15m.csv
+    # deduplicate while preserving order
+    symbols = list(dict.fromkeys(symbols))
+    print(f"[discover_symbols] Found {len(symbols)} symbols, sample: {symbols[:10]}")
+    return symbols
 
 def load_frames(symbol):
     def pick(folder):

@@ -193,7 +193,8 @@ def signal_gates_row(r):
     gates['momo_short'] = (r['macd'] < r['macd_sig']) and (r['rsi14'] < 48)
     gates['orb_long']  = (r['close'] > r['or_hi']) if not pd.isna(r['or_hi']) else False
     gates['orb_short'] = (r['close'] < r['or_lo']) if not pd.isna(r['or_lo']) else False
-    long_signal = gates['regime_up'] and gates['tf1_up'] and gates['value_long'] and gates['orb_long'] and gates['momo_long'] and or_width_ok = False
+    or_width_ok = False
+    long_signal = gates['regime_up'] and gates['tf1_up'] and gates['value_long'] and gates['orb_long'] and gates['momo_long'] and or_width_ok
     short_signal = False
     if pd.notna(r.get('or_hi')) and pd.notna(r.get('or_lo')):
         or_width_ok = ((r['or_hi'] - r['or_lo']) / max(1e-9, r['close'])) >= 0.002

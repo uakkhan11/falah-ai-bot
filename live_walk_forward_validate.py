@@ -205,6 +205,12 @@ class MarketEvent:
     time: pd.Timestamp
     o: float; h: float; l: float; c: float; v: float
 
+# Configuration constants (place these at the very top)
+COMMISSION_BPS = 1.0
+SPREAD_BP = 1.0
+SLIP_MEAN_BP = 2.0
+SLIP_STD_BP = 1.0
+
 class ExecModel:
     def __init__(self, commission_bps=COMMISSION_BPS, spread_bp=SPREAD_BP,
                  slip_mean_bp=SLIP_MEAN_BP, slip_std_bp=SLIP_STD_BP):

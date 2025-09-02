@@ -283,7 +283,7 @@ class LiveLikeBacktester:
             allow_opening = (bar_time >= datetime.time(9, 15)) and (bar_time <= datetime.time(10, 45))
             allow_power = (bar_time >= datetime.time(14, 30)) and (bar_time <= datetime.time(15, 30))
             
-            if not (allow_opening or allow_power):
+        if not (allow_opening or allow_power):
             long_sig = False
             short_sig = False
         self._last_gates = gates

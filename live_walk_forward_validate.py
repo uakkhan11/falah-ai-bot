@@ -25,19 +25,27 @@ SLIP_STD_BP = 1.0            # slippage std dev
 
 # 2) Data loading
 def read_ohlcv_csv(path):
-    df = pd.read_csv(path)
-    dt_col = 'datetime' if 'datetime' in df.columns else 'Date' if 'Date' in df.columns else df.columns
-    df[dt_col] = pd.to_datetime(df[dt_col], utc=True, errors='coerce')
-    df = df.rename(columns={
-        dt_col:'datetime',
-        'Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'
-    })
-    for c in ['open','high','low','close','volume']:
-        if c not in df.columns:
-            raise ValueError(f"Missing column {c} in {path}")
-    df = df[['datetime','open','high','low','close','volume']].dropna().sort_values('datetime').reset_index(drop=True)
-    df = df.set_index('datetime')
-    return df
+df = pd.read_csv(path)
+cols_lower = {c.lower(): c for c in df.columns}
+ts_col = cols_lower.get('datetime') or cols_lower.get('date')
+if not ts_col:
+raise ValueError(f"No datetime/date column found in {path}")
+df[ts_col] = pd.to_datetime(df[ts_col], utc=True, errors='coerce')
+rename = {
+ts_col: 'datetime',
+cols_lower.get('open','open'): 'open',
+cols_lower.get('high','high'): 'high',
+cols_lower.get('low','low'): 'low',
+cols_lower.get('close','close'): 'close',
+cols_lower.get('volume','volume'): 'volume',
+}
+df = df.rename(columns=rename)
+need = ['datetime','open','high','low','close','volume']
+for c in need:
+if c not in df.columns:
+raise ValueError(f"Missing {c} in {path}")
+df = df[need].dropna().sort_values('datetime').reset_index(drop=True).set_index('datetime')
+return df
 
 def discover_symbols():
     files_15 = glob.glob(os.path.join(DATA_PATHS['15minute'], "*.csv"))

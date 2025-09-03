@@ -27,10 +27,10 @@ syms = [fname.replace('.csv','') for fname in os.listdir(DAILY_DIR) if fname.end
 
 # Intraday 1-hour data
 dfs_1h = []
-for fname in os.listdir(INTRADAY_DIR):
+for fname in os.listdir('intraday_swing_data'):
     if fname.endswith('.csv'):
         symbol = fname.replace('.csv', '')
-        df = pd.read_csv(os.path.join(INTRADAY_DIR, fname), parse_dates=['date'])
+        df = pd.read_csv(os.path.join('intraday_swing_data', fname), parse_dates=['date'])
         df['symbol'] = symbol
         dfs_1h.append(df)
 df1h = pd.concat(dfs_1h, ignore_index=True)

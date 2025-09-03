@@ -2,7 +2,7 @@
 import os, glob, math, random
 import numpy as np
 import pandas as pd
-import your_ta_library as ta
+import talib as ta
 import datetime
 from dataclasses import dataclass
 

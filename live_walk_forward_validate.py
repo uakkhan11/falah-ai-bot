@@ -124,18 +124,16 @@ def load_frames(symbol):
             return None
         if len(hits) > 1:
             print(f"[load_frames v2] {symbol}: multiple matches in {folder}, picking {os.path.basename(hits[0])}")
-        return hits[0]  # only the first match path
-
+        return hits[0]
     print(f"[load_frames v2] selecting paths for {symbol}")
+    p5m = pick_one(DATA_PATHS['5minute'])
     p15 = pick_one(DATA_PATHS['15minute'])
     p1h = pick_one(DATA_PATHS['1hour'])
     pdly = pick_one(DATA_PATHS['daily'])
-
-    if not (p15 and p1h and pdly):
-        print(f"[load_frames v2] Missing files for {symbol}: 15m={p15} 1h={p1h} 1d={pdly}")
+    if not (p5m and p15 and p1h and pdly):
+        print(f"[load_frames v2] Missing files for {symbol}: 5m={p5m} 15m={p15} 1h={p1h} 1d={pdly}")
         return None
-
-    return read_ohlcv_csv(p15), read_ohlcv_csv(p1h), read_ohlcv_csv(pdly)
+    return read_ohlcv_csv(p5m), read_ohlcv_csv(p15), read_ohlcv_csv(p1h), read_ohlcv_csv(pdly)
 
 # 3) Indicators & Features
 def ema(x, span): return x.ewm(span=span, adjust=False).mean()

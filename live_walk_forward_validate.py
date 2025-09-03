@@ -362,7 +362,7 @@ class LiveLikeBacktester:
                         fee = self.exec.fee(px * qty); self.equity -= fee
                         self.pos, self.qty, self.avg = 1, qty, px
                         self.stop = px - stop_dist
-                        self.target = px + (TARGET_R * stop_dist * (1.5 if atr_val > threshold else 1.0))
+                        self.target = px + (TARGET_R * stop_dist * (1.5 if atrv > threshold else 1.0))
                         self.ledger.append({'time': t,'symbol': self.symbol,'side': 'buy',
                             'reason': 'signal', 'qty': qty,'price': px,'fee': fee,'slip_bp': slip,'pnl': 0.0,'equity': self.equity, **gates_pref})
                     else:

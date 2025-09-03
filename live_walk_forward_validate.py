@@ -20,27 +20,30 @@ DATA_PATHS = {
 RESULTS_DIR = os.path.join(BASE_DIR, "results_live_like")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-DAILY_DIR = 'swing_data'  # Adjust as needed
-
-dfs = []
-for fname in os.listdir(DAILY_DIR):
-    if fname.endswith('.csv'):
-        symbol = fname.replace('.csv', '')
-        df = pd.read_csv(os.path.join(DAILY_DIR, fname), parse_dates=['date'])
-        df['symbol'] = symbol           # <-- Add here after loading
-        dfs.append(df)
-dfd = pd.concat(dfs, ignore_index=True)
-
+DAILY_DIR = 'swing_data'
 INTRADAY_DIR = 'intraday_swing_data'
 
-dfs = []
+syms = [fname.replace('.csv','') for fname in os.listdir(DAILY_DIR) if fname.endswith('.csv')]
+
+# Intraday 1-hour data
+dfs_1h = []
 for fname in os.listdir(INTRADAY_DIR):
     if fname.endswith('.csv'):
         symbol = fname.replace('.csv', '')
         df = pd.read_csv(os.path.join(INTRADAY_DIR, fname), parse_dates=['date'])
-        df['symbol'] = symbol           # <-- Add here after loading
-        dfs.append(df)
-df1h = pd.concat(dfs, ignore_index=True)
+        df['symbol'] = symbol
+        dfs_1h.append(df)
+df1h = pd.concat(dfs_1h, ignore_index=True)
+
+# Daily data
+dfs_daily = []
+for fname in os.listdir(DAILY_DIR):
+    if fname.endswith('.csv'):
+        symbol = fname.replace('.csv', '')
+        df = pd.read_csv(os.path.join(DAILY_DIR, fname), parse_dates=['date'])
+        df['symbol'] = symbol
+        dfs_daily.append(df)
+dfd = pd.concat(dfs_daily, ignore_index=True)
 
 
 def merge_5m_features_onto_15m(df_15m, df_5m):
@@ -586,7 +589,11 @@ def run_universe(symbols, cash=1_000_000):
     trades_df = pd.concat(all_trades).reset_index(drop=True) if all_trades else pd.DataFrame()
     eq_df = pd.concat(all_equity).reset_index(drop=True) if all_equity else pd.DataFrame()
     return trades_df, eq_df
-    
+
+syms = discover_symbols()
+df1h = get_intraday_data()  # however you get/build intraday dataframe
+dfd = get_daily_data()      # daily dataframe
+
 if __name__ == "__main__":
     syms = discover_symbols()
     for risk_pct in [0.005, 0.01, 0.02]:

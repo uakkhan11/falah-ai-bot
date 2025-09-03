@@ -590,9 +590,6 @@ def run_universe(symbols, cash=1_000_000):
     eq_df = pd.concat(all_equity).reset_index(drop=True) if all_equity else pd.DataFrame()
     return trades_df, eq_df
 
-syms = discover_symbols()
-df1h = get_intraday_data()  # however you get/build intraday dataframe
-dfd = get_daily_data()      # daily dataframe
 
 if __name__ == "__main__":
     syms = discover_symbols()

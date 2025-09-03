@@ -31,7 +31,7 @@ def merge_5m_features_onto_15m(df_15m, df_5m):
 
     # Resample or map 5m features to 15m timestamp index (e.g. take last 5m bar within 15m bar)
     # Here assume df_15m and df_5m have datetime indices aligned
-    features_5m = df_5m[['rsi14_5m', 'ema5_5m', 'ema20_5m', 'vol_surge_5m']].resample('15T').last()
+    features_5m = df_5m[['rsi14_5m', 'ema5_5m', 'ema20_5m', 'vol_surge_5m']].resample('15min').last()
 
     # Join features
     df_15m = df_15m.join(features_5m, how='left')
@@ -552,13 +552,16 @@ def run_universe(symbols, cash=1_000_000):
             print(f"[skip] {sym}: missing one of 15m/1h/daily files")
             continue
         df_5m, df_15m, df_1h, df_daily = frames
-        df_15m = merge_5m_features_onto_15m(df_15m, df_5m)
-        start = max(df_15m.index.min(), df_1h.index.min(), df_daily.index.min())
-        end = min(df_15m.index.max(), df_1h.index.max(), df_daily.index.max())
 
-        df15 = df15[(df15.index >= start) & (df15.index <= end)]
-        df1h = df1h[(df1h.index >= start) & (df1h.index <= end)]
-        dfd  = dfd[(dfd.index >= start) & (dfd.index <= end)]
+        start = max(df_15m.index.min(), df_1h.index.min(), df_daily.index.min())
+        
+        end = min(df_15m.index.max(), df_1h.index.max(), df_daily.index.max())
+        
+        df_15m = df_15m[(df_15m.index >= start) & (df_15m.index <= end)]
+        
+        df_1h = df_1h[(df_1h.index >= start) & (df_1h.index <= end)]
+        
+        df_daily = df_daily[(df_daily.index >= start) & (df_daily.index <= end)]
 
         print(f"[info] {sym}: 15m={len(df15)} 1h={len(df1h)} dly={len(dfd)} window=({start} -> {end})")
 

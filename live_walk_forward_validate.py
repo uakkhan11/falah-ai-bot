@@ -563,7 +563,9 @@ def run_universe(symbols, cash=1_000_000):
     trades_df = pd.concat(all_trades).reset_index(drop=True) if all_trades else pd.DataFrame()
     eq_df = pd.concat(all_equity).reset_index(drop=True) if all_equity else pd.DataFrame()
     return trades_df, eq_df
-
+    
+df1h = pd.read_csv('intraday_1h.csv')   # Or however you build your 1H/intraday dataframe
+dfd = pd.read_csv('daily.csv')          # Or your daily bars dataframe
 if __name__ == "__main__":
     syms = discover_symbols()
     for risk_pct in [0.005, 0.01, 0.02]:

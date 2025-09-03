@@ -595,7 +595,7 @@ if __name__ == "__main__":
     syms = discover_symbols()
     for risk_pct in [0.005, 0.01, 0.02]:
         for stop_pct in [0.002, 0.003, 0.004]:
-            engine = LiveLikeBacktester(syms, ...)
+            engine = LiveLikeBacktester(syms, df1h, dfd)
             engine.risk_pct = risk_pct
             engine.stop_pct = stop_pct
             trades, eq = engine.run()  # direct call, not run_universe

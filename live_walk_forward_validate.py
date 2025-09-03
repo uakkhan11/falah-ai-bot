@@ -92,8 +92,6 @@ def discover_symbols():
     if not files_15:
         print("[discover_symbols] No 15m files found.")
         return []
-
-    df_5m = load_5m_data(...)
     df_15m = load_15m_data(...)
     
     # Merge 5m features onto 15m

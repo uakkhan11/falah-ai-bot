@@ -92,12 +92,6 @@ def discover_symbols():
     if not files_15:
         print("[discover_symbols] No 15m files found.")
         return []
-    
-    # Merge 5m features onto 15m
-    df_15m = merge_5m_features_onto_15m(df_15m, df_5m)
-    
-    # Now start backtesting with df_15m (which now includes 5m features)
-    results = backtest_strategy(df_15m)
 
     # Build roots
     roots = [os.path.basename(p).rsplit(".",1)[0] for p in files_15]
@@ -557,10 +551,10 @@ def run_universe(symbols, cash=1_000_000):
         if frames is None:
             print(f"[skip] {sym}: missing one of 15m/1h/daily files")
             continue
-        df15, df1h, dfd = frames
-
-        start = max(df15.index.min(), df1h.index.min(), dfd.index.min())
-        end   = min(df15.index.max(), df1h.index.max(), dfd.index.max())
+        df_5m, df_15m, df_1h, df_daily = frames
+        df_15m = merge_5m_features_onto_15m(df_15m, df_5m)
+        start = max(df_15m.index.min(), df_1h.index.min(), df_daily.index.min())
+        end = min(df_15m.index.max(), df_1h.index.max(), df_daily.index.max())
 
         df15 = df15[(df15.index >= start) & (df15.index <= end)]
         df1h = df1h[(df1h.index >= start) & (df1h.index <= end)]

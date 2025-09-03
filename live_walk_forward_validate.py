@@ -281,14 +281,14 @@ class LiveLikeBacktester:
         self._last_gates = {}
 
     def size_from_atr(self, open_px, atr_val, bar_time):
-    bar_clock = bar_time.time() if hasattr(bar_time, "time") else bar_time
-    session_mul = 2.0 if (bar_clock >= datetime.time(14, 30)) else 1.5
-    stop_dist = max(atr_val * session_mul, open_px * 0.003)
-    
-    # Check for NaN
-    if math.isnan(stop_dist) or stop_dist <= 0:
-        # Defensive fallback: no trade or skip
-        return 0, stop_dist
+        bar_clock = bar_time.time() if hasattr(bar_time, "time") else bar_time
+        session_mul = 2.0 if (bar_clock >= datetime.time(14, 30)) else 1.5
+        stop_dist = max(atr_val * session_mul, open_px * 0.003)
+        
+        # Check for NaN
+        if math.isnan(stop_dist) or stop_dist <= 0:
+            # Defensive fallback: no trade or skip
+            return 0, stop_dist
     
     risk_cash = self.equity * RISK_PER_TRADE
     qty = int(risk_cash // stop_dist) if stop_dist > 0 else 0

@@ -281,18 +281,17 @@ class LiveLikeBacktester:
         self._last_gates = {}
 
     def size_from_atr(self, open_px, atr_val, bar_time):
+        import math
         bar_clock = bar_time.time() if hasattr(bar_time, "time") else bar_time
         session_mul = 2.0 if (bar_clock >= datetime.time(14, 30)) else 1.5
-        stop_dist = max(atr_val * session_mul, open_px * 0.003)
+        stop_dist = max(atr_val * session_mul, open_px * self.stop_pct)  # Use self.stop_pct
         
-        # Check for NaN
         if math.isnan(stop_dist) or stop_dist <= 0:
-            # Defensive fallback: no trade or skip
             return 0, stop_dist
-    
-        risk_cash = self.equity * RISK_PER_TRADE
-        qty = int(risk_cash // stop_dist) if stop_dist > 0 else 0
-        return max(qty, 0), stop_dist
+
+    risk_cash = self.equity * self.risk_pct  # Use self.risk_pct, set externally
+    qty = int(risk_cash // stop_dist) if stop_dist > 0 else 0
+    return max(qty, 0), stop_dist
 
     def on_bar(self, t, row):
         feats = self.feats.loc[t]
@@ -567,13 +566,19 @@ def run_universe(symbols, cash=1_000_000):
 
 if __name__ == "__main__":
     syms = discover_symbols()
-    trades, eq = run_universe(syms)
-    trades.to_csv(os.path.join(RESULTS_DIR, "trades.csv"), index=False)
-    eq.to_csv(os.path.join(RESULTS_DIR, "equity_curve.csv"), index=False)
-    eq[['time','symbol','pos','qty']].to_csv(os.path.join(RESULTS_DIR, "positions.csv"), index=False)
-    build_reports(os.path.join(RESULTS_DIR, "trades.csv"), RESULTS_DIR)
-    print("Wrote trades.csv, equity_curve.csv, positions.csv, indicator_report.csv, combo_report.csv, ablation_report.csv to", RESULTS_DIR)
-
+    for risk_pct in [0.005, 0.01, 0.02]:
+        for stop_pct in [0.002, 0.003, 0.004]:
+            engine = LiveLikeBacktester(syms, ...)
+            engine.risk_pct = risk_pct
+            engine.stop_pct = stop_pct
+            trades, eq = engine.run()  # direct call, not run_universe
+            # Build unique filenames for outputs
+            fname_prefix = f"r{risk_pct}_s{stop_pct}".replace(".", "p")
+            trades.to_csv(os.path.join(RESULTS_DIR, f"trades_{fname_prefix}.csv"), index=False)
+            eq.to_csv(os.path.join(RESULTS_DIR, f"equity_curve_{fname_prefix}.csv"), index=False)
+            eq[['time','symbol','pos','qty']].to_csv(os.path.join(RESULTS_DIR, f"positions_{fname_prefix}.csv"), index=False)
+            build_reports(os.path.join(RESULTS_DIR, f"trades_{fname_prefix}.csv"), RESULTS_DIR)
+            print(f"Wrote trades_{fname_prefix}.csv, equity_curve_{fname_prefix}.csv, etc. to {RESULTS_DIR}")
     # --- Analytics block: paste here ---
     import pandas as pd
     df = pd.read_csv(os.path.join(RESULTS_DIR, "trades.csv"))
@@ -623,18 +628,13 @@ print("Filtered profit factor:", filtered[filtered['pnl'] > 0]['pnl'].sum() / ab
 from itertools import combinations
 
 best_results = []
-for g1, g2 in combinations(gate_cols, 2):
-    combo = df[(df[g1]) & (df[g2])]
-    if len(combo) < 10:
-        continue  # skip tiny samples
-    win_rate = combo['profitable'].mean()
-    profit_factor = combo[combo['pnl'] > 0]['pnl'].sum() / abs(combo[combo['pnl'] < 0]['pnl'].sum())
-    best_results.append({
-    'gates': f"{g1}+{g2}",
-    'num_trades': len(combo),
-    'win_rate': win_rate,
-    'profit_factor': profit_factor
-})
+for g in gate_cols:
+    combo = filtered[filtered[g]]
+    num_trades = len(combo)
+    if num_trades > 0:
+        win_rate = combo['profitable'].mean()
+        pf = combo[combo['pnl'] > 0]['pnl'].sum() / abs(combo[combo['pnl'] < 0]['pnl'].sum()) if len(combo[combo['pnl'] < 0]) > 0 else float('nan')
+        print(f"{g}: trades={num_trades}, win_rate={win_rate:.2%}, profit_factor={pf:.2f}")
 combo_df = pd.DataFrame(best_results)
 if combo_df.empty:
     print("No qualifying gate combos found (try reducing the minimum trade threshold).")

@@ -625,11 +625,19 @@ from itertools import combinations
 best_results = []
 for g1, g2 in combinations(gate_cols, 2):
     combo = df[(df[g1]) & (df[g2])]
-    if len(combo) < 50:
+    if len(combo) < 30:
         continue  # skip tiny samples
     win_rate = combo['profitable'].mean()
     profit_factor = combo[combo['pnl'] > 0]['pnl'].sum() / abs(combo[combo['pnl'] < 0]['pnl'].sum())
-    best_results.append({'gates': f"{g1}+{g2}", 'num_trades': len(combo), 'win_rate': win_rate, 'profit_factor': profit_factor})
-
-combo_df = pd.DataFrame(best_results).sort_values(by='profit_factor', ascending=False)
-print(combo_df.head(10))
+    best_results.append({
+    'gates': f"{g1}+{g2}",
+    'num_trades': len(combo),
+    'win_rate': win_rate,
+    'profit_factor': profit_factor
+})
+combo_df = pd.DataFrame(best_results)
+if combo_df.empty:
+    print("No qualifying gate combos found (try reducing the minimum trade threshold).")
+else:
+    combo_df = combo_df.sort_values(by='profit_factor', ascending=False)
+    print(combo_df.head(10))

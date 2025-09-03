@@ -202,44 +202,27 @@ def build_features(df15, df1h, dfd):
 def signal_gates_row(r):
     gates = {}
 
-    gates['regime_up'] = (r['close'] > r['ema200_d']) and (r['rsi14_d'] >= 55)
-    gates['tf1_up'] = (r['ema9_h'] > r['ema21_h'])
+    gates['regime_up']      = (r['close'] > r['ema200_d']) and (r['rsi14_d'] >= 55)
+    gates['tf1_up']         = (r['ema9_h'] > r['ema21_h'])
     gates['tf1_dn'] = (r['ema9_h'] < r['ema21_h'])
-    gates['value_long'] = (r['close'] >= r['vwap']) and (r['close'] >= r['ema21'])
+    gates['value_long']     = (r['close'] >= r['vwap']) and (r['close'] >= r['ema21'])
     gates['value_short'] = (r['close'] <= r['vwap']) and (r['close'] <= r['ema21'])
     gates['pullback_long'] = True
     gates['pullback_short'] = (r['close'] >= r['ema9']*0.99)
-    gates['momo_long'] = (r['macd'] > r['macd_sig']) and (r['rsi14'] > 52)
+    gates['momo_long']      = (r['macd'] > r['macd_sig']) and (r['rsi14'] > 52)
     gates['momo_short'] = (r['macd'] < r['macd_sig']) and (r['rsi14'] < 48)
-    gates['orb_long'] = (r['close'] > r['or_hi']) if not pd.isna(r['or_hi']) else False
+    gates['orb_long']       = (r['close'] > r['or_hi']) if not pd.isna(r['or_hi']) else False
     gates['orb_short'] = (r['close'] < r['or_lo']) if not pd.isna(r['or_lo']) else False
-
-    or_width_ok = False
-    if pd.notna(r.get('or_hi')) and pd.notna(r.get('or_lo')):
-        or_width_ok = ((r['or_hi'] - r['or_lo']) / max(1e-9, r['close'])) >= 0.001
-
-    # Calculate base long_signal
-    long_signal = (
-        gates['regime_up']
-        and gates['tf1_up']
-        and gates['value_long']
-        and gates['orb_long']
-        and gates['momo_long']
-        and or_width_ok
+    gates['or_width_ok']    = (pd.notna(r.get('or_hi')) and pd.notna(r.get('or_lo')) and 
+                              ((r['or_hi'] - r['or_lo']) / max(1e-9, r['close'])) >= 0.001)
+    gates['lt_5m'] = (
+        'rsi14_5m' in r and 'ema5_5m' in r and 'ema20_5m' in r and 'vol_surge_5m' in r and 
+        (((r['ema5_5m'] > r['ema20_5m']) and (r['rsi14_5m'] > 52)) or (r['vol_surge_5m'] == True))
     )
-
-    if all(k in r for k in ['rsi14_5m', 'ema5_5m', 'ema20_5m', 'vol_surge_5m']):
-        gate_ltf_entry = (
-            ((r['ema5_5m'] > r['ema20_5m']) and (r['rsi14_5m'] > 52))
-            or (r['vol_surge_5m'] == True)
-        )
-    else:
-        # If 5m data is missing, do not block the signal
-        gate_ltf_entry = True
-    
-    # Combine base long_signal with lower timeframe gate
-    long_signal = long_signal and gate_ltf_entry
-    short_signal = False
+    main_gates = ['regime_up', 'tf1_up', 'value_long', 'momo_long', 'orb_long', 'or_width_ok', 'lt_5m']
+    # Calculate base long_signal
+    long_signal = sum(gates[g] for g in main_gates) >= 4
+    short_signal = False  # Still long-only
     return bool(long_signal), bool(short_signal), gates
 
 
@@ -295,10 +278,9 @@ class LiveLikeBacktester:
         self.equity_curve = []
         self._last_gates = {}
 
-    def size_from_atr(self, open_px, atr_val):
-        if np.isnan(atr_val) or atr_val <= 0:
-            return 0, 0.0
-        stop_dist = max(atr_val * ATR_MULT_STOP, open_px*0.002)
+    def size_from_atr(self, open_px, atr_val, bar_time):
+        session_mul = 2.0 if (bar_time >= datetime.time(14, 30)) else 1.5
+        stop_dist = max(atr_val * session_mul, open_px*0.003)
         risk_cash = self.equity * RISK_PER_TRADE
         qty = int(risk_cash // stop_dist)
         return max(qty, 0), stop_dist
@@ -379,7 +361,7 @@ class LiveLikeBacktester:
                         fee = self.exec.fee(px * qty); self.equity -= fee
                         self.pos, self.qty, self.avg = 1, qty, px
                         self.stop = px - stop_dist
-                        self.target = px + TARGET_R*stop_dist
+                        self.target = px + (TARGET_R * stop_dist * (1.5 if atr_val > threshold else 1.0))
                         self.ledger.append({'time': t,'symbol': self.symbol,'side': 'buy',
                             'reason': 'signal', 'qty': qty,'price': px,'fee': fee,'slip_bp': slip,'pnl': 0.0,'equity': self.equity, **gates_pref})
                     else:
@@ -582,3 +564,18 @@ if __name__ == "__main__":
     eq[['time','symbol','pos','qty']].to_csv(os.path.join(RESULTS_DIR, "positions.csv"), index=False)
     build_reports(os.path.join(RESULTS_DIR, "trades.csv"), RESULTS_DIR)
     print("Wrote trades.csv, equity_curve.csv, positions.csv, indicator_report.csv, combo_report.csv, ablation_report.csv to", RESULTS_DIR)
+
+    # --- Analytics block: paste here ---
+    import pandas as pd
+    df = pd.read_csv(os.path.join(RESULTS_DIR, "trades.csv"))
+    df['profitable'] = (df['pnl'] > 0)
+    # By symbol
+    symbol_summary = df.groupby('symbol')['profitable'].mean().sort_values(ascending=False)
+    print("Top symbols by win rate:\n", symbol_summary.head(10))
+    # By gate presence
+    gate_cols = [c for c in df.columns if c.startswith("gate_")]
+    gate_results = {}
+    for gate in gate_cols:
+        gate_results[gate] = df[df[gate] == True]['profitable'].mean()
+    print("Profitability by gate presence:\n", gate_results)
+    # --- End analytics block ---

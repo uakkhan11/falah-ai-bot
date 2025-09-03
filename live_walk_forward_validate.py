@@ -236,7 +236,8 @@ class MarketEvent:
 RISK_PER_TRADE = 0.01
 
 ATR_MULT_STOP = 1.5
-
+ATR_VOL_THRESHOLD = 1.0
+threshold = 1.0
 TARGET_R = 1.5
 
 COMMISSION_BPS = 1.0

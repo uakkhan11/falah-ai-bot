@@ -595,15 +595,28 @@ if __name__ == "__main__":
     syms = discover_symbols()
     for risk_pct in [0.005, 0.01, 0.02]:
         for stop_pct in [0.002, 0.003, 0.004]:
-            engine = LiveLikeBacktester(syms, df1h, dfd)
-            engine.risk_pct = risk_pct
-            engine.stop_pct = stop_pct
-            trades, eq = engine.run()  # direct call, not run_universe
-            # Build unique filenames for outputs
+            all_trades, all_equity = [], []
+            for symbol in syms:
+                frames = load_frames(symbol)  # This gets (df_5m, df_15m, df_1h, df_daily) for this symbol
+                if frames is None:
+                    continue
+                df_5m, df_15m, df_1h, df_daily = frames
+                # Instantiate and set risk values
+                engine = LiveLikeBacktester(symbol, df_15m, df_1h, df_daily, cash=1_000_000)
+                engine.risk_pct = risk_pct
+                engine.stop_pct = stop_pct
+                trades, eq = engine.run()
+                if not trades.empty:
+                    all_trades.append(trades)
+                if not eq.empty:
+                    all_equity.append(eq)
+            # Concat and save after all symbols
+            trades_df = pd.concat(all_trades).reset_index(drop=True) if all_trades else pd.DataFrame()
+            eq_df = pd.concat(all_equity).reset_index(drop=True) if all_equity else pd.DataFrame()
             fname_prefix = f"r{risk_pct}_s{stop_pct}".replace(".", "p")
-            trades.to_csv(os.path.join(RESULTS_DIR, f"trades_{fname_prefix}.csv"), index=False)
-            eq.to_csv(os.path.join(RESULTS_DIR, f"equity_curve_{fname_prefix}.csv"), index=False)
-            eq[['time','symbol','pos','qty']].to_csv(os.path.join(RESULTS_DIR, f"positions_{fname_prefix}.csv"), index=False)
+            trades_df.to_csv(os.path.join(RESULTS_DIR, f"trades_{fname_prefix}.csv"), index=False)
+            eq_df.to_csv(os.path.join(RESULTS_DIR, f"equity_curve_{fname_prefix}.csv"), index=False)
+            # etc.
             build_reports(os.path.join(RESULTS_DIR, f"trades_{fname_prefix}.csv"), RESULTS_DIR)
             print(f"Wrote trades_{fname_prefix}.csv, equity_curve_{fname_prefix}.csv, etc. to {RESULTS_DIR}")
     # --- Analytics block: paste here ---

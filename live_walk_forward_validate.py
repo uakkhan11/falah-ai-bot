@@ -290,9 +290,9 @@ class LiveLikeBacktester:
             # Defensive fallback: no trade or skip
             return 0, stop_dist
     
-    risk_cash = self.equity * RISK_PER_TRADE
-    qty = int(risk_cash // stop_dist) if stop_dist > 0 else 0
-    return max(qty, 0), stop_dist
+        risk_cash = self.equity * RISK_PER_TRADE
+        qty = int(risk_cash // stop_dist) if stop_dist > 0 else 0
+        return max(qty, 0), stop_dist
 
     def on_bar(self, t, row):
         feats = self.feats.loc[t]

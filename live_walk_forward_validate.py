@@ -13,10 +13,30 @@ DATA_PATHS = {
     'daily': os.path.join(BASE_DIR, "swing_data"),
     '1hour': os.path.join(BASE_DIR, "intraday_swing_data"),
     '15minute': os.path.join(BASE_DIR, "scalping_data"),
+    '5minute': os.path.join(BASE_DIR, "five_minute_data"),
 }
 
 RESULTS_DIR = os.path.join(BASE_DIR, "results_live_like")
 os.makedirs(RESULTS_DIR, exist_ok=True)
+
+def merge_5m_features_onto_15m(df_15m, df_5m):
+    # Compute 5-min features
+    df_5m['rsi14_5m'] = ta.RSI(df_5m['close'], length=14)  # Use your RSI function
+    df_5m['ema5_5m'] = ta.EMA(df_5m['close'], length=5)
+    df_5m['ema20_5m'] = ta.EMA(df_5m['close'], length=20)
+
+    # Example volume surge flag: 5m vol > 5-period SMA vol
+    df_5m['vol_sma5'] = df_5m['volume'].rolling(window=5).mean()
+    df_5m['vol_surge_5m'] = df_5m['volume'] > df_5m['vol_sma5']
+
+    # Resample or map 5m features to 15m timestamp index (e.g. take last 5m bar within 15m bar)
+    # Here assume df_15m and df_5m have datetime indices aligned
+    features_5m = df_5m[['rsi14_5m', 'ema5_5m', 'ema20_5m', 'vol_surge_5m']].resample('15T').last()
+
+    # Join features
+    df_15m = df_15m.join(features_5m, how='left')
+
+    return df_15m
 
 # 2) Data Loading
 def read_ohlcv_csv(path):

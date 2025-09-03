@@ -20,6 +20,29 @@ DATA_PATHS = {
 RESULTS_DIR = os.path.join(BASE_DIR, "results_live_like")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
+DAILY_DIR = 'swing_data'  # Adjust as needed
+
+dfs = []
+for fname in os.listdir(DAILY_DIR):
+    if fname.endswith('.csv'):
+        symbol = fname.replace('.csv', '')
+        df = pd.read_csv(os.path.join(DAILY_DIR, fname), parse_dates=['date'])
+        df['symbol'] = symbol           # <-- Add here after loading
+        dfs.append(df)
+dfd = pd.concat(dfs, ignore_index=True)
+
+INTRADAY_DIR = 'intraday_swing_data'
+
+dfs = []
+for fname in os.listdir(INTRADAY_DIR):
+    if fname.endswith('.csv'):
+        symbol = fname.replace('.csv', '')
+        df = pd.read_csv(os.path.join(INTRADAY_DIR, fname), parse_dates=['date'])
+        df['symbol'] = symbol           # <-- Add here after loading
+        dfs.append(df)
+df1h = pd.concat(dfs, ignore_index=True)
+
+
 def merge_5m_features_onto_15m(df_15m, df_5m):
     # Compute 5-min features
     df_5m['rsi14_5m'] = ta.RSI(df_5m['close'], timeperiod=14) # Use your RSI function
@@ -564,8 +587,6 @@ def run_universe(symbols, cash=1_000_000):
     eq_df = pd.concat(all_equity).reset_index(drop=True) if all_equity else pd.DataFrame()
     return trades_df, eq_df
     
-df1h = pd.read_csv('intraday_1h.csv')   # Or however you build your 1H/intraday dataframe
-dfd = pd.read_csv('daily.csv')          # Or your daily bars dataframe
 if __name__ == "__main__":
     syms = discover_symbols()
     for risk_pct in [0.005, 0.01, 0.02]:

@@ -289,9 +289,9 @@ class LiveLikeBacktester:
         if math.isnan(stop_dist) or stop_dist <= 0:
             return 0, stop_dist
 
-    risk_cash = self.equity * self.risk_pct  # Use self.risk_pct, set externally
-    qty = int(risk_cash // stop_dist) if stop_dist > 0 else 0
-    return max(qty, 0), stop_dist
+        risk_cash = self.equity * self.risk_pct  # Use self.risk_pct, set externally
+        qty = int(risk_cash // stop_dist) if stop_dist > 0 else 0
+        return max(qty, 0), stop_dist
 
     def on_bar(self, t, row):
         feats = self.feats.loc[t]

@@ -352,7 +352,7 @@ class LiveLikeBacktester:
                 side = pending_entry
                 atrv = self.feats.loc[t, 'atr14']
                 open_px = row['open']
-                qty, stop_dist = self.size_from_atr(open_px, atrv, bar_time)
+                qty, stop_dist = self.size_from_atr(open_px, atrv, row.name)
                 if qty > 0:
                     gates_pref = {f"gate_{k}": bool(v) for k,v in self._last_gates.items()}
                     if side == 'long':

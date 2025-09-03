@@ -228,21 +228,18 @@ def signal_gates_row(r):
         and or_width_ok
     )
 
-    # Lower timeframe confirmation gate (5-minute)
-    gate_ltf_entry = True  # default allowed
-    gate_ltf_entry = (
+    if all(k in r for k in ['rsi14_5m', 'ema5_5m', 'ema20_5m', 'vol_surge_5m']):
+        gate_ltf_entry = (
             ((r['ema5_5m'] > r['ema20_5m']) and (r['rsi14_5m'] > 52))
             or (r['vol_surge_5m'] == True)
         )
     else:
         # If 5m data is missing, do not block the signal
         gate_ltf_entry = True
-
+    
     # Combine base long_signal with lower timeframe gate
     long_signal = long_signal and gate_ltf_entry
-
     short_signal = False
-
     return bool(long_signal), bool(short_signal), gates
 
 

@@ -570,7 +570,7 @@ def run_universe(symbols, cash=1_000_000):
             continue
 
         # Instantiate backtest
-        eng = LiveLikeBacktester(sym, df15, df1h, dfd, cash=cash)
+        eng = LiveLikeBacktester(sym, df_15m, df_1h, df_daily, cash=cash)
         trades, eq = eng.run()
         if not trades.empty:
             all_trades.append(trades)

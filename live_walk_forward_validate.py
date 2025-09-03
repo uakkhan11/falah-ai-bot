@@ -201,18 +201,8 @@ def build_features(df15, df1h, dfd):
 # 4) Signal gates
 def signal_gates_row(r):
     gates = {}
-    gate_ltf_entry = False
-    if 'rsi14_5m' in r and 'ema5_5m' in r and 'ema20_5m' in r and 'vol_surge_5m' in r:
-        gate_ltf_entry = (
-            (r['ema5_5m'] > r['ema20_5m']) and (r['rsi14_5m'] > 55)
-        ) or (r['vol_surge_5m'] == True)
-    else:
-        # If 5m data missing, default to True to not block entries
-        gate_ltf_entry = True
 
-    # Update long_signal to include lower timeframe gate
-    long_signal = long_signal and gate_ltf_entry
-    gates['regime_up'] = (r['close'] > r['ema200_d']) and (r['rsi14_d'] >= 55)  # strong uptrends[1]
+    gates['regime_up'] = (r['close'] > r['ema200_d']) and (r['rsi14_d'] >= 55)  # strong uptrends
     gates['tf1_up'] = (r['ema9_h'] > r['ema21_h'])
     gates['tf1_dn'] = (r['ema9_h'] < r['ema21_h'])
     gates['value_long'] = (r['close'] >= r['vwap']) and (r['close'] >= r['ema21'])
@@ -223,9 +213,12 @@ def signal_gates_row(r):
     gates['momo_short'] = (r['macd'] < r['macd_sig']) and (r['rsi14'] < 48)
     gates['orb_long'] = (r['close'] > r['or_hi']) if not pd.isna(r['or_hi']) else False
     gates['orb_short'] = (r['close'] < r['or_lo']) if not pd.isna(r['or_lo']) else False
+
     or_width_ok = False
     if pd.notna(r.get('or_hi')) and pd.notna(r.get('or_lo')):
         or_width_ok = ((r['or_hi'] - r['or_lo']) / max(1e-9, r['close'])) >= 0.001
+
+    # Calculate base long_signal
     long_signal = (
         gates['regime_up']
         and gates['tf1_up']
@@ -242,14 +235,16 @@ def signal_gates_row(r):
             (r['ema5_5m'] > r['ema20_5m']) and (r['rsi14_5m'] > 55)
         ) or (r['vol_surge_5m'] == True)
     else:
+        # If 5m data is missing, do not block the signal
         gate_ltf_entry = True
 
-    # Combine with previous
+    # Combine base long_signal with lower timeframe gate
     long_signal = long_signal and gate_ltf_entry
 
     short_signal = False
 
     return bool(long_signal), bool(short_signal), gates
+
 
 # 5) Event classes and execution model
 @dataclass

@@ -202,7 +202,7 @@ def build_features(df15, df1h, dfd):
 def signal_gates_row(r):
     gates = {}
 
-    gates['regime_up'] = (r['close'] > r['ema200_d']) and (r['rsi14_d'] >= 55)  # strong uptrends
+    gates['regime_up'] = (r['close'] > r['ema200_d']) and (r['rsi14_d'] >= 55)
     gates['tf1_up'] = (r['ema9_h'] > r['ema21_h'])
     gates['tf1_dn'] = (r['ema9_h'] < r['ema21_h'])
     gates['value_long'] = (r['close'] >= r['vwap']) and (r['close'] >= r['ema21'])
@@ -229,11 +229,11 @@ def signal_gates_row(r):
     )
 
     # Lower timeframe confirmation gate (5-minute)
-    gate_ltf_entry = False
-    if 'rsi14_5m' in r and 'ema5_5m' in r and 'ema20_5m' in r and 'vol_surge_5m' in r:
-        gate_ltf_entry = (
-            (r['ema5_5m'] > r['ema20_5m']) and (r['rsi14_5m'] > 55)
-        ) or (r['vol_surge_5m'] == True)
+    gate_ltf_entry = True  # default allowed
+    gate_ltf_entry = (
+            ((r['ema5_5m'] > r['ema20_5m']) and (r['rsi14_5m'] > 52))
+            or (r['vol_surge_5m'] == True)
+        )
     else:
         # If 5m data is missing, do not block the signal
         gate_ltf_entry = True

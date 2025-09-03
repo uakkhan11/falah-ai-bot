@@ -625,7 +625,7 @@ from itertools import combinations
 best_results = []
 for g1, g2 in combinations(gate_cols, 2):
     combo = df[(df[g1]) & (df[g2])]
-    if len(combo) < 30:
+    if len(combo) < 10:
         continue  # skip tiny samples
     win_rate = combo['profitable'].mean()
     profit_factor = combo[combo['pnl'] > 0]['pnl'].sum() / abs(combo[combo['pnl'] < 0]['pnl'].sum())

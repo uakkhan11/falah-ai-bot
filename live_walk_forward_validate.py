@@ -21,9 +21,9 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 def merge_5m_features_onto_15m(df_15m, df_5m):
     # Compute 5-min features
-    df_5m['rsi14_5m'] = ta.RSI(df_5m['close'], length=14)  # Use your RSI function
-    df_5m['ema5_5m'] = ta.EMA(df_5m['close'], length=5)
-    df_5m['ema20_5m'] = ta.EMA(df_5m['close'], length=20)
+    df_5m['rsi14_5m'] = ta.RSI(df_5m['close'], timeperiod=14) # Use your RSI function
+    df_5m['ema5_5m'] = ema(df_5m['close'], span=5)
+    df_5m['ema20_5m'] = ema(df_5m['close'], span=20)
 
     # Example volume surge flag: 5m vol > 5-period SMA vol
     df_5m['vol_sma5'] = df_5m['volume'].rolling(window=5).mean()

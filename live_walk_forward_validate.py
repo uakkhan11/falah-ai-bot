@@ -563,7 +563,7 @@ def run_universe(symbols, cash=1_000_000):
         
         df_daily = df_daily[(df_daily.index >= start) & (df_daily.index <= end)]
 
-        print(f"[info] {sym}: 15m={len(df15)} 1h={len(df1h)} dly={len(dfd)} window=({start} -> {end})")
+        print(f"[info] {sym}: 15m={len(df_15m)} 1h={len(df_1h)} dly={len(df_daily)} window=({start} -> {end})")
 
         if len(df15) < 300 or start >= end:
             print(f"[skip] {sym}: insufficient overlap or bars")

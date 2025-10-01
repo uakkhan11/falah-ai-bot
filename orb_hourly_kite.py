@@ -15,6 +15,7 @@ TIMEFRAME = '1hour'                 # choose '1hour' for this strategy
 DATA_DIR = DATA_PATHS[TIMEFRAME]
 
 # ========== SYMBOLS & DATE FILTER ==========
+SYMBOLS = ["NCC","RELIANCE"]
 START_DATE = "2024-01-01 09:15:00"
 END_DATE   = "2025-09-30 15:30:00"
 

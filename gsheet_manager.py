@@ -39,7 +39,7 @@ class GSheetManager:
             self.logger.error(f"Error reading Google Sheet: {e}")
             return []
 
-    def append_row(self, row: Dict):
+    def append_row(self, row: dict):
         """
         Append a dict as a row; keys must match the header row.
         If header mismatch, falls back to ordered values by sorted keys.

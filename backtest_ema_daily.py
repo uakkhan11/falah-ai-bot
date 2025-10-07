@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# backtest_ema_daily_sweep.py
+# Daily EMA(5/20) long-only backtester with EMA200 & ADX filters,
+# ATR(14)*k initial stop, optional ATR trailing, prior-bar confirmation.
+# Includes: portfolio concurrency cap, NIFTY index trend gate,
+# enhanced analytics (PF, Sharpe, Sortino, Calmar, CAGR, etc.),
+# parameter sweep driver, and per-symbol/per-month breakdown CSVs.
+
 import os
 import argparse
 import glob
@@ -7,7 +14,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
-# Try to reuse paths from improved_fetcher.py
+# Try to import paths from improved_fetcher.py
 try:
     from improved_fetcher import BASE_DIR, DATA_DIRS
 except Exception:
@@ -18,18 +25,26 @@ DAILY_DIR = DATA_DIRS["daily"]
 REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
-# ---------------- Data loading and indicators ----------------
+# ---------------- Portfolio controller (concurrency cap) ----------------
+class PortfolioController:
+    def __init__(self, max_open=10):
+        self.max_open = max_open
+        self.open_positions = set()
+    def can_enter(self, symbol):
+        return len(self.open_positions) < self.max_open and symbol not in self.open_positions
+    def on_enter(self, symbol):
+        self.open_positions.add(symbol)
+    def on_exit(self, symbol):
+        self.open_positions.discard(symbol)
 
+# ---------------- Data loading and indicators ----------------
 def load_symbol_df(path):
     df = pd.read_csv(path)
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").reset_index(drop=True)
-
-    # Sanity columns
     for col in ["open","high","low","close"]:
         if col not in df.columns:
             raise ValueError(f"Missing column {col} in {path}")
-
     # ATR14
     if "atr" not in df.columns or df["atr"].isna().all():
         tr1 = (df["high"] - df["low"])
@@ -37,7 +52,6 @@ def load_symbol_df(path):
         tr3 = (df["low"] - df["close"].shift(1)).abs()
         tr = pd.concat([tr1,tr2,tr3], axis=1).max(axis=1)
         df["atr"] = tr.rolling(14, min_periods=14).mean()
-
     # ADX14
     if "adx" not in df.columns or df["adx"].isna().all():
         up = df["high"].diff()
@@ -53,19 +67,23 @@ def load_symbol_df(path):
         minus_di = 100 * minus_dm.rolling(14, min_periods=14).sum() / atr
         dx = ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)) * 100
         df["adx"] = dx.rolling(14, min_periods=14).mean()
-
     # EMAs
     df["ema5"] = df["close"].ewm(span=5, adjust=False).mean()
     df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
     df["ema200"] = df["close"].ewm(span=200, adjust=False).mean()
     return df
 
-# ---------------- Strategy engine ----------------
+def load_index_gate(index_csv_path):
+    idx = pd.read_csv(index_csv_path)
+    idx["date"] = pd.to_datetime(idx["date"])
+    idx = idx.sort_values("date").reset_index(drop=True)
+    idx["ema200"] = idx["close"].ewm(span=200, adjust=False).mean()
+    # 0.2% buffer over EMA200 to avoid marginal regimes
+    idx["gate"] = idx["close"] > idx["ema200"] * 1.002
+    return idx[["date","gate"]]
 
-def backtest_symbol(df, symbol, capital, risk_per_trade, atr_mult, adx_threshold, trail):
-    """
-    Prior-bar confirmation (t-1), execute at next day's open (t), stop breach evaluated on day t low.
-    """
+# ---------------- Strategy engine ----------------
+def backtest_symbol(df, symbol, capital, risk_per_trade, atr_mult, adx_threshold, trail, controller=None, index_gate=None):
     trades = []
     in_pos = False
     qty = 0
@@ -73,7 +91,7 @@ def backtest_symbol(df, symbol, capital, risk_per_trade, atr_mult, adx_threshold
     trail_stop = None
     equity = capital
 
-    # need >= 200 bars for ema200 warm-up; iterate leaving 1 bar for execution
+    # iterate leaving 1 bar for execution, need 200 for ema200 warm-up
     for i in range(201, len(df)-1):
         # Signal day: i-1
         ema5_prev2 = df.loc[i-2, "ema5"]
@@ -82,7 +100,6 @@ def backtest_symbol(df, symbol, capital, risk_per_trade, atr_mult, adx_threshold
         ema20_prev = df.loc[i-1, "ema20"]
         crossed_up = (ema5_prev2 <= ema20_prev2) and (ema5_prev > ema20_prev)
         crossed_down = (ema5_prev2 >= ema20_prev2) and (ema5_prev < ema20_prev)
-
         c_prev = df.loc[i-1, "close"]
         atr_prev = df.loc[i-1, "atr"]
         adx_prev = df.loc[i-1, "adx"] if not np.isnan(df.loc[i-1, "adx"]) else 0.0
@@ -95,8 +112,18 @@ def backtest_symbol(df, symbol, capital, risk_per_trade, atr_mult, adx_threshold
         date_i = df.loc[i, "date"]
 
         if not in_pos:
-            if crossed_up and c_prev > ema200_prev and adx_prev >= adx_threshold and not np.isnan(atr_prev):
-                # Risk-aware sizing
+            # Index gate (True allows trade) on signal day
+            idx_ok = True
+            if index_gate is not None:
+                try:
+                    idx_ok = bool(index_gate.iloc[i-1])
+                except Exception:
+                    idx_ok = True
+            # Concurrency cap
+            if controller is not None and not controller.can_enter(symbol):
+                idx_ok = False
+
+            if idx_ok and crossed_up and c_prev > ema200_prev and adx_prev >= adx_threshold and not np.isnan(atr_prev):
                 sl_from_signal = c_prev - atr_mult * atr_prev
                 risk_per_share = max(0.01, c_prev - sl_from_signal)
                 max_risk = risk_per_trade * equity
@@ -104,11 +131,12 @@ def backtest_symbol(df, symbol, capital, risk_per_trade, atr_mult, adx_threshold
                 if qty > 0:
                     in_pos = True
                     entry = exec_open
-                    # anchor stop to entry
                     trail_stop = entry - atr_mult * atr_prev
                     trades.append({"symbol":symbol,"side":"BUY","date":date_i,"price":entry,"qty":qty})
+                    if controller is not None:
+                        controller.on_enter(symbol)
         else:
-            # update trailing stop based on prior bar ATR and latest close
+            # Update trailing stop
             if trail and not np.isnan(atr_prev):
                 candidate = exec_close - atr_mult * atr_prev
                 trail_stop = max(trail_stop, candidate)
@@ -130,51 +158,39 @@ def backtest_symbol(df, symbol, capital, risk_per_trade, atr_mult, adx_threshold
                 qty = 0
                 entry = 0.0
                 trail_stop = None
+                if controller is not None:
+                    controller.on_exit(symbol)
 
     return trades
 
 # ---------------- Analytics ----------------
-
 def build_daily_equity(trades, start_capital=0.0):
     """
-    Build a unique daily equity curve even if multiple exits occur on the same date
-    across many symbols. We first aggregate P&L by calendar date, then reindex.
+    Aggregate P&L by calendar date to avoid duplicate index labels,
+    then build continuous daily equity with returns and drawdown.
     """
     if len(trades) == 0:
         return pd.DataFrame(columns=["date","equity","ret","drawdown"])
-
     tdf = pd.DataFrame(trades)
     tdf["date"] = pd.to_datetime(tdf["date"])
-    # Consider only realized P&L on SELL legs
     exits = tdf[(tdf["side"]=="SELL") & (tdf["pnl"].notna())].copy()
     if exits.empty:
-        # No realized exits yet; flat equity series with a single point
         return pd.DataFrame([{"date": pd.Timestamp.today().normalize(), "equity": start_capital, "ret": 0.0, "drawdown": 0.0}])
-
-    # Aggregate P&L by calendar date to ensure unique index
     daily_pnl = exits.groupby(exits["date"].dt.normalize())["pnl"].sum().to_frame("pnl").sort_index()
-
-    # Build cumulative equity
     daily_pnl["equity"] = start_capital + daily_pnl["pnl"].cumsum()
-
-    # Create a continuous daily index and forward-fill equity
     full_idx = pd.date_range(daily_pnl.index.min(), daily_pnl.index.max(), freq="D")
     daily = daily_pnl.reindex(full_idx)
     daily["equity"] = daily["equity"].ffill().fillna(start_capital)
-
-    # Compute daily returns and drawdowns
     daily["ret"] = daily["equity"].pct_change().fillna(0.0)
     daily["peak"] = daily["equity"].cummax()
     daily["drawdown"] = daily["peak"] - daily["equity"]
-
     daily = daily.reset_index().rename(columns={"index":"date"})
     return daily[["date","equity","ret","drawdown"]]
-
 
 def summarize(trades, daily, start_capital):
     tdf = pd.DataFrame(trades)
     tdf["date"] = pd.to_datetime(tdf["date"])
-    # round-trips
+    # Round trips
     pos = {}
     closed = []
     for _, r in tdf.sort_values(["symbol","date"]).iterrows():
@@ -183,7 +199,7 @@ def summarize(trades, daily, start_capital):
             pos[k] = r
         elif r["side"]=="SELL" and k in pos:
             b = pos.pop(k)
-            c = {
+            closed.append({
                 "symbol": k,
                 "entry_date": b["date"],
                 "entry_price": b["price"],
@@ -192,8 +208,7 @@ def summarize(trades, daily, start_capital):
                 "qty": b["qty"],
                 "pnl": r.get("pnl", (r["price"]-b["price"])*b["qty"]),
                 "reason": r.get("reason","EXIT")
-            }
-            closed.append(c)
+            })
     cdf = pd.DataFrame(closed).sort_values("exit_date").reset_index(drop=True)
 
     total_trades = len(cdf)
@@ -213,7 +228,7 @@ def summarize(trades, daily, start_capital):
     best_trade = float(cdf["pnl"].max()) if total_trades else 0.0
     worst_trade = float(cdf["pnl"].min()) if total_trades else 0.0
 
-    # durations and exposure
+    # Duration/exposure
     if total_trades:
         dur = (pd.to_datetime(cdf["exit_date"]) - pd.to_datetime(cdf["entry_date"])).dt.days
         avg_dur = float(dur.mean())
@@ -226,7 +241,7 @@ def summarize(trades, daily, start_capital):
     else:
         avg_dur = med_dur = time_in_mkt_pct = 0.0
 
-    # Risk/return (replace the existing block that computes cagr/calmar)
+    # Risk/return
     if len(daily) >= 2:
         r = daily["ret"].astype(float).values
         mu = float(np.nanmean(r))
@@ -241,16 +256,13 @@ def summarize(trades, daily, start_capital):
         max_dd_pct = (max_dd_abs / max(1e-9, max_eq)) * 100.0
 
         years = max(1e-9, (daily["date"].iloc[-1] - daily["date"].iloc[0]).days / 365.25)
-
-        # Safe CAGR: only compute if start and end capital are strictly positive
         start_cap = float(start_capital)
-        end_cap = float(start_capital + float(np.nansum(cdf["pnl"])) if 'cdf' in locals() and not cdf.empty else start_capital)
+        end_cap = float(end_capital)
         if start_cap > 0 and end_cap > 0:
             ratio = end_cap / start_cap
             cagr = (ratio ** (1.0 / years) - 1.0) * 100.0
         else:
             cagr = np.nan
-
         calmar = (cagr / (max_dd_pct if max_dd_pct > 0 else np.nan)) if not np.isnan(cagr) else np.nan
         vol_annual = sigma * ann
     else:
@@ -258,41 +270,38 @@ def summarize(trades, daily, start_capital):
         max_dd_abs = max_dd_pct = 0.0
         cagr = np.nan
 
-
     summary = {
-        "start_capital": round(start_capital,2),
-        "end_capital": round(end_capital,2),
-        "net_pnl": round(total_pnl,2),
+        "start_capital": round(float(start_capital),2),
+        "end_capital": round(float(end_capital),2),
+        "net_pnl": round(float(total_pnl),2),
         "total_trades": int(total_trades),
         "winners": int(wins),
         "losers": int(losses),
-        "percent_profitable": round(win_rate,2),
-        "avg_trade_pnl": round(avg_trade_pnl,2),
-        "avg_win": round(avg_win,2),
-        "avg_loss": round(avg_loss,2),
-        "win_loss_ratio": round(win_loss_ratio,3) if not np.isnan(win_loss_ratio) else None,
-        "gross_profit": round(gross_profit,2),
-        "gross_loss": round(gross_loss,2),
-        "profit_factor": round(profit_factor,3) if not np.isnan(profit_factor) else None,
-        "best_trade": round(best_trade,2),
-        "worst_trade": round(worst_trade,2),
-        "avg_trade_duration_days": round(avg_dur,2),
-        "median_trade_duration_days": round(med_dur,2),
-        "time_in_market_pct": round(time_in_mkt_pct,2),
-        "max_drawdown_abs": round(max_dd_abs,2),
-        "max_drawdown_pct": round(max_dd_pct,2),
-        "volatility_annualized": round(vol_annual,4) if not np.isnan(vol_annual) else None,
-        "sharpe": round(float(sharpe), 3) if not np.isnan(sharpe) else None,
-        "sortino": round(float(sortino), 3) if not np.isnan(sortino) else None,
-        "cagr_pct": round(float(cagr), 2) if not np.isnan(cagr) else None,
-        "calmar": round(float(calmar), 3) if not np.isnan(calmar) else None
-
+        "percent_profitable": round(float(win_rate),2),
+        "avg_trade_pnl": round(float(avg_trade_pnl),2),
+        "avg_win": round(float(avg_win),2),
+        "avg_loss": round(float(avg_loss),2),
+        "win_loss_ratio": round(float(win_loss_ratio),3) if not np.isnan(win_loss_ratio) else None,
+        "gross_profit": round(float(gross_profit),2),
+        "gross_loss": round(float(gross_loss),2),
+        "profit_factor": round(float(profit_factor),3) if not np.isnan(profit_factor) else None,
+        "best_trade": round(float(best_trade),2),
+        "worst_trade": round(float(worst_trade),2),
+        "avg_trade_duration_days": round(float(avg_dur),2),
+        "median_trade_duration_days": round(float(med_dur),2),
+        "time_in_market_pct": round(float(time_in_mkt_pct),2),
+        "max_drawdown_abs": round(float(max_dd_abs),2),
+        "max_drawdown_pct": round(float(max_dd_pct),2),
+        "volatility_annualized": round(float(vol_annual),4) if not np.isnan(vol_annual) else None,
+        "sharpe": round(float(sharpe),3) if not np.isnan(sharpe) else None,
+        "sortino": round(float(sortino),3) if not np.isnan(sortino) else None,
+        "cagr_pct": round(float(cagr),2) if not np.isnan(cagr) else None,
+        "calmar": round(float(calmar),3) if not np.isnan(calmar) else None
     }
     return summary, cdf
 
 # ---------------- Single run and sweep driver ----------------
-
-def run_once(files, capital, risk_per_trade, atr_mult, adx_threshold, trail, tag):
+def run_once(files, capital, risk_per_trade, atr_mult, adx_threshold, trail, tag, controller, index_gate_df=None):
     all_trades = []
     for f in files:
         symbol = os.path.basename(f).replace(".csv","")
@@ -300,7 +309,22 @@ def run_once(files, capital, risk_per_trade, atr_mult, adx_threshold, trail, tag
             df = load_symbol_df(f)
         except Exception:
             continue
-        trades = backtest_symbol(df, symbol, capital, risk_per_trade, atr_mult, adx_threshold, trail)
+        # Per-symbol index gate aligned by date
+        sym_gate = None
+        if index_gate_df is not None:
+            g = pd.merge(df[["date"]], index_gate_df, on="date", how="left")
+            g["gate"] = g["gate"].ffill().fillna(False)
+            sym_gate = g["gate"]
+        trades = backtest_symbol(
+            df, symbol,
+            capital=capital,
+            risk_per_trade=risk_per_trade,
+            atr_mult=atr_mult,
+            adx_threshold=adx_threshold,
+            trail=trail,
+            controller=controller,
+            index_gate=sym_gate
+        )
         all_trades.extend(trades)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -308,18 +332,29 @@ def run_once(files, capital, risk_per_trade, atr_mult, adx_threshold, trail, tag
     daily_csv  = os.path.join(REPORTS_DIR, f"ema_daily_equity_{tag}_{ts}.csv")
     summary_csv= os.path.join(REPORTS_DIR, f"ema_daily_summary_{tag}_{ts}.csv")
 
-    # Build analytics and save
     pd.DataFrame(all_trades).to_csv(trades_csv, index=False)
     daily = build_daily_equity(all_trades, start_capital=capital)
     daily.to_csv(daily_csv, index=False)
     summary, cdf = summarize(all_trades, daily, capital)
-    srow = pd.DataFrame([{
-        "atr_mult": atr_mult,
-        "adx_threshold": adx_threshold,
-        "trail": trail,
-        **summary
-    }])
+    srow = pd.DataFrame([{"atr_mult":atr_mult,"adx_threshold":adx_threshold,"trail":trail, **summary}])
     srow.to_csv(summary_csv, index=False)
+
+    # Per-symbol / per-month breakdowns from realized exits
+    tdf = pd.DataFrame(all_trades)
+    if not tdf.empty:
+        tdf["date"] = pd.to_datetime(tdf["date"])
+        exits = tdf[(tdf["side"]=="SELL") & (tdf["pnl"].notna())].copy()
+        if not exits.empty:
+            exits["month"] = exits["date"].dt.to_period("M").astype(str)
+            per_symbol = exits.groupby("symbol")["pnl"].agg(["count","sum","mean"]).reset_index().rename(
+                columns={"count":"trades","sum":"pnl_sum","mean":"pnl_mean"})
+            per_month = exits.groupby("month")["pnl"].agg(["count","sum","mean"]).reset_index().rename(
+                columns={"count":"trades","sum":"pnl_sum","mean":"pnl_mean"})
+            per_symbol_path = os.path.join(REPORTS_DIR, f"ema_daily_per_symbol_{tag}_{ts}.csv")
+            per_month_path  = os.path.join(REPORTS_DIR, f"ema_daily_per_month_{tag}_{ts}.csv")
+            per_symbol.to_csv(per_symbol_path, index=False)
+            per_month.to_csv(per_month_path, index=False)
+
     return summary, trades_csv, daily_csv, summary_csv
 
 def main():
@@ -332,12 +367,17 @@ def main():
     ap.add_argument("--adx_grid", type=str, default=None, help="comma list, e.g., 20,25,30")
     ap.add_argument("--trail", type=str, default="true")
     ap.add_argument("--limit_symbols", type=int, default=0)
+    ap.add_argument("--index_csv", type=str, default=None, help="Path to NIFTY CSV (date, close) from improved_fetcher")
+    ap.add_argument("--max_open", type=int, default=10, help="Portfolio-wide cap on concurrent positions")
     args = ap.parse_args()
 
     files = sorted(glob.glob(os.path.join(DAILY_DIR, "*.csv")))
     if args.limit_symbols > 0:
         files = files[:args.limit_symbols]
     trail = args.trail.lower() == "true"
+
+    controller = PortfolioController(max_open=args.max_open)
+    index_gate_df = load_index_gate(args.index_csv) if args.index_csv else None
 
     results = []
 
@@ -347,11 +387,13 @@ def main():
         adxs = [float(x) for x in args.adx_grid.split(",")]
         for a in atrs:
             for d in adxs:
-                tag = f"a{a}_d{d}_t{int(trail)}"
+                tag = f"a{a}_d{d}_t{int(trail)}_mo{args.max_open}"
                 summary, tcsv, dcsv, scsv = run_once(
-                    files, args.capital, args.risk_per_trade, a, d, trail, tag
+                    files, args.capital, args.risk_per_trade, a, d, trail, tag,
+                    controller=controller, index_gate_df=index_gate_df
                 )
-                results.append({"atr_mult":a,"adx_threshold":d,"trail":trail, **summary, "trades_csv":tcsv,"daily_csv":dcsv,"summary_csv":scsv})
+                results.append({"atr_mult":a,"adx_threshold":d,"trail":trail,"max_open":args.max_open, **summary,
+                                "trades_csv":tcsv,"daily_csv":dcsv,"summary_csv":scsv})
         combined = pd.DataFrame(results)
         combined_path = os.path.join(REPORTS_DIR, f"ema_daily_combined_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
         combined.to_csv(combined_path, index=False)
@@ -362,9 +404,10 @@ def main():
     # Single run mode
     if args.atr_mult is None or args.adx is None:
         raise SystemExit("Provide either --atr_mult & --adx (single run) or both --atr_grid & --adx_grid (sweep).")
-    tag = f"a{args.atr_mult}_d{args.adx}_t{int(trail)}"
+    tag = f"a{args.atr_mult}_d{args.adx}_t{int(trail)}_mo{args.max_open}"
     summary, tcsv, dcsv, scsv = run_once(
-        files, args.capital, args.risk_per_trade, float(args.atr_mult), float(args.adx), trail, tag
+        files, args.capital, args.risk_per_trade, float(args.atr_mult), float(args.adx), trail, tag,
+        controller=controller, index_gate_df=index_gate_df
     )
     print("Summary:", summary)
     print("Trades CSV:", tcsv)

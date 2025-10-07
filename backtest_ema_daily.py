@@ -227,36 +227,36 @@ def summarize(trades, daily, start_capital):
         avg_dur = med_dur = time_in_mkt_pct = 0.0
 
     # Risk/return (replace the existing block that computes cagr/calmar)
-if len(daily) >= 2:
-    r = daily["ret"].astype(float).values
-    mu = float(np.nanmean(r))
-    sigma = float(np.nanstd(r, ddof=1))
-    downside = float(np.nanstd(np.clip(r, a_max=0, a_min=None), ddof=1))
-    ann = np.sqrt(252.0)
-    sharpe = (mu / sigma) * ann if sigma > 0 else np.nan
-    sortino = (mu / downside) * ann if downside > 0 else np.nan
+    if len(daily) >= 2:
+        r = daily["ret"].astype(float).values
+        mu = float(np.nanmean(r))
+        sigma = float(np.nanstd(r, ddof=1))
+        downside = float(np.nanstd(np.clip(r, a_max=0, a_min=None), ddof=1))
+        ann = np.sqrt(252.0)
+        sharpe = (mu / sigma) * ann if sigma > 0 else np.nan
+        sortino = (mu / downside) * ann if downside > 0 else np.nan
 
-    max_dd_abs = float(daily["drawdown"].max())
-    max_eq = float(daily["equity"].max()) if len(daily) else 0.0
-    max_dd_pct = (max_dd_abs / max(1e-9, max_eq)) * 100.0
+        max_dd_abs = float(daily["drawdown"].max())
+        max_eq = float(daily["equity"].max()) if len(daily) else 0.0
+        max_dd_pct = (max_dd_abs / max(1e-9, max_eq)) * 100.0
 
-    years = max(1e-9, (daily["date"].iloc[-1] - daily["date"].iloc[0]).days / 365.25)
+        years = max(1e-9, (daily["date"].iloc[-1] - daily["date"].iloc[0]).days / 365.25)
 
-    # Safe CAGR: only compute if start and end capital are strictly positive
-    start_cap = float(start_capital)
-    end_cap = float(start_capital + float(np.nansum(cdf["pnl"])) if 'cdf' in locals() and not cdf.empty else start_capital)
-    if start_cap > 0 and end_cap > 0:
-        ratio = end_cap / start_cap
-        cagr = (ratio ** (1.0 / years) - 1.0) * 100.0
+        # Safe CAGR: only compute if start and end capital are strictly positive
+        start_cap = float(start_capital)
+        end_cap = float(start_capital + float(np.nansum(cdf["pnl"])) if 'cdf' in locals() and not cdf.empty else start_capital)
+        if start_cap > 0 and end_cap > 0:
+            ratio = end_cap / start_cap
+            cagr = (ratio ** (1.0 / years) - 1.0) * 100.0
+         else:
+            cagr = np.nan
+
+        calmar = (cagr / (max_dd_pct if max_dd_pct > 0 else np.nan)) if not np.isnan(cagr) else np.nan
+        vol_annual = sigma * ann
     else:
+        sharpe = sortino = calmar = vol_annual = np.nan
+        max_dd_abs = max_dd_pct = 0.0
         cagr = np.nan
-
-    calmar = (cagr / (max_dd_pct if max_dd_pct > 0 else np.nan)) if not np.isnan(cagr) else np.nan
-    vol_annual = sigma * ann
-else:
-    sharpe = sortino = calmar = vol_annual = np.nan
-    max_dd_abs = max_dd_pct = 0.0
-    cagr = np.nan
 
 
     summary = {

@@ -178,7 +178,7 @@ def main():
     cfg = Config()
     if not dry_run:
         cfg.authenticate()
-    om  = OrderManager(cfg)
+    om  = OrderManager(config=cfg)
     ot  = OrderTracker(cfg)
     em  = ExitManager(cfg)
     ht  = HoldingTracker(os.path.join(STATE_DIR, "positions.json"))

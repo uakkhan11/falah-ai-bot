@@ -187,7 +187,7 @@ def main():
     tg  = TelegramNotifier(bot_token, chat_id) if (do_notify and bot_token and chat_id) else None
     em  = ExitManager(kite, cfg, om, tl, tg)
     ht  = HoldingTracker(os.path.join(STATE_DIR, "positions.json"))
-    rm  = RiskManager(os.path.join(STATE_DIR, "risk_state.json"), ot, cfg)
+    rm = RiskManager(os.path.join(STATE_DIR, "risk_state.json"), ot)
     cm  = CapitalManager()
     gs  = GoogleSheetLogger(cfg) if do_sheet else None
 

@@ -287,6 +287,24 @@ class SmartHalalFetcher:
         logging.info("="*50)
 
 
-if __name__ == "__main__":
+def run_daily_refresh():
+    """
+    Refresh all configured timeframes for the Halal equity universe and
+    write CSVs into DATA_DIRS while keeping a backup of previous files.
+    This wraps the existing SmartHalalFetcher workflow for external callers.
+    """
+    logging.info("Starting daily refresh via run_daily_refresh()")
     fetcher = SmartHalalFetcher()
     fetcher.fetch_all()
+    logging.info("Daily refresh completed successfully")
+
+
+def main():
+    """
+    Backward-compatible CLI entrypoint.
+    """
+    run_daily_refresh()
+
+
+if __name__ == "__main__":
+    main()

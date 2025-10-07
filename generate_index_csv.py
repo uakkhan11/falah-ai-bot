@@ -10,7 +10,7 @@ except Exception:
     BASE_DIR = "/root/falah-ai-bot"
     DATA_DIRS = {"daily": os.path.join(BASE_DIR, "swing_data")}
 
-OUT_DIR = DATA_DIRS["daily"]
+OUT_DIR =  "/root/falah-ai-bot/index_data"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 # Replace this block with your actual data source if you have Kite or any API handy.
@@ -31,8 +31,8 @@ def build_from_existing_symbol(symbol_csv_path, out_csv):
 if __name__ == "__main__":
     # Option 1: point to a highly liquid symbol CSV only to mirror dates/structure (temporary).
     # Replace with a real NIFTY index CSV fetch when available.
-    sample_csv = os.path.join(OUT_DIR, "RELIANCE.csv")
-    out_csv = os.path.join(OUT_DIR, "nifty_50.csv")
+    sample_csv =  "/root/falah-ai-bot/swing_data/RELIANCE.csv" 
+    out_csv =  "/root/falah-ai-bot/index_data/nifty_50.csv"
     if not os.path.exists(sample_csv):
         raise SystemExit(f"Sample symbol CSV not found at {sample_csv}. Run improved_fetcher.py first or point to another CSV.")
     build_from_existing_symbol(sample_csv, out_csv)

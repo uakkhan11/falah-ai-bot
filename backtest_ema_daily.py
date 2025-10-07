@@ -136,21 +136,40 @@ def backtest_symbol(df, symbol, capital, risk_per_trade, atr_mult, adx_threshold
 # ---------------- Analytics ----------------
 
 def build_daily_equity(trades, start_capital=0.0):
+    """
+    Build a unique daily equity curve even if multiple exits occur on the same date
+    across many symbols. We first aggregate P&L by calendar date, then reindex.
+    """
     if len(trades) == 0:
         return pd.DataFrame(columns=["date","equity","ret","drawdown"])
+
     tdf = pd.DataFrame(trades)
     tdf["date"] = pd.to_datetime(tdf["date"])
-    exits = tdf[(tdf["side"]=="SELL") & (tdf["pnl"].notna())].copy().sort_values("date")
-    eq = exits[["date","pnl"]].copy()
-    eq["equity"] = start_capital + eq["pnl"].cumsum()
-    full_idx = pd.date_range(eq["date"].min(), eq["date"].max(), freq="D")
-    daily = eq.set_index("date")[["equity"]].reindex(full_idx)
+    # Consider only realized P&L on SELL legs
+    exits = tdf[(tdf["side"]=="SELL") & (tdf["pnl"].notna())].copy()
+    if exits.empty:
+        # No realized exits yet; flat equity series with a single point
+        return pd.DataFrame([{"date": pd.Timestamp.today().normalize(), "equity": start_capital, "ret": 0.0, "drawdown": 0.0}])
+
+    # Aggregate P&L by calendar date to ensure unique index
+    daily_pnl = exits.groupby(exits["date"].dt.normalize())["pnl"].sum().to_frame("pnl").sort_index()
+
+    # Build cumulative equity
+    daily_pnl["equity"] = start_capital + daily_pnl["pnl"].cumsum()
+
+    # Create a continuous daily index and forward-fill equity
+    full_idx = pd.date_range(daily_pnl.index.min(), daily_pnl.index.max(), freq="D")
+    daily = daily_pnl.reindex(full_idx)
     daily["equity"] = daily["equity"].ffill().fillna(start_capital)
-    daily.index.name = "date"
+
+    # Compute daily returns and drawdowns
     daily["ret"] = daily["equity"].pct_change().fillna(0.0)
     daily["peak"] = daily["equity"].cummax()
     daily["drawdown"] = daily["peak"] - daily["equity"]
-    return daily.drop(columns=["peak"]).reset_index().rename(columns={"index":"date"})
+
+    daily = daily.reset_index().rename(columns={"index":"date"})
+    return daily[["date","equity","ret","drawdown"]]
+
 
 def summarize(trades, daily, start_capital):
     tdf = pd.DataFrame(trades)

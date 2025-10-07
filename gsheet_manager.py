@@ -2,7 +2,18 @@
 
 import gspread
 import logging
+import os
+import json
+import datetime
+from typing import Dict
 from google.oauth2.service_account import Credentials
+
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+except Exception:
+    gspread = None
+    Credentials = None
 
 class GSheetManager:
     def __init__(self, cfg):
@@ -39,7 +50,7 @@ class GSheetManager:
             self.logger.error(f"Error reading Google Sheet: {e}")
             return []
 
-    def append_row(self, row: dict):
+    def append_row(self, row: Dict):
         """
         Append a dict as a row; keys must match the header row.
         If header mismatch, falls back to ordered values by sorted keys.

@@ -1,13 +1,9 @@
 # gsheet_manager.py
 
-import gspread
-import logging
 import os
-import json
-import datetime
 from typing import Dict
-from google.oauth2.service_account import Credentials
 
+# Optional deps; orchestrator should continue even if not installed
 try:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -15,58 +11,49 @@ except Exception:
     gspread = None
     Credentials = None
 
-class GSheetManager:
+class GoogleSheetLogger:
+    """
+    Append rows to a Google Sheet tab. Expects Config to provide:
+      - gs_service_account_json: path to service account JSON key
+      - gs_spreadsheet_id: spreadsheet ID
+      - gs_worksheet_name: target tab name (e.g., 'Journal')
+    If dependencies/creds are missing, calls become no-ops.
+    """
     def __init__(self, cfg):
-        self.enabled = gspread is not None and Credentials is not None
-        self.cfg = cfg
+        self.enabled = bool(gspread and Credentials
+                            and getattr(cfg, "gs_service_account_json", None)
+                            and getattr(cfg, "gs_spreadsheet_id", None)
+                            and getattr(cfg, "gs_worksheet_name", None))
+        self.ws = None
         if not self.enabled:
             return
-        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-        creds = Credentials.from_service_account_file(cfg.gs_service_account_json, scopes=scopes)
-        self.gc = gspread.authorize(creds)
-        self.sheet = self.gc.open_by_key(cfg.gs_spreadsheet_id)
-        self.ws = self.sheet.worksheet(cfg.gs_worksheet_name)
-
-    def set_sheet_key(self, sheet_key):
-        """Set or change the sheet key dynamically."""
-        self.sheet_key = sheet_key
-
-    def get_symbols_from_sheet(self, sheet_key=None, worksheet_name="HalalList"):
-        """
-        Fetch the list of trading symbols from the specified Google Sheet worksheet.
-        If sheet_key is not passed, uses the one stored during initialization.
-        """
         try:
-            key_to_use = sheet_key or self.sheet_key
-            if not key_to_use:
-                raise ValueError("No Google Sheet key provided or set in GSheetManager.")
-            sh = self.gc.open_by_key(key_to_use)
-            ws = sh.worksheet(worksheet_name)
-            values = ws.col_values(1)[1:]  # skip header
-            symbols = [v.strip().upper() for v in values if v.strip()]
-            self.logger.info(f"Loaded {len(symbols)} symbols from Google Sheet")
-            return symbols
-        except Exception as e:
-            self.logger.error(f"Error reading Google Sheet: {e}")
-            return []
+            scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+            creds = Credentials.from_service_account_file(cfg.gs_service_account_json, scopes=scopes)
+            client = gspread.authorize(creds)
+            sh = client.open_by_key(cfg.gs_spreadsheet_id)
+            self.ws = sh.worksheet(cfg.gs_worksheet_name)
+        except Exception:
+            # Disable gracefully if setup fails
+            self.enabled = False
+            self.ws = None
 
     def append_row(self, row: Dict):
         """
-        Append a dict as a row; keys must match the header row.
-        If header mismatch, falls back to ordered values by sorted keys.
+        Append a dict as a row; if header exists, map by header names.
+        On any error or if disabled, return False to keep pipeline resilient.
         """
-        if not self.enabled:
+        if not self.enabled or not self.ws:
             return False
         try:
             headers = self.ws.row_values(1)
             if headers:
                 values = [str(row.get(h, "")) for h in headers]
             else:
-                # No header; append sorted key order
-                keys_sorted = sorted(row.keys())
-                values = [str(row[k]) for k in keys_sorted]
+                # Fallback: keys in alpha order
+                keys = sorted(row.keys())
+                values = [str(row[k]) for k in keys]
             self.ws.append_row(values)
             return True
-        except Exception as ex:
-            # Soft-fail to keep orchestration running
+        except Exception:
             return False

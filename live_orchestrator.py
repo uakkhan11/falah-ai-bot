@@ -179,17 +179,29 @@ def main():
     if not dry_run:
         cfg.authenticate()
     kite = getattr(cfg, "kite", None)
-    om  = OrderManager(kite, cfg)
-    ot  = OrderTracker(kite, cfg)
-    tl  = TradeLogger(os.path.join(REPORTS_DIR, "live_trades.csv"))
+    
+    # Core collaborators
+    om = OrderManager(kite, cfg)                    # required by CapitalManager
+    ot = OrderTracker(kite, cfg)                    # required by RiskManager and CapitalManager
+    tl = TradeLogger(os.path.join(REPORTS_DIR, "live_trades.csv"))
+    
+    # Notifier (token + chat id pulled from Config)
     bot_token = getattr(cfg, "telegram_bot_token", None)
     chat_id   = getattr(cfg, "telegram_chat_id", None)
-    tg  = TelegramNotifier(bot_token, chat_id) if (do_notify and bot_token and chat_id) else None
-    em  = ExitManager(kite, cfg, om, tl, tg)
-    ht  = HoldingTracker(os.path.join(STATE_DIR, "positions.json"))
+    tg = TelegramNotifier(bot_token, chat_id) if (do_notify and bot_token and chat_id) else None
+    
+    # Exit manager (needs om, tl, tg)
+    em = ExitManager(kite, cfg, om, tl, tg)
+    
+    # State managers
+    ht = HoldingTracker(os.path.join(STATE_DIR, "positions.json"))
     rm = RiskManager(os.path.join(STATE_DIR, "risk_state.json"), ot)
-    cm  = CapitalManager()
-    gs  = GoogleSheetLogger(cfg) if do_sheet else None
+    
+    # Capital manager now with required collaborators
+    cm = CapitalManager(cfg, ot, om, tg)
+    
+    # Optional mobile journal
+    gs = GoogleSheetLogger(cfg) if do_sheet else None
 
     # Data refresh
     if do_fetch:
@@ -229,21 +241,18 @@ def main():
 
     # Place entries
     for e in entries:
-        sym, qty = e["symbol"], int(e["qty"])
-        if qty <= 0:
-            continue
-        try:
-            if dry_run:
-                order_id = "DRYRUN"
-                avg_price = None
-                filled = True
+        # If CapitalManager has size_quantity
+            if hasattr(cm, "size_quantity"):
+                e["qty"] = cm.size_quantity(e["symbol"], e["qty"])
+            # Else if it has size_order using c_prev and stop distance:
             else:
-                order_id = om.buy_market(sym, qty)
-                # wait for fill (bounded wait)
-                status = ot.wait_for_complete(order_id, timeout_sec=30)
-                filled = status.get("status") == "COMPLETE"
-                avg_price = status.get("average_price")
-            placed_entries.append({**e, "order_id": order_id, "avg_price": avg_price})
+                # pull last close and atr to compute stop distance akin to backtest sizing
+                df_sym = load_symbol_df(os.path.join(DAILY_DIR, f"{e['symbol']}.csv"))
+                c_prev = float(df_sym["close"].iloc[-1])
+                atr_prev = float(df_sym["atr"].iloc[-1])
+                stop_dist = params["atr_mult"] * atr_prev
+                sized = cm.size_order(e["symbol"], entry_price=c_prev, stop_distance=stop_dist)
+                e["qty"] = int(sized.get("qty", e["qty"]))
             if filled:
                 ht.add(sym, qty, entry_price=avg_price)
                 # place broker-hosted SL (GTT) at ATR-multiple below entry

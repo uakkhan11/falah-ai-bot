@@ -182,7 +182,9 @@ def main():
     om  = OrderManager(kite, cfg)
     ot  = OrderTracker(kite, cfg)
     tl  = TradeLogger(os.path.join(REPORTS_DIR, "live_trades.csv"))
-    tg  = TelegramNotifier(cfg) if do_notify else None
+    bot_token = getattr(cfg, "telegram_bot_token", None)
+    chat_id   = getattr(cfg, "telegram_chat_id", None)
+    tg  = TelegramNotifier(bot_token, chat_id) if (do_notify and bot_token and chat_id) else None
     em  = ExitManager(kite, cfg, om, tl, tg)
     ht  = HoldingTracker(os.path.join(STATE_DIR, "positions.json"))
     rm  = RiskManager(os.path.join(STATE_DIR, "risk_state.json"))

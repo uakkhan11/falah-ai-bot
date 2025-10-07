@@ -223,35 +223,26 @@ def main():
         if tg: tg.send_text(msg)
 
     # Sync positions (optional: broker reconciliation)
-    positions = ht.load()
-    # positions = ht.reconcile_with_broker(cfg.kite) if hasattr(ht, "reconcile_with_broker") else positions
+# 1) Load current positions
+positions = ht.load()
 
-    # Build today’s intents from last closed bar
-    entries, exits = build_today_intents(params, positions)
+# 2) Build signals for “today”
+entries, exits = build_today_intents(params, positions)
 
-    # Apply kill-switch to entries only
-    if rm.is_paused():
-        entries = []
+# 3) Apply risk pause gate to entries only
+if rm.is_paused():
+    entries = []
 
-    # Capital sizing hook (if capping by rupee or liquidity)
-    for e in entries:
-        e["qty"] = cm.size_quantity(e["symbol"], e["qty"])
-
-    placed_entries, placed_exits = [], []
-
-# Place entries
-placed_entries = []
+# 4) Capital sizing for entries
 for e in entries:
     try:
         sym = e["symbol"]
         suggested_qty = int(e.get("qty", 0))
-
-        # 1) Size via CapitalManager if available, else fallback to ATR-based sizing
         final_qty = suggested_qty
+
         if hasattr(cm, "size_quantity"):
             final_qty = int(cm.size_quantity(sym, suggested_qty))
         elif hasattr(cm, "size_order"):
-            # Fallback: compute stop distance akin to backtest sizing
             df_sym = load_symbol_df(os.path.join(DAILY_DIR, f"{sym}.csv"))
             c_prev = float(df_sym["close"].iloc[-1])
             atr_prev = float(df_sym["atr"].iloc[-1])
@@ -259,28 +250,37 @@ for e in entries:
             sized = cm.size_order(sym, entry_price=c_prev, stop_distance=stop_dist)
             final_qty = int(sized.get("qty", suggested_qty))
 
+        e["qty"] = max(0, final_qty)
+    except Exception as ex:
+        logging.error(f"Sizing failed {e.get('symbol','UNKNOWN')}: {ex}")
+        e["qty"] = 0
+
+# 5) Place entries
+placed_entries = []
+for e in entries:
+    try:
+        sym = e["symbol"]
+        final_qty = int(e.get("qty", 0))
         if final_qty <= 0:
             logging.info(f"Skipping {sym}: sized qty <= 0")
             continue
 
-        # 2) Place order
+        # Place order
         if dry_run:
             order_id = "DRYRUN"
             filled = True
             avg_price = None
         else:
             order_id = om.buy_market(sym, final_qty)
-            # 3) Wait for fill (bounded wait)
             status = ot.wait_for_complete(order_id, timeout_sec=30)
             filled = (status or {}).get("status") == "COMPLETE"
             avg_price = (status or {}).get("average_price")
 
         placed_entries.append({"symbol": sym, "qty": final_qty, "order_id": order_id, "avg_price": avg_price})
 
-        # 4) Update holdings and place broker-hosted SL after confirmed fill
+        # After fill: update holdings and attach GTT stop
         if filled:
             ht.add(sym, final_qty, entry_price=avg_price)
-            # Broker-hosted stop (GTT): entry - atr_mult * ATR(prev)
             df_last = load_symbol_df(os.path.join(DAILY_DIR, f"{sym}.csv"))
             atr_prev = float(df_last["atr"].iloc[-1])
             entry_p = float(avg_price) if avg_price else float(df_last["close"].iloc[-1])
@@ -296,7 +296,7 @@ for e in entries:
         else:
             logging.warning(f"Entry not filled for {sym} (order_id={order_id})")
 
-        # 5) Journal entry
+        # Journal entry
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         tl.log(now, sym, "BUY", final_qty, order_id, note="daily-entry")
 
@@ -304,8 +304,8 @@ for e in entries:
         sym = e.get("symbol", "UNKNOWN")
         logging.error(f"BUY failed {sym}: {ex}")
         if tg: tg.send_text(f"BUY failed {sym}: {ex}")
-        # Continue with next entry
         continue
+
     # Place exits
     for x in exits:
         sym = x["symbol"]

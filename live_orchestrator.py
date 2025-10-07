@@ -10,7 +10,7 @@ import numpy as np
 
 # ---------- Imports from your repo ----------
 from config import Config                                     # broker + creds [file:367]
-from improved_fetcher import BASE_DIR, DATA_DIRS, main as fetch_data  # data refresh [file:358]
+from improved_fetcher import BASE_DIR, DATA_DIRS, run_daily_refresh as fetch_data     # data refresh [file:358]
 from order_manager import OrderManager                        # place/cancel orders [file:365]
 from order_tracker import OrderTracker                        # track order status [file:373]
 from holding_tracker import HoldingTracker                    # local positions state [file:370]

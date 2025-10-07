@@ -372,6 +372,9 @@ def main():
     args = ap.parse_args()
 
     files = sorted(glob.glob(os.path.join(DAILY_DIR, "*.csv")))
+    deny = {"NIFTY","NIFTY_50","NIFTY50","nifty_50","nifty50","NIFTY_INDEX"}
+    files = [f for f in files if os.path.splitext(os.path.basename(f))[0] not in deny]
+
     if args.limit_symbols > 0:
         files = files[:args.limit_symbols]
     trail = args.trail.lower() == "true"

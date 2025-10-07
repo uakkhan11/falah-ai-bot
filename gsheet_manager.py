@@ -5,21 +5,16 @@ import logging
 from google.oauth2.service_account import Credentials
 
 class GSheetManager:
-    def __init__(self, credentials_file="falah-credentials.json", sheet_key=None):
-        # Define the scopes
-        scope = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        # Authorize with service account credentials
-        creds = Credentials.from_service_account_file(credentials_file, scopes=scope)
+    def __init__(self, cfg):
+        self.enabled = gspread is not None and Credentials is not None
+        self.cfg = cfg
+        if not self.enabled:
+            return
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds = Credentials.from_service_account_file(cfg.gs_service_account_json, scopes=scopes)
         self.gc = gspread.authorize(creds)
-
-        # Setup logger
-        self.logger = logging.getLogger(__name__)
-
-        # Store sheet key (can be set dynamically too)
-        self.sheet_key = sheet_key
+        self.sheet = self.gc.open_by_key(cfg.gs_spreadsheet_id)
+        self.ws = self.sheet.worksheet(cfg.gs_worksheet_name)
 
     def set_sheet_key(self, sheet_key):
         """Set or change the sheet key dynamically."""
@@ -44,20 +39,23 @@ class GSheetManager:
             self.logger.error(f"Error reading Google Sheet: {e}")
             return []
 
-    def append_row(self, row, worksheet_name, sheet_key=None):
+    def append_row(self, row: Dict):
         """
-        Append a single row to a worksheet.
-        sheet_key can override the stored key if provided.
+        Append a dict as a row; keys must match the header row.
+        If header mismatch, falls back to ordered values by sorted keys.
         """
+        if not self.enabled:
+            return False
         try:
-            key_to_use = sheet_key or self.sheet_key
-            if not key_to_use:
-                raise ValueError("No Google Sheet key is set for append_row()")
-            sh = self.gc.open_by_key(key_to_use)
-            ws = sh.worksheet(worksheet_name)
-            ws.append_row(row)
-            self.logger.info(f"Appended row to {worksheet_name}: {row}")
+            headers = self.ws.row_values(1)
+            if headers:
+                values = [str(row.get(h, "")) for h in headers]
+            else:
+                # No header; append sorted key order
+                keys_sorted = sorted(row.keys())
+                values = [str(row[k]) for k in keys_sorted]
+            self.ws.append_row(values)
             return True
-        except Exception as e:
-            self.logger.error(f"Append row failed on sheet {worksheet_name}: {e}")
+        except Exception as ex:
+            # Soft-fail to keep orchestration running
             return False

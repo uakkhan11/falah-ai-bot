@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-# backtest_ema_daily_sweep.py
+# backtest_ema_daily.py
 # Daily EMA(5/20) long-only backtester with EMA200 & ADX filters,
 # ATR(14)*k initial stop, optional ATR trailing, prior-bar confirmation.
 # Includes: portfolio concurrency cap, NIFTY index trend gate,
+# entry buffers, ATR floor, min holding days, per-day new entry cap,
 # enhanced analytics (PF, Sharpe, Sortino, Calmar, CAGR, etc.),
 # parameter sweep driver, and per-symbol/per-month breakdown CSVs.
 
@@ -30,10 +31,13 @@ class PortfolioController:
     def __init__(self, max_open=10):
         self.max_open = max_open
         self.open_positions = set()
-    def can_enter(self, symbol, ema_gap, ma_filter):
+
+    def can_enter(self, symbol):
         return len(self.open_positions) < self.max_open and symbol not in self.open_positions
+
     def on_enter(self, symbol):
         self.open_positions.add(symbol)
+
     def on_exit(self, symbol):
         self.open_positions.discard(symbol)
 
@@ -42,9 +46,11 @@ def load_symbol_df(path):
     df = pd.read_csv(path)
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").reset_index(drop=True)
+
     for col in ["open","high","low","close"]:
         if col not in df.columns:
             raise ValueError(f"Missing column {col} in {path}")
+
     # ATR14
     if "atr" not in df.columns or df["atr"].isna().all():
         tr1 = (df["high"] - df["low"])
@@ -52,6 +58,7 @@ def load_symbol_df(path):
         tr3 = (df["low"] - df["close"].shift(1)).abs()
         tr = pd.concat([tr1,tr2,tr3], axis=1).max(axis=1)
         df["atr"] = tr.rolling(14, min_periods=14).mean()
+
     # ADX14
     if "adx" not in df.columns or df["adx"].isna().all():
         up = df["high"].diff()
@@ -67,6 +74,7 @@ def load_symbol_df(path):
         minus_di = 100 * minus_dm.rolling(14, min_periods=14).sum() / atr
         dx = ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)) * 100
         df["adx"] = dx.rolling(14, min_periods=14).mean()
+
     # EMAs
     df["ema5"] = df["close"].ewm(span=5, adjust=False).mean()
     df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
@@ -78,20 +86,38 @@ def load_index_gate(index_csv_path):
     idx["date"] = pd.to_datetime(idx["date"])
     idx = idx.sort_values("date").reset_index(drop=True)
     idx["ema200"] = idx["close"].ewm(span=200, adjust=False).mean()
-    # 0.2% buffer over EMA200 to avoid marginal regimes
+    # 0.2% buffer above EMA200
     idx["gate"] = idx["close"] > idx["ema200"] * 1.002
     return idx[["date","gate"]]
 
 # ---------------- Strategy engine ----------------
-def backtest_symbol(df, symbol, capital, risk_per_trade, atr_mult, adx_threshold, trail, controller=None, index_gate=None):
+def backtest_symbol(
+    df, symbol, capital, risk_per_trade, atr_mult, adx_threshold, trail,
+    controller=None, index_gate=None,
+    ema_gap_pct=0.25, ma_filter_pct=0.5, min_atr_pct=0.0, min_hold_days=3,
+    max_new_per_day=3, day_new_counter=None
+):
     trades = []
     in_pos = False
     qty = 0
     entry = 0.0
     trail_stop = None
     equity = capital
+    hold_bars = 0
 
-    # iterate leaving 1 bar for execution, need 200 for ema200 warm-up
+    def can_open_today(exec_date):
+        if day_new_counter is None:
+            return True
+        key = pd.to_datetime(exec_date).normalize()
+        return day_new_counter.get(key, 0) < max_new_per_day
+
+    def mark_open_today(exec_date):
+        if day_new_counter is None:
+            return
+        key = pd.to_datetime(exec_date).normalize()
+        day_new_counter[key] = day_new_counter.get(key, 0) + 1
+
+    # iterate leaving 1 bar for execution, need >=200 bars for ema200 warm-up
     for i in range(201, len(df)-1):
         # Signal day: i-1
         ema5_prev2 = df.loc[i-2, "ema5"]
@@ -99,8 +125,6 @@ def backtest_symbol(df, symbol, capital, risk_per_trade, atr_mult, adx_threshold
         ema5_prev  = df.loc[i-1, "ema5"]
         ema20_prev = df.loc[i-1, "ema20"]
         crossed_up = (ema5_prev2 <= ema20_prev2) and (ema5_prev > ema20_prev)
-        ema_gap = (ema5_prev - ema20_prev) / ema20_prev >= 0.0025 # 0.25%
-        ma_filter = (c_prev - ema200_prev) / ema200_prev >= 0.005 # 0.5%
         crossed_down = (ema5_prev2 >= ema20_prev2) and (ema5_prev < ema20_prev)
         c_prev = df.loc[i-1, "close"]
         atr_prev = df.loc[i-1, "atr"]
@@ -114,7 +138,7 @@ def backtest_symbol(df, symbol, capital, risk_per_trade, atr_mult, adx_threshold
         date_i = df.loc[i, "date"]
 
         if not in_pos:
-            # Index gate (True allows trade) on signal day
+            # Index gate on signal day
             idx_ok = True
             if index_gate is not None:
                 try:
@@ -125,7 +149,13 @@ def backtest_symbol(df, symbol, capital, risk_per_trade, atr_mult, adx_threshold
             if controller is not None and not controller.can_enter(symbol):
                 idx_ok = False
 
-            if idx_ok and crossed_up and c_prev > ema200_prev and adx_prev >= adx_threshold and not np.isnan(atr_prev):
+            # Buffers and ATR floor on signal day
+            gap_ok = ((ema5_prev - ema20_prev) / max(1e-9, ema20_prev)) >= (ema_gap_pct / 100.0)
+            ma_ok  = ((c_prev - ema200_prev) / max(1e-9, ema200_prev)) >= (ma_filter_pct / 100.0)
+            atr_ok = (atr_prev / max(1e-9, c_prev)) >= (min_atr_pct / 100.0) if not np.isnan(atr_prev) else False
+            surge_ok = can_open_today(date_i)
+
+            if idx_ok and surge_ok and crossed_up and gap_ok and ma_ok and atr_ok and adx_prev >= adx_threshold:
                 sl_from_signal = c_prev - atr_mult * atr_prev
                 risk_per_share = max(0.01, c_prev - sl_from_signal)
                 max_risk = risk_per_trade * equity
@@ -137,18 +167,21 @@ def backtest_symbol(df, symbol, capital, risk_per_trade, atr_mult, adx_threshold
                     trades.append({"symbol":symbol,"side":"BUY","date":date_i,"price":entry,"qty":qty})
                     if controller is not None:
                         controller.on_enter(symbol)
+                    mark_open_today(date_i)
+                    hold_bars = 0
         else:
             # Update trailing stop
             if trail and not np.isnan(atr_prev):
                 candidate = exec_close - atr_mult * atr_prev
                 trail_stop = max(trail_stop, candidate)
 
+            # Exits
             exit_reason = None
             exit_price = None
             if low_i <= trail_stop:
                 exit_reason = "STOP"
                 exit_price = trail_stop
-            elif crossed_down:
+            elif crossed_down and hold_bars >= max(0, min_hold_days):
                 exit_reason = "XDOWN"
                 exit_price = exec_open
 
@@ -160,17 +193,16 @@ def backtest_symbol(df, symbol, capital, risk_per_trade, atr_mult, adx_threshold
                 qty = 0
                 entry = 0.0
                 trail_stop = None
+                hold_bars = 0
                 if controller is not None:
                     controller.on_exit(symbol)
+            else:
+                hold_bars += 1
 
     return trades
 
 # ---------------- Analytics ----------------
 def build_daily_equity(trades, start_capital=0.0):
-    """
-    Aggregate P&L by calendar date to avoid duplicate index labels,
-    then build continuous daily equity with returns and drawdown.
-    """
     if len(trades) == 0:
         return pd.DataFrame(columns=["date","equity","ret","drawdown"])
     tdf = pd.DataFrame(trades)
@@ -303,11 +335,12 @@ def summarize(trades, daily, start_capital):
     return summary, cdf
 
 # ---------------- Single run and sweep driver ----------------
-def run_once(files, capital, risk_per_trade, atr_mult, adx_threshold, trail, tag, controller, index_gate_df=None,
-             ema_gap_pct=0.25, ma_filter_pct=0.5, min_atr_pct=0.0, min_hold_days=3, max_new_per_day=3):
-
+def run_once(files, capital, risk_per_trade, atr_mult, adx_threshold, trail, tag,
+             controller, index_gate_df=None,
+             ema_gap_pct=0.25, ma_filter_pct=0.5, min_atr_pct=0.0, min_hold_days=3,
+             max_new_per_day=3):
     all_trades = []
-    day_new_counter = {}             
+    day_new_counter = {}
     for f in files:
         symbol = os.path.basename(f).replace(".csv","")
         try:
@@ -320,23 +353,23 @@ def run_once(files, capital, risk_per_trade, atr_mult, adx_threshold, trail, tag
             g = pd.merge(df[["date"]], index_gate_df, on="date", how="left")
             g["gate"] = g["gate"].ffill().fillna(False)
             sym_gate = g["gate"]
-            trades = backtest_symbol(
-                df, symbol,
-                capital=capital,
-                risk_per_trade=risk_per_trade,
-                atr_mult=atr_mult,
-                adx_threshold=adx_threshold,
-                trail=trail,
-                controller=controller,
-                index_gate=sym_gate,
-                ema_gap_pct=ema_gap_pct,
-                ma_filter_pct=ma_filter_pct,
-                min_atr_pct=min_atr_pct,
-                min_hold_days=min_hold_days,
-                max_new_per_day=max_new_per_day,
-                day_new_counter=day_new_counter
-            )
 
+        trades = backtest_symbol(
+            df, symbol,
+            capital=capital,
+            risk_per_trade=risk_per_trade,
+            atr_mult=atr_mult,
+            adx_threshold=adx_threshold,
+            trail=trail,
+            controller=controller,
+            index_gate=sym_gate,
+            ema_gap_pct=ema_gap_pct,
+            ma_filter_pct=ma_filter_pct,
+            min_atr_pct=min_atr_pct,
+            min_hold_days=min_hold_days,
+            max_new_per_day=max_new_per_day,
+            day_new_counter=day_new_counter
+        )
         all_trades.extend(trades)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -348,7 +381,12 @@ def run_once(files, capital, risk_per_trade, atr_mult, adx_threshold, trail, tag
     daily = build_daily_equity(all_trades, start_capital=capital)
     daily.to_csv(daily_csv, index=False)
     summary, cdf = summarize(all_trades, daily, capital)
-    srow = pd.DataFrame([{"atr_mult":atr_mult,"adx_threshold":adx_threshold,"trail":trail, **summary}])
+    srow = pd.DataFrame([{
+        "atr_mult":atr_mult,"adx_threshold":adx_threshold,"trail":trail,
+        "ema_gap_pct":ema_gap_pct,"ma_filter_pct":ma_filter_pct,"min_atr_pct":min_atr_pct,
+        "min_hold_days":min_hold_days,"max_new_per_day":max_new_per_day,
+        **summary
+    }])
     srow.to_csv(summary_csv, index=False)
 
     # Per-symbol / per-month breakdowns from realized exits
@@ -379,41 +417,46 @@ def main():
     ap.add_argument("--adx_grid", type=str, default=None, help="comma list, e.g., 20,25,30")
     ap.add_argument("--trail", type=str, default="true")
     ap.add_argument("--limit_symbols", type=int, default=0)
-    ap.add_argument("--index_csv", type=str, default=None, help="Path to NIFTY CSV (date, close) from improved_fetcher")
+    ap.add_argument("--index_csv", type=str, default=None, help="Path to NIFTY CSV (date, close)")
     ap.add_argument("--max_open", type=int, default=10, help="Portfolio-wide cap on concurrent positions")
-    ap.add_argument("--ema_gap_pct", type=float, default=0.25, help="Min %% gap EMA5 over EMA20 on signal day (e.g., 0.25 for 0.25%)")
-    ap.add_argument("--ma_filter_pct", type=float, default=0.5, help="Min %% Close above EMA200 on signal day (e.g., 0.5 for 0.5%)")
-    ap.add_argument("--min_atr_pct", type=float, default=0.0, help="Min ATR14/Close in %% on signal day (e.g., 1.0 for 1%)")
-    ap.add_argument("--min_hold_days", type=int, default=3, help="Min holding days before cross-down exits (stop always allowed)")
-    ap.add_argument("--max_new_per_day", type=int, default=3, help="Cap new entries per execution day to avoid surge exposure")
+    # New controls
+    ap.add_argument("--ema_gap_pct", type=float, default=0.25, help="Min % gap EMA5 over EMA20 on signal day")
+    ap.add_argument("--ma_filter_pct", type=float, default=0.5, help="Min % Close above EMA200 on signal day")
+    ap.add_argument("--min_atr_pct", type=float, default=0.0, help="Min ATR14/Close in % on signal day")
+    ap.add_argument("--min_hold_days", type=int, default=3, help="Min holding days before cross-down exits")
+    ap.add_argument("--max_new_per_day", type=int, default=3, help="Cap new entries per execution day")
 
     args = ap.parse_args()
 
     files = sorted(glob.glob(os.path.join(DAILY_DIR, "*.csv")))
+    # Exclude index-like files if present in the same folder
     deny = {"NIFTY","NIFTY_50","NIFTY50","nifty_50","nifty50","NIFTY_INDEX"}
     files = [f for f in files if os.path.splitext(os.path.basename(f))[0] not in deny]
-
     if args.limit_symbols > 0:
         files = files[:args.limit_symbols]
-    trail = args.trail.lower() == "true"
 
+    trail = args.trail.lower() == "true"
     controller = PortfolioController(max_open=args.max_open)
     index_gate_df = load_index_gate(args.index_csv) if args.index_csv else None
-
-    results = []
 
     # Sweep mode
     if args.atr_grid and args.adx_grid:
         atrs = [float(x) for x in args.atr_grid.split(",")]
         adxs = [float(x) for x in args.adx_grid.split(",")]
+        results = []
         for a in atrs:
             for d in adxs:
                 tag = f"a{a}_d{d}_t{int(trail)}_mo{args.max_open}"
                 summary, tcsv, dcsv, scsv = run_once(
                     files, args.capital, args.risk_per_trade, a, d, trail, tag,
-                    controller=controller, index_gate_df=index_gate_df
+                    controller=controller, index_gate_df=index_gate_df,
+                    ema_gap_pct=args.ema_gap_pct, ma_filter_pct=args.ma_filter_pct,
+                    min_atr_pct=args.min_atr_pct, min_hold_days=args.min_hold_days,
+                    max_new_per_day=args.max_new_per_day
                 )
-                results.append({"atr_mult":a,"adx_threshold":d,"trail":trail,"max_open":args.max_open, **summary,
+                results.append({"atr_mult":a,"adx_threshold":d,"trail":trail,"max_open":args.max_open,
+                                "ema_gap_pct":args.ema_gap_pct,"ma_filter_pct":args.ma_filter_pct,"min_atr_pct":args.min_atr_pct,
+                                "min_hold_days":args.min_hold_days,"max_new_per_day":args.max_new_per_day, **summary,
                                 "trades_csv":tcsv,"daily_csv":dcsv,"summary_csv":scsv})
         combined = pd.DataFrame(results)
         combined_path = os.path.join(REPORTS_DIR, f"ema_daily_combined_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
@@ -425,10 +468,14 @@ def main():
     # Single run mode
     if args.atr_mult is None or args.adx is None:
         raise SystemExit("Provide either --atr_mult & --adx (single run) or both --atr_grid & --adx_grid (sweep).")
+
     tag = f"a{args.atr_mult}_d{args.adx}_t{int(trail)}_mo{args.max_open}"
     summary, tcsv, dcsv, scsv = run_once(
         files, args.capital, args.risk_per_trade, float(args.atr_mult), float(args.adx), trail, tag,
-        controller=controller, index_gate_df=index_gate_df
+        controller=controller, index_gate_df=index_gate_df,
+        ema_gap_pct=args.ema_gap_pct, ma_filter_pct=args.ma_filter_pct,
+        min_atr_pct=args.min_atr_pct, min_hold_days=args.min_hold_days,
+        max_new_per_day=args.max_new_per_day
     )
     print("Summary:", summary)
     print("Trades CSV:", tcsv)

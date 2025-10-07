@@ -239,37 +239,73 @@ def main():
 
     placed_entries, placed_exits = [], []
 
-    # Place entries
-    for e in entries:
-        # If CapitalManager has size_quantity
-            if hasattr(cm, "size_quantity"):
-                e["qty"] = cm.size_quantity(e["symbol"], e["qty"])
-            # Else if it has size_order using c_prev and stop distance:
-            else:
-                # pull last close and atr to compute stop distance akin to backtest sizing
-                df_sym = load_symbol_df(os.path.join(DAILY_DIR, f"{e['symbol']}.csv"))
-                c_prev = float(df_sym["close"].iloc[-1])
-                atr_prev = float(df_sym["atr"].iloc[-1])
-                stop_dist = params["atr_mult"] * atr_prev
-                sized = cm.size_order(e["symbol"], entry_price=c_prev, stop_distance=stop_dist)
-                e["qty"] = int(sized.get("qty", e["qty"]))
-            if filled:
-                ht.add(sym, qty, entry_price=avg_price)
-                # place broker-hosted SL (GTT) at ATR-multiple below entry
-                # Use last ATR from DF for safety
-                df = load_symbol_df(os.path.join(DAILY_DIR, f"{sym}.csv"))
-                atr_prev = float(df["atr"].iloc[-1])
-                entry_p  = avg_price if avg_price else float(df["close"].iloc[-1])
-                trigger  = round(entry_p - params["atr_mult"] * atr_prev, 2)
-                if not dry_run and trigger > 0:
-                    gtt_id = em.create_stop(sym, qty, trigger_price=trigger)
-                    ht.update_gtt(sym, gtt_id)
-            else:
-                logging.warning(f"Entry not filled for {sym} (order_id={order_id})")
-            except Exception as ex:
-                logging.error(f"BUY failed {sym}: {ex}")
-                if tg: tg.send_text(f"BUY failed {sym}: {ex}")
+# Place entries
+placed_entries = []
+for e in entries:
+    try:
+        sym = e["symbol"]
+        suggested_qty = int(e.get("qty", 0))
 
+        # 1) Size via CapitalManager if available, else fallback to ATR-based sizing
+        final_qty = suggested_qty
+        if hasattr(cm, "size_quantity"):
+            final_qty = int(cm.size_quantity(sym, suggested_qty))
+        elif hasattr(cm, "size_order"):
+            # Fallback: compute stop distance akin to backtest sizing
+            df_sym = load_symbol_df(os.path.join(DAILY_DIR, f"{sym}.csv"))
+            c_prev = float(df_sym["close"].iloc[-1])
+            atr_prev = float(df_sym["atr"].iloc[-1])
+            stop_dist = float(params["atr_mult"]) * atr_prev
+            sized = cm.size_order(sym, entry_price=c_prev, stop_distance=stop_dist)
+            final_qty = int(sized.get("qty", suggested_qty))
+
+        if final_qty <= 0:
+            logging.info(f"Skipping {sym}: sized qty <= 0")
+            continue
+
+        # 2) Place order
+        if dry_run:
+            order_id = "DRYRUN"
+            filled = True
+            avg_price = None
+        else:
+            order_id = om.buy_market(sym, final_qty)
+            # 3) Wait for fill (bounded wait)
+            status = ot.wait_for_complete(order_id, timeout_sec=30)
+            filled = (status or {}).get("status") == "COMPLETE"
+            avg_price = (status or {}).get("average_price")
+
+        placed_entries.append({"symbol": sym, "qty": final_qty, "order_id": order_id, "avg_price": avg_price})
+
+        # 4) Update holdings and place broker-hosted SL after confirmed fill
+        if filled:
+            ht.add(sym, final_qty, entry_price=avg_price)
+            # Broker-hosted stop (GTT): entry - atr_mult * ATR(prev)
+            df_last = load_symbol_df(os.path.join(DAILY_DIR, f"{sym}.csv"))
+            atr_prev = float(df_last["atr"].iloc[-1])
+            entry_p = float(avg_price) if avg_price else float(df_last["close"].iloc[-1])
+            trigger = round(entry_p - float(params["atr_mult"]) * atr_prev, 2)
+            if not dry_run and trigger > 0:
+                try:
+                    gtt_id = em.create_stop(sym, final_qty, trigger_price=trigger)
+                    if hasattr(ht, "update_gtt"):
+                        ht.update_gtt(sym, gtt_id)
+                except Exception as ex_gtt:
+                    logging.error(f"GTT stop create failed {sym}: {ex_gtt}")
+                    if tg: tg.send_text(f"GTT stop create failed {sym}: {ex_gtt}")
+        else:
+            logging.warning(f"Entry not filled for {sym} (order_id={order_id})")
+
+        # 5) Journal entry
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        tl.log(now, sym, "BUY", final_qty, order_id, note="daily-entry")
+
+    except Exception as ex:
+        sym = e.get("symbol", "UNKNOWN")
+        logging.error(f"BUY failed {sym}: {ex}")
+        if tg: tg.send_text(f"BUY failed {sym}: {ex}")
+        # Continue with next entry
+        continue
     # Place exits
     for x in exits:
         sym = x["symbol"]

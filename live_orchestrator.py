@@ -178,9 +178,10 @@ def main():
     cfg = Config()
     if not dry_run:
         cfg.authenticate()
-    om  = OrderManager(config=cfg)
-    ot  = OrderTracker(cfg)
-    em  = ExitManager(cfg)
+    kite = getattr(cfg, "kite", None)  # will be None in dry_run
+    om  = OrderManager(kite, cfg)
+    ot  = OrderTracker(kite, cfg)
+    em  = ExitManager(kite, cfg)
     ht  = HoldingTracker(os.path.join(STATE_DIR, "positions.json"))
     rm  = RiskManager(os.path.join(STATE_DIR, "risk_state.json"))
     cm  = CapitalManager()

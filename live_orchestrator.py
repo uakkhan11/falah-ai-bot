@@ -266,9 +266,9 @@ def main():
                     ht.update_gtt(sym, gtt_id)
             else:
                 logging.warning(f"Entry not filled for {sym} (order_id={order_id})")
-        except Exception as ex:
-            logging.error(f"BUY failed {sym}: {ex}")
-            if tg: tg.send_text(f"BUY failed {sym}: {ex}")
+            except Exception as ex:
+                logging.error(f"BUY failed {sym}: {ex}")
+                if tg: tg.send_text(f"BUY failed {sym}: {ex}")
 
     # Place exits
     for x in exits:

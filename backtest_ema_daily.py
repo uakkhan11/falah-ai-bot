@@ -248,7 +248,7 @@ def summarize(trades, daily, start_capital):
         if start_cap > 0 and end_cap > 0:
             ratio = end_cap / start_cap
             cagr = (ratio ** (1.0 / years) - 1.0) * 100.0
-         else:
+        else:
             cagr = np.nan
 
         calmar = (cagr / (max_dd_pct if max_dd_pct > 0 else np.nan)) if not np.isnan(cagr) else np.nan

@@ -2,15 +2,15 @@
 # backtest_ema_daily.py
 # Daily EMA(5/20) long-only backtester with EMA200 & ADX filters,
 # ATR(14)*k initial stop, optional ATR trailing, prior-bar confirmation.
-# Includes: portfolio concurrency cap, NIFTY index trend gate,
-# entry buffers, ATR floor, min holding days, per-day new entry cap,
-# enhanced analytics (PF, Sharpe, Sortino, Calmar, CAGR, etc.),
-# parameter sweep driver, and per-symbol/per-month breakdown CSVs.
+# Includes: portfolio cap, NIFTY index gate, entry buffers, ATR floor,
+# min holding days, per-day new entry cap, transaction costs, JSON export,
+# enhanced analytics, sweep driver, and per-symbol/per-month reports.
 
 import os
 import argparse
 import glob
 import math
+import json
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -95,7 +95,8 @@ def backtest_symbol(
     df, symbol, capital, risk_per_trade, atr_mult, adx_threshold, trail,
     controller=None, index_gate=None,
     ema_gap_pct=0.25, ma_filter_pct=0.5, min_atr_pct=0.0, min_hold_days=3,
-    max_new_per_day=3, day_new_counter=None
+    max_new_per_day=3, day_new_counter=None,
+    buy_cost_bps=10.0, sell_cost_bps=10.0
 ):
     trades = []
     in_pos = False
@@ -104,6 +105,7 @@ def backtest_symbol(
     trail_stop = None
     equity = capital
     hold_bars = 0
+    position_cost = 0.0  # accumulates buy cost; sell cost added at exit
 
     def can_open_today(exec_date):
         if day_new_counter is None:
@@ -163,7 +165,10 @@ def backtest_symbol(
                 if qty > 0:
                     in_pos = True
                     entry = exec_open
+                    # initial stop anchored to entry
                     trail_stop = entry - atr_mult * atr_prev
+                    # buy cost (bps)
+                    position_cost = entry * qty * (buy_cost_bps / 10000.0)
                     trades.append({"symbol":symbol,"side":"BUY","date":date_i,"price":entry,"qty":qty})
                     if controller is not None:
                         controller.on_enter(symbol)
@@ -186,13 +191,22 @@ def backtest_symbol(
                 exit_price = exec_open
 
             if exit_reason:
-                pnl = (exit_price - entry) * qty
+                # costs and P&L
+                sell_cost = exit_price * qty * (sell_cost_bps / 10000.0)
+                pnl_gross = (exit_price - entry) * qty
+                cost_total = position_cost + sell_cost
+                pnl = pnl_gross - cost_total
                 equity += pnl
-                trades.append({"symbol":symbol,"side":"SELL","date":date_i,"price":exit_price,"qty":qty,"pnl":pnl,"reason":exit_reason})
+
+                trades.append({
+                    "symbol":symbol,"side":"SELL","date":date_i,"price":exit_price,"qty":qty,
+                    "pnl":pnl,"reason":exit_reason,"pnl_gross":pnl_gross,"costs":cost_total
+                })
                 in_pos = False
                 qty = 0
                 entry = 0.0
                 trail_stop = None
+                position_cost = 0.0
                 hold_bars = 0
                 if controller is not None:
                     controller.on_exit(symbol)
@@ -241,6 +255,8 @@ def summarize(trades, daily, start_capital):
                 "exit_price": r["price"],
                 "qty": b["qty"],
                 "pnl": r.get("pnl", (r["price"]-b["price"])*b["qty"]),
+                "pnl_gross": r.get("pnl_gross", np.nan),
+                "costs": r.get("costs", np.nan),
                 "reason": r.get("reason","EXIT")
             })
     cdf = pd.DataFrame(closed).sort_values("exit_date").reset_index(drop=True)
@@ -248,11 +264,19 @@ def summarize(trades, daily, start_capital):
     total_trades = len(cdf)
     wins = int((cdf["pnl"] > 0).sum()) if total_trades else 0
     losses = int((cdf["pnl"] <= 0).sum()) if total_trades else 0
-    gross_profit = float(cdf.loc[cdf["pnl"] > 0, "pnl"].sum()) if total_trades else 0.0
-    gross_loss = float(cdf.loc[cdf["pnl"] <= 0, "pnl"].sum()) if total_trades else 0.0
-    profit_factor = (gross_profit / abs(gross_loss)) if gross_loss < 0 else np.nan
+
+    # Gross sums if available
+    if "pnl_gross" in cdf.columns and cdf["pnl_gross"].notna().any():
+        gross_profit = float(cdf.loc[cdf["pnl_gross"] > 0, "pnl_gross"].sum())
+        gross_loss = float(cdf.loc[cdf["pnl_gross"] <= 0, "pnl_gross"].sum())
+    else:
+        gross_profit = float(cdf.loc[cdf["pnl"] > 0, "pnl"].sum())
+        gross_loss = float(cdf.loc[cdf["pnl"] <= 0, "pnl"].sum())
+
+    total_costs = float(cdf["costs"].sum()) if "costs" in cdf.columns else 0.0
     total_pnl = float(cdf["pnl"].sum()) if total_trades else 0.0
     end_capital = start_capital + total_pnl
+    profit_factor = (gross_profit / abs(gross_loss)) if gross_loss < 0 else np.nan
 
     win_rate = (wins / total_trades * 100.0) if total_trades else 0.0
     avg_trade_pnl = (total_pnl / total_trades) if total_trades else 0.0
@@ -308,6 +332,7 @@ def summarize(trades, daily, start_capital):
         "start_capital": round(float(start_capital),2),
         "end_capital": round(float(end_capital),2),
         "net_pnl": round(float(total_pnl),2),
+        "total_costs": round(float(total_costs),2),
         "total_trades": int(total_trades),
         "winners": int(wins),
         "losers": int(losses),
@@ -338,7 +363,7 @@ def summarize(trades, daily, start_capital):
 def run_once(files, capital, risk_per_trade, atr_mult, adx_threshold, trail, tag,
              controller, index_gate_df=None,
              ema_gap_pct=0.25, ma_filter_pct=0.5, min_atr_pct=0.0, min_hold_days=3,
-             max_new_per_day=3):
+             max_new_per_day=3, buy_cost_bps=10.0, sell_cost_bps=10.0):
     all_trades = []
     day_new_counter = {}
     for f in files:
@@ -368,7 +393,9 @@ def run_once(files, capital, risk_per_trade, atr_mult, adx_threshold, trail, tag
             min_atr_pct=min_atr_pct,
             min_hold_days=min_hold_days,
             max_new_per_day=max_new_per_day,
-            day_new_counter=day_new_counter
+            day_new_counter=day_new_counter,
+            buy_cost_bps=buy_cost_bps,
+            sell_cost_bps=sell_cost_bps
         )
         all_trades.extend(trades)
 
@@ -385,6 +412,7 @@ def run_once(files, capital, risk_per_trade, atr_mult, adx_threshold, trail, tag
         "atr_mult":atr_mult,"adx_threshold":adx_threshold,"trail":trail,
         "ema_gap_pct":ema_gap_pct,"ma_filter_pct":ma_filter_pct,"min_atr_pct":min_atr_pct,
         "min_hold_days":min_hold_days,"max_new_per_day":max_new_per_day,
+        "buy_cost_bps":buy_cost_bps,"sell_cost_bps":sell_cost_bps,
         **summary
     }])
     srow.to_csv(summary_csv, index=False)
@@ -405,6 +433,33 @@ def run_once(files, capital, risk_per_trade, atr_mult, adx_threshold, trail, tag
             per_symbol.to_csv(per_symbol_path, index=False)
             per_month.to_csv(per_month_path, index=False)
 
+    # Export parameters JSON
+    params = {
+        "timestamp": ts,
+        "tag": tag,
+        "capital": capital,
+        "risk_per_trade": risk_per_trade,
+        "atr_mult": atr_mult,
+        "adx_threshold": adx_threshold,
+        "trail": trail,
+        "max_open": controller.max_open if controller else None,
+        "ema_gap_pct": ema_gap_pct,
+        "ma_filter_pct": ma_filter_pct,
+        "min_atr_pct": min_atr_pct,
+        "min_hold_days": min_hold_days,
+        "max_new_per_day": max_new_per_day,
+        "buy_cost_bps": buy_cost_bps,
+        "sell_cost_bps": sell_cost_bps,
+        "index_csv": "provided" if index_gate_df is not None else None,
+        "trades_csv": trades_csv,
+        "daily_csv": daily_csv,
+        "summary_csv": summary_csv
+    }
+    params_json = os.path.join(REPORTS_DIR, f"ema_daily_params_{tag}_{ts}.json")
+    with open(params_json, "w") as f:
+        json.dump(params, f, indent=2)
+    print(f"Saved params JSON: {params_json}")
+
     return summary, trades_csv, daily_csv, summary_csv
 
 def main():
@@ -419,12 +474,15 @@ def main():
     ap.add_argument("--limit_symbols", type=int, default=0)
     ap.add_argument("--index_csv", type=str, default=None, help="Path to NIFTY CSV (date, close)")
     ap.add_argument("--max_open", type=int, default=10, help="Portfolio-wide cap on concurrent positions")
-    # New controls
+    # Entry/exit controls
     ap.add_argument("--ema_gap_pct", type=float, default=0.25, help="Min % gap EMA5 over EMA20 on signal day")
     ap.add_argument("--ma_filter_pct", type=float, default=0.5, help="Min % Close above EMA200 on signal day")
     ap.add_argument("--min_atr_pct", type=float, default=0.0, help="Min ATR14/Close in % on signal day")
     ap.add_argument("--min_hold_days", type=int, default=3, help="Min holding days before cross-down exits")
     ap.add_argument("--max_new_per_day", type=int, default=3, help="Cap new entries per execution day")
+    # Costs
+    ap.add_argument("--buy_cost_bps", type=float, default=10.0, help="Buy side cost in bps (10 = 0.10%)")
+    ap.add_argument("--sell_cost_bps", type=float, default=10.0, help="Sell side cost in bps (10 = 0.10%)")
 
     args = ap.parse_args()
 
@@ -452,12 +510,17 @@ def main():
                     controller=controller, index_gate_df=index_gate_df,
                     ema_gap_pct=args.ema_gap_pct, ma_filter_pct=args.ma_filter_pct,
                     min_atr_pct=args.min_atr_pct, min_hold_days=args.min_hold_days,
-                    max_new_per_day=args.max_new_per_day
+                    max_new_per_day=args.max_new_per_day,
+                    buy_cost_bps=args.buy_cost_bps, sell_cost_bps=args.sell_cost_bps
                 )
-                results.append({"atr_mult":a,"adx_threshold":d,"trail":trail,"max_open":args.max_open,
-                                "ema_gap_pct":args.ema_gap_pct,"ma_filter_pct":args.ma_filter_pct,"min_atr_pct":args.min_atr_pct,
-                                "min_hold_days":args.min_hold_days,"max_new_per_day":args.max_new_per_day, **summary,
-                                "trades_csv":tcsv,"daily_csv":dcsv,"summary_csv":scsv})
+                results.append({
+                    "atr_mult":a,"adx_threshold":d,"trail":trail,"max_open":args.max_open,
+                    "ema_gap_pct":args.ema_gap_pct,"ma_filter_pct":args.ma_filter_pct,"min_atr_pct":args.min_atr_pct,
+                    "min_hold_days":args.min_hold_days,"max_new_per_day":args.max_new_per_day,
+                    "buy_cost_bps":args.buy_cost_bps,"sell_cost_bps":args.sell_cost_bps,
+                    **summary,
+                    "trades_csv":tcsv,"daily_csv":dcsv,"summary_csv":scsv
+                })
         combined = pd.DataFrame(results)
         combined_path = os.path.join(REPORTS_DIR, f"ema_daily_combined_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
         combined.to_csv(combined_path, index=False)
@@ -475,7 +538,8 @@ def main():
         controller=controller, index_gate_df=index_gate_df,
         ema_gap_pct=args.ema_gap_pct, ma_filter_pct=args.ma_filter_pct,
         min_atr_pct=args.min_atr_pct, min_hold_days=args.min_hold_days,
-        max_new_per_day=args.max_new_per_day
+        max_new_per_day=args.max_new_per_day,
+        buy_cost_bps=args.buy_cost_bps, sell_cost_bps=args.sell_cost_bps
     )
     print("Summary:", summary)
     print("Trades CSV:", tcsv)

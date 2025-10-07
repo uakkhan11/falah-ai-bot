@@ -178,16 +178,16 @@ def main():
     cfg = Config()
     if not dry_run:
         cfg.authenticate()
-    kite = getattr(cfg, "kite", None)  # will be None in dry_run
+    kite = getattr(cfg, "kite", None)
     om  = OrderManager(kite, cfg)
     ot  = OrderTracker(kite, cfg)
-    em  = ExitManager(kite, cfg)
+    tl  = TradeLogger(os.path.join(REPORTS_DIR, "live_trades.csv"))
+    tg  = TelegramNotifier(cfg) if do_notify else None
+    em  = ExitManager(kite, cfg, om, tl, tg)
     ht  = HoldingTracker(os.path.join(STATE_DIR, "positions.json"))
     rm  = RiskManager(os.path.join(STATE_DIR, "risk_state.json"))
     cm  = CapitalManager()
-    tl  = TradeLogger(os.path.join(REPORTS_DIR, "live_trades.csv"))
     gs  = GoogleSheetLogger(cfg) if do_sheet else None
-    tg  = TelegramNotifier(cfg) if do_notify else None
 
     # Data refresh
     if do_fetch:

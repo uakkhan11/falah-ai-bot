@@ -12,6 +12,37 @@ class TelegramNotifier:
             self.logger.error(f"Telegram bot init failed: {e}")
             self.bot = None
 
+    def send_text(self, text):
+        """
+        Synchronous wrapper to send a message from non-async code.
+        Safe to call from orchestrator without an event loop.
+        """
+        if not self.bot:
+            self.logger.warning("No bot instance. Message cannot be sent.")
+            return False
+        try:
+            import asyncio
+            async def _run():
+                try:
+                    await self.bot.send_message(chat_id=self.chat_id, text=text, parse_mode="HTML")
+                    return True
+                except TelegramError as e:
+                    self.logger.error(f"Telegram send failed: {e}")
+                    return False
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(_run())
+                    return True
+                else:
+                    return loop.run_until_complete(_run())
+            except RuntimeError:
+                # No running loop
+                return asyncio.run(__run())
+        except Exception as e:
+            self.logger.error(f"Telegram sync send failed: {e}")
+            return False
+
     async def send_message(self, text):
         if not self.bot:
             self.logger.warning("No bot instance. Message cannot be sent.")

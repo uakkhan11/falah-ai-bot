@@ -6,6 +6,7 @@
 import os, glob, json, math, time, logging
 from datetime import datetime
 import pandas as pd
+pd.set_option('future.no_silent_downcasting', True)
 import numpy as np
 
 # ---------- Imports from your repo ----------
@@ -119,8 +120,11 @@ def build_today_intents(params, positions):
         sym_gate = None
         if gate_df is not None:
             g = pd.merge(df[["date"]], gate_df, on="date", how="left")
-            g["gate"] = g["gate"].ffill().fillna(False)
+            # Future-proof dtype handling for pandas
+            g["gate"] = g["gate"].ffill()
+            g["gate"] = g["gate"].fillna(False).astype(bool)
             sym_gate = g["gate"]
+
 
         # last closed bar
         i = len(df) - 1
@@ -193,7 +197,10 @@ def main():
 
     em = ExitManager(kite, cfg, om, tl, tg)
 
-    ht = HoldingTracker(os.path.join(STATE_DIR, "positions.json"))  # Define ht BEFORE ht.load()
+    ht = HoldingTracker(
+    trade_log_csv=os.path.join(REPORTS_DIR, "live_trades.csv"),
+    state_path=os.path.join(STATE_DIR, "positions.json"),
+    ) # Define ht BEFORE ht.load()
     rm = RiskManager(os.path.join(STATE_DIR, "risk_state.json"), ot)
     cm = CapitalManager(cfg, ot, om, tg)
 

@@ -160,6 +160,7 @@ def build_today_intents(params, positions):
 
 # ---------- Main Orchestration ----------
 def main():
+def main():
     import argparse, os, logging
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry_run", type=str, default="true")
@@ -169,18 +170,19 @@ def main():
     ap.add_argument("--push_sheet", type=str, default="true")
     args = ap.parse_args()
 
-    # Flags must be defined before any use
+    # 1) Flags FIRST
     dry_run  = args.dry_run.lower() == "true"
     do_fetch = args.refresh_data.lower() == "true"
     do_notify= args.notify.lower() == "true"
     do_sheet = args.push_sheet.lower() == "true"
 
-    # Services and collaborators
+    # 2) Core config and auth
     cfg = Config()
     if not dry_run:
         cfg.authenticate()
     kite = getattr(cfg, "kite", None)
 
+    # 3) Services (create BEFORE any use)
     om = OrderManager(kite, cfg)
     ot = OrderTracker(kite, cfg)
     tl = TradeLogger(os.path.join(REPORTS_DIR, "live_trades.csv"))
@@ -191,151 +193,147 @@ def main():
 
     em = ExitManager(kite, cfg, om, tl, tg)
 
-    ht = HoldingTracker(os.path.join(STATE_DIR, "positions.json"))
+    ht = HoldingTracker(os.path.join(STATE_DIR, "positions.json"))  # Define ht BEFORE ht.load()
     rm = RiskManager(os.path.join(STATE_DIR, "risk_state.json"), ot)
     cm = CapitalManager(cfg, ot, om, tg)
+
     gs = GoogleSheetLogger(cfg) if do_sheet else None
 
-    # Data refresh
+    # 4) Data refresh
     if do_fetch:
         try:
-            logging.info("Refreshing daily data...")
-            fetch_data()
+            fetch_data()  # run_daily_refresh()
         except Exception as ex:
             logging.error(f"Data refresh failed: {ex}")
             if tg: tg.send_text(f"Data refresh failed: {ex}")
 
-    # Load strategy parameters (from backtester)
+    # 5) Load params
     params, params_path = load_latest_params(args.params_json)
-    logging.info(f"Using params: {os.path.basename(params_path)}")
 
-    # Pre-trade risk gate (index trend, stale data, kill-switch)
+    # 6) Risk pre-trade gate (do not return; still allow exits)
     if not rm.pre_trade_ok(INDEX_PATH):
-        msg = "RiskManager: blocked new entries (gate/kill-switch). Exits only."
+        msg = "Risk manager blocked new entries (gate/kill-switch/stale). Exits only."
         logging.warning(msg)
         if tg: tg.send_text(msg)
 
-    # Sync positions (optional: broker reconciliation)
-# 1) Load current positions
-positions = ht.load()
+    # 7) Now SAFE to use ht
+    positions = ht.load()
 
-# 2) Build signals for “today”
-entries, exits = build_today_intents(params, positions)
+    # 8) Build intents
+    entries, exits = build_today_intents(params, positions)
 
-# 3) Apply risk pause gate to entries only
-if rm.is_paused():
-    entries = []
+    # 9) Apply pause gate
+    if rm.is_paused():
+        entries = []
 
-# 4) Capital sizing for entries
-for e in entries:
-    try:
-        sym = e["symbol"]
-        suggested_qty = int(e.get("qty", 0))
-        final_qty = suggested_qty
-
-        if hasattr(cm, "size_quantity"):
-            final_qty = int(cm.size_quantity(sym, suggested_qty))
-        elif hasattr(cm, "size_order"):
-            df_sym = load_symbol_df(os.path.join(DAILY_DIR, f"{sym}.csv"))
-            c_prev = float(df_sym["close"].iloc[-1])
-            atr_prev = float(df_sym["atr"].iloc[-1])
-            stop_dist = float(params["atr_mult"]) * atr_prev
-            sized = cm.size_order(sym, entry_price=c_prev, stop_distance=stop_dist)
-            final_qty = int(sized.get("qty", suggested_qty))
-
-        e["qty"] = max(0, final_qty)
-    except Exception as ex:
-        logging.error(f"Sizing failed {e.get('symbol','UNKNOWN')}: {ex}")
-        e["qty"] = 0
-
-# 5) Place entries
-placed_entries = []
-for e in entries:
-    try:
-        sym = e["symbol"]
-        final_qty = int(e.get("qty", 0))
-        if final_qty <= 0:
-            logging.info(f"Skipping {sym}: sized qty <= 0")
-            continue
-
-        # Place order
-        if dry_run:
-            order_id = "DRYRUN"
-            filled = True
-            avg_price = None
-        else:
-            order_id = om.buy_market(sym, final_qty)
-            status = ot.wait_for_complete(order_id, timeout_sec=30)
-            filled = (status or {}).get("status") == "COMPLETE"
-            avg_price = (status or {}).get("average_price")
-
-        placed_entries.append({"symbol": sym, "qty": final_qty, "order_id": order_id, "avg_price": avg_price})
-
-        # After fill: update holdings and attach GTT stop
-        if filled:
-            ht.add(sym, final_qty, entry_price=avg_price)
-            df_last = load_symbol_df(os.path.join(DAILY_DIR, f"{sym}.csv"))
-            atr_prev = float(df_last["atr"].iloc[-1])
-            entry_p = float(avg_price) if avg_price else float(df_last["close"].iloc[-1])
-            trigger = round(entry_p - float(params["atr_mult"]) * atr_prev, 2)
-            if not dry_run and trigger > 0:
-                try:
-                    gtt_id = em.create_stop(sym, final_qty, trigger_price=trigger)
-                    if hasattr(ht, "update_gtt"):
-                        ht.update_gtt(sym, gtt_id)
-                except Exception as ex_gtt:
-                    logging.error(f"GTT stop create failed {sym}: {ex_gtt}")
-                    if tg: tg.send_text(f"GTT stop create failed {sym}: {ex_gtt}")
-        else:
-            logging.warning(f"Entry not filled for {sym} (order_id={order_id})")
-
-        # Journal entry
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        tl.log(now, sym, "BUY", final_qty, order_id, note="daily-entry")
-
-    except Exception as ex:
-        sym = e.get("symbol", "UNKNOWN")
-        logging.error(f"BUY failed {sym}: {ex}")
-        if tg: tg.send_text(f"BUY failed {sym}: {ex}")
-        continue
-
-    # Place exits
-    for x in exits:
-        sym = x["symbol"]
-        qty = ht.get_qty(sym)
-        if qty <= 0:
-            continue
+    # 10) Size entries (with CapitalManager fallback)
+    for e in entries:
         try:
-            # cancel GTT before manual exit
+            sym = e["symbol"]
+            suggested_qty = int(e.get("qty", 0))
+            final_qty = suggested_qty
+            if hasattr(cm, "size_quantity"):
+                final_qty = int(cm.size_quantity(sym, suggested_qty))
+            elif hasattr(cm, "size_order"):
+                df_sym = load_symbol_df(os.path.join(DAILY_DIR, f"{sym}.csv"))
+                c_prev = float(df_sym["close"].iloc[-1])
+                atr_prev = float(df_sym["atr"].iloc[-1])
+                stop_dist = float(params["atr_mult"]) * atr_prev
+                sized = cm.size_order(sym, entry_price=c_prev, stop_distance=stop_dist)
+                final_qty = int(sized.get("qty", suggested_qty))
+            e["qty"] = max(0, final_qty)
+        except Exception as ex:
+            logging.error(f"Sizing failed {e.get('symbol','UNKNOWN')}: {ex}")
+            e["qty"] = 0
+
+    # 11) Place entries (corrected block)
+    placed_entries = []
+    for e in entries:
+        try:
+            sym = e["symbol"]
+            final_qty = int(e.get("qty", 0))
+            if final_qty <= 0:
+                logging.info(f"Skipping {sym}: sized qty <= 0")
+                continue
+
+            if dry_run:
+                order_id = "DRYRUN"
+                filled = True
+                avg_price = None
+            else:
+                order_id = om.buy_market(sym, final_qty)
+                status = ot.wait_for_complete(order_id, timeout_sec=30)
+                filled = (status or {}).get("status") == "COMPLETE"
+                avg_price = (status or {}).get("average_price")
+
+            placed_entries.append({"symbol": sym, "qty": final_qty, "order_id": order_id, "avg_price": avg_price})
+
+            if filled:
+                ht.add(sym, final_qty, entry_price=avg_price)
+                df_last = load_symbol_df(os.path.join(DAILY_DIR, f"{sym}.csv"))
+                atr_prev = float(df_last["atr"].iloc[-1])
+                entry_p = float(avg_price) if avg_price else float(df_last["close"].iloc[-1])
+                trigger = round(entry_p - float(params["atr_mult"]) * atr_prev, 2)
+                if not dry_run and trigger > 0:
+                    try:
+                        gtt_id = em.create_stop(sym, final_qty, trigger_price=trigger)
+                        if hasattr(ht, "update_gtt"):
+                            ht.update_gtt(sym, gtt_id)
+                    except Exception as ex_gtt:
+                        logging.error(f"GTT stop create failed {sym}: {ex_gtt}")
+                        if tg: tg.send_text(f"GTT stop create failed {sym}: {ex_gtt}")
+            else:
+                logging.warning(f"Entry not filled for {sym} (order_id={order_id})")
+
+            # Journal entry
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tl.log(now, sym, "BUY", final_qty, order_id, note="daily-entry")
+
+        except Exception as ex:
+            sym = e.get("symbol", "UNKNOWN")
+            logging.error(f"BUY failed {sym}: {ex}")
+            if tg: tg.send_text(f"BUY failed {sym}: {ex}")
+            continue
+
+    # 12) Place exits (ensure this comes after entries block)
+    placed_exits = []
+    for x in exits:
+        try:
+            sym = x["symbol"]
+            qty = ht.get_qty(sym)
+            if qty <= 0:
+                continue
             if not dry_run:
-                gtt_id = ht.get_gtt(sym)
+                gtt_id = getattr(ht, "get_gtt", lambda _s: None)(sym)
                 if gtt_id:
-                    em.cancel_stop(gtt_id)
+                    try:
+                        em.cancel_stop(gtt_id)
+                    except Exception as ex_c:
+                        logging.error(f"GTT cancel failed {sym}: {ex_c}")
+                        if tg: tg.send_text(f"GTT cancel failed {sym}: {ex_c}")
             if dry_run:
                 order_id = "DRYRUN"
             else:
                 order_id = om.sell_market(sym, qty)
-                # optionally wait for completion
                 _ = ot.wait_for_complete(order_id, timeout_sec=30)
             placed_exits.append({**x, "order_id": order_id, "qty": qty})
             ht.remove(sym)
+
+            # Journal exit
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tl.log(now, sym, "SELL", qty, order_id, note=x.get("reason","exit"))
+
         except Exception as ex:
+            sym = x.get("symbol", "UNKNOWN")
             logging.error(f"SELL failed {sym}: {ex}")
             if tg: tg.send_text(f"SELL failed {sym}: {ex}")
+            continue
 
-    # Persist positions
+    # 13) Persist and notify
     ht.save()
-
-    # Journal trades
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    for rec in placed_entries:
-        tl.log(now, rec["symbol"], "BUY", rec.get("qty",0), rec.get("order_id",""), note="daily-entry")
-    for rec in placed_exits:
-        tl.log(now, rec["symbol"], "SELL", rec.get("qty",0), rec.get("order_id",""), note=rec.get("reason","exit"))
-
-    # Sheets summary row
     if gs:
         try:
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             gs.append_row({
                 "timestamp": now,
                 "mode": "DRY" if dry_run else "LIVE",
@@ -346,12 +344,8 @@ for e in entries:
             })
         except Exception as ex:
             logging.error(f"Sheet push failed: {ex}")
-
-    # Telegram summary
     if tg:
         tg.send_text(f"Run {'DRY' if dry_run else 'LIVE'} | Entries {len(placed_entries)} | Exits {len(placed_exits)} | Open {len(ht.load())} | {os.path.basename(params_path)}")
-
-    logging.info("Live orchestration completed.")
 
 if __name__ == "__main__":
     main()

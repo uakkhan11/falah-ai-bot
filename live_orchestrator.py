@@ -351,10 +351,11 @@ def main():
             })
         except Exception as ex:
             logging.error(f"Sheet push failed: {ex}")
+
+    print(f"Summary | mode={'DRY' if dry_run else 'LIVE'} | entries={len(placed_entries)} | exits={len(placed_exits)} | open={len(ht.load())} | params={os.path.basename(params_path)}")
+    
     if tg:
         tg.send_text(f"Run {'DRY' if dry_run else 'LIVE'} | Entries {len(placed_entries)} | Exits {len(placed_exits)} | Open {len(ht.load())} | {os.path.basename(params_path)}")
-        
-print(f"Summary | mode={'DRY' if dry_run else 'LIVE'} | entries={len(placed_entries)} | exits={len(placed_exits)} | open={len(ht.load())} | params={os.path.basename(params_path)}")
 
 if __name__ == "__main__":
     main()

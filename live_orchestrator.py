@@ -216,6 +216,9 @@ def main():
 
     # 5) Load params
     params, params_path = load_latest_params(args.params_json)
+    params_path = os.path.abspath(params_path)
+    logging.info(f"Params | using={params_path}")
+    print(f"Summary | ... | params={os.path.basename(params_path)}")
 
     # 6) Risk pre-trade gate (do not return; still allow exits)
     if not rm.pre_trade_ok(INDEX_PATH):

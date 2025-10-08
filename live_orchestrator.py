@@ -212,7 +212,7 @@ def main():
             fetch_data()  # run_daily_refresh()
         except Exception as ex:
             logging.error(f"Data refresh failed: {ex}")
-            if tg: tg.send_text(f"Data refresh failed: {ex}")
+            if tg: tg.send_text(f"Summary | mode={'DRY' if dry_run else 'LIVE'} | entries={len(placed_entries)} | exits={len(placed_exits)} | open={len(ht.load())} | params={os.path.basename(params_path)}")
 
     # 5) Load params
     params, params_path = load_latest_params(args.params_json)
@@ -224,8 +224,8 @@ def main():
     if not rm.pre_trade_ok(INDEX_PATH):
         msg = "Risk manager blocked new entries (gate/kill-switch/stale). Exits only."
         logging.warning(msg)
-        if tg: tg.send_text(msg)
-
+        if tg: tg.send_text(f"Summary | mode={'DRY' if dry_run else 'LIVE'} | entries={len(placed_entries)} | exits={len(placed_exits)} | open={len(ht.load())} | params={os.path.basename(params_path)}")
+   
     # 7) Now SAFE to use ht
     positions = ht.load()
 

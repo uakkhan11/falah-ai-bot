@@ -294,7 +294,7 @@ def main():
 
             # Journal entry
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            tl.log(now, sym, "BUY", final_qty, order_id, note="daily-entry")
+            tl.log_trade(symbol=sym, side="BUY", quantity=final_qty, price=(avg_price or 0.0), status=order_id, notes="daily-entry")
 
         except Exception as ex:
             sym = e.get("symbol", "UNKNOWN")
@@ -328,7 +328,7 @@ def main():
 
             # Journal exit
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            tl.log(now, sym, "SELL", qty, order_id, note=x.get("reason","exit"))
+            tl.log_trade(symbol=sym, side="SELL", quantity=qty, price=0.0, status=order_id, notes=x.get("reason","exit"))
 
         except Exception as ex:
             sym = x.get("symbol", "UNKNOWN")

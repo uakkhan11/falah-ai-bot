@@ -33,7 +33,7 @@ class Config:
         self.kite = None
         
         # Telegram (optional)
-        self.TELEGRAM_BOT_TOKEN = "7763450358:AAEFPtC-2E2qlWEAPt8dUduOw9wwk758TrE"
+        self.TELEGRAM_BOT_TOKEN = "7763450358:AAEghRYX0b8yvxq4V9nWKeyGlCiLwv1Oiz0"
         self.TELEGRAM_CHAT_ID = "6784139148"
 
         logging.basicConfig(level=logging.INFO)

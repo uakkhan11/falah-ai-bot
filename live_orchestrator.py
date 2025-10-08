@@ -8,6 +8,7 @@ from datetime import datetime
 import pandas as pd
 pd.set_option('future.no_silent_downcasting', True)
 import numpy as np
+from gsheet_manager import GSheetManager
 
 # ---------- Imports from your repo ----------
 from config import Config                                     # broker + creds [file:367]
@@ -180,6 +181,16 @@ def main():
     do_notify= args.notify.lower() == "true"
     do_sheet = args.push_sheet.lower() == "true"
 
+    # Google Sheets (optional)
+    gs = None
+    if do_sheet:
+        # Ensure this matches your actual credential file path and spreadsheet id
+        gs = GSheetManager(
+            credentials_file="/root/falah-ai-bot/falah-credentials.json",
+            sheet_key="1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
+        )
+
+
     # 2) Core config and auth
     cfg = Config()
     if not dry_run:
@@ -341,19 +352,21 @@ def main():
 
     # 13) Persist and notify
     ht.save()
-    if gs:
-        try:
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            gs.append_row({
-                "timestamp": now,
-                "mode": "DRY" if dry_run else "LIVE",
-                "entries": len(placed_entries),
-                "exits": len(placed_exits),
-                "open_positions": len(ht.load()),
-                "params": os.path.basename(params_path)
-            })
-        except Exception as ex:
-            logging.error(f"Sheet push failed: {ex}")
+    # Append run summary to Google Sheet (optional)
+if gs:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    row = [
+        now,
+        "DRY" if dry_run else "LIVE",
+        len(placed_entries),
+        len(placed_exits),
+        len(ht.load()),
+        os.path.basename(params_path),
+    ]
+    ok = gs.append_row(row=row, worksheet_name="Summary")
+    if tg and not ok:
+        tg.send_text("Sheets append failed; check credentials, sheet id, and tab name.")
+
 
     print(f"Summary | mode={'DRY' if dry_run else 'LIVE'} | entries={len(placed_entries)} | exits={len(placed_exits)} | open={len(ht.load())} | params={os.path.basename(params_path)}")
     

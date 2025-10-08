@@ -204,7 +204,7 @@ def main():
     rm = RiskManager(os.path.join(STATE_DIR, "risk_state.json"), ot)
     cm = CapitalManager(cfg, ot, om, tg)
 
-    gs = GoogleSheetLogger(cfg) if do_sheet else None
+    gs = GSheetManager(credentials_file="/root/falah-ai-bot/falah-credentials.json"", sheet_key="1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c")
 
     # 4) Data refresh
     if do_fetch:

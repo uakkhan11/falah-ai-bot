@@ -159,7 +159,7 @@ def build_today_intents(params, positions):
     return entries, exits
 
 # ---------- Main Orchestration ----------
-def main():
+
 def main():
     import argparse, os, logging
     ap = argparse.ArgumentParser()

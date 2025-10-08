@@ -158,6 +158,36 @@ def build_today_intents(params, positions):
         entries = entries[: min(slots_free, max_new_per_day)]
     return entries, exits
 
+# Services and collaborators (create first, then use)
+cfg = Config()
+if not dry_run:
+    cfg.authenticate()
+kite = getattr(cfg, "kite", None)
+
+# Core collaborators needed by multiple services
+om = OrderManager(kite, cfg)
+ot = OrderTracker(kite, cfg)
+tl = TradeLogger(os.path.join(REPORTS_DIR, "live_trades.csv"))
+
+# Notifier
+bot_token = getattr(cfg, "telegram_bot_token", None)
+chat_id   = getattr(cfg, "telegram_chat_id", None)
+tg = TelegramNotifier(bot_token, chat_id) if (do_notify and bot_token and chat_id) else None
+
+# Exit manager depends on order manager, logger, notifier
+em = ExitManager(kite, cfg, om, tl, tg)
+
+# State managers
+ht = HoldingTracker(os.path.join(STATE_DIR, "positions.json"))
+rm = RiskManager(os.path.join(STATE_DIR, "risk_state.json"), ot)
+
+# Capital manager (needs config, order tracker, order manager, notifier)
+cm = CapitalManager(cfg, ot, om, tg)
+
+# Optional mobile journal (safe no-op if not configured)
+gs = GoogleSheetLogger(cfg) if do_sheet else None
+
+
 # ---------- Main Orchestration ----------
 def main():
     import argparse

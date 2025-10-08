@@ -190,47 +190,40 @@ gs = GoogleSheetLogger(cfg) if do_sheet else None
 
 # ---------- Main Orchestration ----------
 def main():
-    import argparse
+    import argparse, os, logging
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dry_run", type=str, default="true", help="true/false")
-    ap.add_argument("--params_json", type=str, default="", help="optional explicit params JSON path")
-    ap.add_argument("--refresh_data", type=str, default="true", help="true/false refresh daily data")
-    ap.add_argument("--notify", type=str, default="true", help="true/false Telegram")
-    ap.add_argument("--push_sheet", type=str, default="true", help="true/false Google Sheets")
+    ap.add_argument("--dry_run", type=str, default="true")
+    ap.add_argument("--params_json", type=str, default="")
+    ap.add_argument("--refresh_data", type=str, default="true")
+    ap.add_argument("--notify", type=str, default="true")
+    ap.add_argument("--push_sheet", type=str, default="true")
     args = ap.parse_args()
 
+    # Flags must be defined before any use
     dry_run  = args.dry_run.lower() == "true"
     do_fetch = args.refresh_data.lower() == "true"
     do_notify= args.notify.lower() == "true"
     do_sheet = args.push_sheet.lower() == "true"
 
-    # Services
+    # Services and collaborators
     cfg = Config()
     if not dry_run:
         cfg.authenticate()
     kite = getattr(cfg, "kite", None)
-    
-    # Core collaborators
-    om = OrderManager(kite, cfg)                    # required by CapitalManager
-    ot = OrderTracker(kite, cfg)                    # required by RiskManager and CapitalManager
+
+    om = OrderManager(kite, cfg)
+    ot = OrderTracker(kite, cfg)
     tl = TradeLogger(os.path.join(REPORTS_DIR, "live_trades.csv"))
-    
-    # Notifier (token + chat id pulled from Config)
+
     bot_token = getattr(cfg, "telegram_bot_token", None)
     chat_id   = getattr(cfg, "telegram_chat_id", None)
     tg = TelegramNotifier(bot_token, chat_id) if (do_notify and bot_token and chat_id) else None
-    
-    # Exit manager (needs om, tl, tg)
+
     em = ExitManager(kite, cfg, om, tl, tg)
-    
-    # State managers
+
     ht = HoldingTracker(os.path.join(STATE_DIR, "positions.json"))
     rm = RiskManager(os.path.join(STATE_DIR, "risk_state.json"), ot)
-    
-    # Capital manager now with required collaborators
     cm = CapitalManager(cfg, ot, om, tg)
-    
-    # Optional mobile journal
     gs = GoogleSheetLogger(cfg) if do_sheet else None
 
     # Data refresh

@@ -12,13 +12,12 @@ except Exception:
     Credentials = None
 
 class GoogleSheetLogger:
-    """
-    Append rows to a Google Sheet tab. Expects Config to provide:
-      - gs_service_account_json: path to service account JSON key
-      - gs_spreadsheet_id: spreadsheet ID
-      - gs_worksheet_name: target tab name (e.g., 'Journal')
-    If dependencies/creds are missing, calls become no-ops.
-    """
+
+    cfg.gs_service_account_json = "/root/falah-ai-bot/falah-credentials.json"
+    cfg.gs_spreadsheet_id = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
+    cfg.gs_worksheet_name = "Summary"
+    gs = GoogleSheetLogger(cfg)
+
     def __init__(self, cfg):
         self.enabled = bool(gspread and Credentials
                             and getattr(cfg, "gs_service_account_json", None)

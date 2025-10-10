@@ -8,34 +8,37 @@ from datetime import datetime
 import pandas as pd
 pd.set_option('future.no_silent_downcasting', True)
 import numpy as np
-from gsheet_manager import GoogleSheetLogger
 
 # ---------- Imports from your repo ----------
-from config import Config                                     # broker + creds [file:367]
-from improved_fetcher import BASE_DIR, DATA_DIRS, run_daily_refresh as fetch_data     # data refresh [file:358]
-from order_manager import OrderManager                        # place/cancel orders [file:365]
-from order_tracker import OrderTracker                        # track order status [file:373]
-from holding_tracker import HoldingTracker                    # local positions state [file:370]
-from capital_manager import CapitalManager                    # position sizing utils [file:368]
-from risk_manager import RiskManager                          # kill-switch, gates [file:375]
-from trade_logger import TradeLogger                          # CSV journaling [file:374]
-from exit_manager import ExitManager                          # broker-hosted SL/GTT [file:380]
-from gsheet_manager import GoogleSheetLogger                  # mobile journal [file:366]
-from telegram_notifier import TelegramNotifier                # alerts [file:379]
+from config import Config
+from improved_fetcher import BASEDIR, DATADIRS, run_daily_refresh as fetch_data
+from order_manager import OrderManager
+from order_tracker import OrderTracker
+from holding_tracker import HoldingTracker
+from capital_manager import CapitalManager
+from risk_manager import RiskManager
+from trade_logger import TradeLogger
+from exit_manager import ExitManager
+from telegram_notifier import TelegramNotifier
+from gsheet_manager import GoogleSheetLogger  # choose this one
+
 # Optional intraday helpers (kept off by default)
 # from live_data_manager import LiveDataManager               # LTP checks [file:372]
 # from live_price_streamer import PriceStreamer               # streaming [file:378]
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-REPORTS_DIR = os.path.join(BASE_DIR, "reports")
-STATE_DIR   = os.path.join(BASE_DIR, "state")
-DAILY_DIR   = DATA_DIRS["daily"]
-INDEX_PATH  = os.path.join(BASE_DIR, "index_data", "nifty_50.csv")
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
+
+REPORTS_DIR = os.path.join(BASEDIR, "reports")
+STATE_DIR   = os.path.join(BASEDIR, "state")
+DAILY_DIR   = DATADIRS["daily"]
+INDEX_PATH  = os.path.join(BASEDIR, "index_data", "nifty_50.csv")
 os.makedirs(REPORTS_DIR, exist_ok=True)
 os.makedirs(STATE_DIR, exist_ok=True)
 
 DENY = {"NIFTY","NIFTY_50","NIFTY50","nifty_50","nifty50","NIFTY_INDEX"}
+
 
 # ---------- Helpers ----------
 def load_latest_params(params_json_override=""):
@@ -166,7 +169,7 @@ def build_today_intents(params, positions):
 # ---------- Main Orchestration ----------
 
 def main():
-    import argparse, os, logging
+    import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry_run", type=str, default="true")
     ap.add_argument("--params_json", type=str, default="")
@@ -175,52 +178,46 @@ def main():
     ap.add_argument("--push_sheet", type=str, default="true")
     args = ap.parse_args()
 
-    # 1) Flags FIRST
     dry_run  = args.dry_run.lower() == "true"
     do_fetch = args.refresh_data.lower() == "true"
     do_notify= args.notify.lower() == "true"
     do_sheet = args.push_sheet.lower() == "true"
 
-    # Google Sheets (optional)
-    gs = None
-    if do_sheet:
-        # Ensure this matches your actual credential file path and spreadsheet id
-        gs = GoogleSheetLogger(cfg)
-
-
-    # 2) Core config and auth
     cfg = Config()
     if not dry_run:
         cfg.authenticate()
     kite = getattr(cfg, "kite", None)
 
-    # 3) Services (create BEFORE any use)
     om = OrderManager(kite, cfg)
     ot = OrderTracker(kite, cfg)
     tl = TradeLogger(os.path.join(REPORTS_DIR, "live_trades.csv"))
 
-    bot_token = getattr(cfg, "telegram_bot_token", None)
-    chat_id   = getattr(cfg, "telegram_chat_id", None)
+    bot_token = getattr(cfg, "TELEGRAM_BOT_TOKEN", None) or getattr(cfg, "telegram_bot_token", None)
+    chat_id   = getattr(cfg, "TELEGRAM_CHAT_ID", None) or getattr(cfg, "telegram_chat_id", None)
     tg = TelegramNotifier(bot_token, chat_id) if (do_notify and bot_token and chat_id) else None
 
     em = ExitManager(kite, cfg, om, tl, tg)
 
     ht = HoldingTracker(
-    trade_log_csv=os.path.join(REPORTS_DIR, "live_trades.csv"),
-    state_path=os.path.join(STATE_DIR, "positions.json"),
-    ) # Define ht BEFORE ht.load()
+        trade_log_csv=os.path.join(REPORTS_DIR, "live_trades.csv"),
+        state_path=os.path.join(STATE_DIR, "positions.json"),
+    )
     rm = RiskManager(os.path.join(STATE_DIR, "risk_state.json"), ot)
     cm = CapitalManager(cfg, ot, om, tg)
 
-    gs = GSheetManager(credentials_file="/root/falah-ai-bot/falah-credentials.json", sheet_key="1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c")
+    # Google Sheets (optional)
+    gs = None
+    if do_sheet:
+        gs = GoogleSheetLogger(cfg)
+
 
     # 4) Data refresh
     if do_fetch:
         try:
-            fetch_data()  # run_daily_refresh()
+            fetch_data()
         except Exception as ex:
             logging.error(f"Data refresh failed: {ex}")
-            if tg: tg.send_text(f"Summary | mode={'DRY' if dry_run else 'LIVE'} | entries={len(placed_entries)} | exits={len(placed_exits)} | open={len(ht.load())} | params={os.path.basename(params_path)}")
+            if tg: tg.send_text(f"Data refresh failed: {ex}")
 
     # 5) Load params
     params, params_path = load_latest_params(args.params_json)
@@ -349,22 +346,23 @@ def main():
 
     # 13) Persist and notify
     ht.save()
+
     # Append run summary to Google Sheet (optional)
-if gs:
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    ok = gs.append_row({
-        "timestamp": now,
-        "mode": "DRY" if dry_run else "LIVE",
-        "entries": len(placed_entries),
-        "exits": len(placed_exits),
-        "open_positions": len(ht.load()),
-        "params": os.path.basename(params_path),
-    })
-    if tg and not ok:
-        tg.send_text("Sheets append failed; check creds/id/tab in Config.")
+    if gs:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ok = gs.append_row({
+            "timestamp": now,
+            "mode": "DRY" if dry_run else "LIVE",
+            "entries": len(placed_entries),
+            "exits": len(placed_exits),
+            "open_positions": len(ht.load()),
+            "params": os.path.basename(params_path),
+        })
+        if tg and not ok:
+            tg.send_text("Sheets append failed; check creds/id/tab in Config.")
 
     print(f"Summary | mode={'DRY' if dry_run else 'LIVE'} | entries={len(placed_entries)} | exits={len(placed_exits)} | open={len(ht.load())} | params={os.path.basename(params_path)}")
-    
+
     if tg:
         tg.send_text(f"Run {'DRY' if dry_run else 'LIVE'} | Entries {len(placed_entries)} | Exits {len(placed_exits)} | Open {len(ht.load())} | {os.path.basename(params_path)}")
 

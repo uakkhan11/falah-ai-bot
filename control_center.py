@@ -101,7 +101,7 @@ def preview_trades(k=10):
     except Exception as e:
         return f"Error reading trades: {e}"
 
-with gr.Blocks(auth=("user","change-me-strong")) as demo:
+with gr.Blocks() as demo:
     unlocked = gr.State(False)
     gr.Markdown("## Falah Control Center")
 
@@ -154,4 +154,4 @@ with gr.Blocks(auth=("user","change-me-strong")) as demo:
 
 if __name__ == "__main__":
     # For production, consider server_name="0.0.0.0", custom port, and proxy behind Nginx
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(server_name="0.0.0.0", server_port=7860, auth=("user","change-me-strong"))

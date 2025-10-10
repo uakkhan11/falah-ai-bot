@@ -212,7 +212,7 @@ def main():
 
 
     # 4) Data refresh
-    if do_fetch:
+    if do_fetch and callable(fetch_data):
         try:
             fetch_data()
         except Exception as ex:
@@ -224,6 +224,9 @@ def main():
     params_path = os.path.abspath(params_path)
     logging.info(f"Params | using={params_path}")
     print(f"Summary | ... | params={os.path.basename(params_path)}")
+
+    placed_entries = []
+    placed_exits = []
 
     # 6) Risk pre-trade gate (do not return; still allow exits)
     if not rm.pre_trade_ok(INDEX_PATH):

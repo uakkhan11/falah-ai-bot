@@ -31,9 +31,9 @@ logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
 REPORTS_DIR = os.path.join(BASEDIR, "reports")
-STATE_DIR   = os.path.join(BASEDIR, "state")
-DAILY_DIR   = DATADIRS["daily"]
-INDEX_PATH  = os.path.join(BASEDIR, "index_data", "nifty_50.csv")
+STATE_DIR = os.path.join(BASEDIR, "state")
+DAILY_DIR = DATADIRS["daily"]
+INDEX_PATH = os.path.join(BASEDIR, "index_data", "nifty_50.csv")
 os.makedirs(REPORTS_DIR, exist_ok=True)
 os.makedirs(STATE_DIR, exist_ok=True)
 

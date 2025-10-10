@@ -376,7 +376,7 @@ def run_once(files, capital, risk_per_trade, atr_mult, adx_threshold, trail, tag
         sym_gate = None
         if index_gate_df is not None:
             g = pd.merge(df[["date"]], index_gate_df, on="date", how="left")
-            g["gate"] = g["gate"].ffill().fillna(False)
+            g["gate"] = g["gate"].astype("boolean").ffill().fillna(False)
             sym_gate = g["gate"]
 
         trades = backtest_symbol(

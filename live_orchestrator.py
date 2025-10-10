@@ -11,7 +11,7 @@ import numpy as np
 
 # ---------- Imports from your repo ----------
 from config import Config
-from improved_fetcher import BASEDIR, DATADIRS, run_daily_refresh as fetch_data
+from improved_fetcher import BASE_DIR, DATA_DIRS, run_daily_refresh as fetch_data
 from order_manager import OrderManager
 from order_tracker import OrderTracker
 from holding_tracker import HoldingTracker
@@ -30,10 +30,10 @@ logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-REPORTS_DIR = os.path.join(BASEDIR, "reports")
-STATE_DIR = os.path.join(BASEDIR, "state")
-DAILY_DIR = DATADIRS["daily"]
-INDEX_PATH = os.path.join(BASEDIR, "index_data", "nifty_50.csv")
+REPORTS_DIR = os.path.join(BASE_DIR, "reports")
+STATE_DIR   = os.path.join(BASE_DIR, "state")
+DAILY_DIR   = DATA_DIRS["daily"]
+INDEX_PATH  = os.path.join(BASE_DIR, "index_data", "nifty_50.csv")
 os.makedirs(REPORTS_DIR, exist_ok=True)
 os.makedirs(STATE_DIR, exist_ok=True)
 

@@ -39,6 +39,12 @@ class Config:
         logging.basicConfig(level=logging.INFO)
         print(f"📍 Token file path set to: {os.path.abspath(TOKENS_FILE)}")
 
+        # Google Sheets settings
+        self.gs_service_account_json = "/root/falah-ai-bot/falah-credentials.json"  # absolute path
+        self.gs_spreadsheet_id = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"     # your sheet ID
+        self.gs_worksheet_name = "Summary"                                           # target tab name
+
+
     def _load_saved_token(self):
         if os.path.exists(TOKENS_FILE):
             print(f"🔍 Loading access token from: {os.path.abspath(TOKENS_FILE)}")

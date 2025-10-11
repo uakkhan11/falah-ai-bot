@@ -13,9 +13,9 @@ class Config:
     def __init__(self):
         # --- Trading Parameters ---
         self.MAX_POSITION_LOSS_PCT = 0.03
-        self.INITIAL_CAPITAL = 1_000_000
+        self.INITIAL_CAPITAL = 100_000
         self.POSITION_SIZE = 100_000
-        self.RISK_PER_TRADE = 0.01
+        self.RISK_PER_TRADE = 0.005
         self.PROFIT_TARGET = 0.10
         self.ATR_SL_MULT = 2.8
         self.ATR_PERIOD = 14

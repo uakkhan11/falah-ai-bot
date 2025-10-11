@@ -154,4 +154,4 @@ with gr.Blocks() as demo:
 
 if __name__ == "__main__":
     # For production, consider server_name="0.0.0.0", custom port, and proxy behind Nginx
-    demo.launch(server_name="0.0.0.0", server_port=7860, auth=("user","strong-pass"), share=True)
+    demo.launch(server_name="0.0.0.0", server_port=7860, auth=("uak","uak"), share=True)

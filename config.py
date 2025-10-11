@@ -25,7 +25,7 @@ class Config:
         self.MAX_POSITIONS = 5
         self.DAILY_LOSS_LIMIT_PCT = 0.05
 
-        # Zerodha API (replace with your keys)
+        # Zerodha API (replace with real keys)
         self.API_KEY = "ijzeuwuylr3g0kug"
         self.API_SECRET = "yy1wd2wn8r0wx4mus00vxllgss03nuqx"
         self.ACCESS_TOKEN = None
@@ -35,7 +35,7 @@ class Config:
         self.TELEGRAM_BOT_TOKEN = "7763450358:AAEghRYX0b8yvxq4V9nWKeyGlCiLwv1Oiz0"
         self.TELEGRAM_CHAT_ID = "6784139148"
 
-        # Google Sheets settings (service account)
+        # Google Sheets (service account)
         self.gs_service_account_json = "/root/falah-ai-bot/falah-credentials.json"
         self.gs_spreadsheet_id = "1ccAxmGmqHoSAj9vFiZIGuV2wM6KIfnRdSebfgx1Cy_c"
         self.gs_worksheet_name = "Summary"
@@ -43,19 +43,16 @@ class Config:
         logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
         print(f"📍 Token file path set to: {os.path.abspath(TOKENS_FILE)}")
 
-        # Try to load any saved token immediately
+        # Preload saved token if any
         self._load_saved_token()
         if self.ACCESS_TOKEN:
-            # Prepare a KiteConnect instance using the saved token,
-            # but defer profile verification until authenticate() is called.
             try:
                 self.kite = KiteConnect(api_key=self.API_KEY)
                 self.kite.set_access_token(self.ACCESS_TOKEN)
             except Exception:
-                # Will be re-created in authenticate paths
                 self.kite = None
 
-    # ---------------- Token persistence ----------------
+    # --------------- Token persistence ---------------
 
     def _load_saved_token(self):
         """Load ACCESS_TOKEN from TOKENS_FILE if present."""
@@ -88,36 +85,41 @@ class Config:
         except Exception as e:
             logging.warning(f"Could not save token: {e}")
 
-    def get_login_url(self):
+    # --------------- Convenience helpers ---------------
+
+    def get_login_url(self) -> str:
+        """
+        Return the Zerodha login URL for the current API key.
+        """
         kc = self.kite if self.kite else KiteConnect(api_key=self.API_KEY)
-            try:
+        try:
             url = kc.login_url()
-            except Exception:
+        except Exception:
             kc = KiteConnect(api_key=self.API_KEY)
             url = kc.login_url()
-            self.kite = kc
+        self.kite = kc
         return url
 
     # --------------- Authentication paths ---------------
 
-    def authenticate_with_token(self, request_token: str):
+    def authenticate_with_token(self, request_token: str) -> str:
         """
-        Exchange a request_token (from Zerodha login redirect) for an access_token,
-        persist it, and set it on self.kite. Returns the access_token on success.
-        Intended for programmatic calls (e.g., Gradio Control Center).
+        Exchange request_token for access_token, save it, and set it on self.kite.
+        Returns the access_token on success.
         """
         if not request_token or not request_token.strip():
             raise ValueError("request_token is required")
 
-        self.kite = KiteConnect(api_key=self.API_KEY)
+        kc = KiteConnect(api_key=self.API_KEY)
         logging.info("Exchanging request_token for access_token ...")
-        data = self.kite.generate_session(request_token.strip(), api_secret=self.API_SECRET)
+        data = kc.generate_session(request_token.strip(), api_secret=self.API_SECRET)
         access_token = data.get("access_token")
         if not access_token:
             raise RuntimeError("No access_token received from generate_session()")
 
         self.ACCESS_TOKEN = access_token
-        self.kite.set_access_token(access_token)
+        kc.set_access_token(access_token)
+        self.kite = kc
         self._save_token()
 
         try:
@@ -130,11 +132,10 @@ class Config:
 
     def authenticate(self, request_token: str | None = None):
         """
-        Human-friendly auth: if a valid saved token exists, use it.
-        Otherwise, print the login URL and prompt for a request_token (if not provided),
-        then exchange and save.
+        If a valid saved token exists, use it; otherwise prompt for request_token
+        and perform the exchange.
         """
-        # If we already have a Kite instance with a token, validate it
+        # Validate existing token if any
         if self.kite and self.ACCESS_TOKEN:
             try:
                 profile = self.kite.profile()
@@ -144,27 +145,25 @@ class Config:
             except Exception:
                 logging.warning("🚫 Saved ACCESS_TOKEN invalid, need fresh login.")
 
-        # Otherwise (re)create Kite instance
-        self.kite = KiteConnect(api_key=self.API_KEY)
+        kc = KiteConnect(api_key=self.API_KEY)
 
         if not request_token:
-            # No token provided: guide the user to log in and paste request_token
-            login_url = self.kite.login_url()
+            login_url = kc.login_url()
             print("\n🔗 LOGIN URL:\n" + login_url + "\n")
             print("1️⃣ Open in browser & complete login with 2FA.")
             print("2️⃣ Copy the request_token from the redirected URL (query param).")
             request_token = input("Paste request_token here: ").strip()
 
-        # Exchange and persist
         try:
             logging.info("Exchanging request_token for access_token ...")
-            data = self.kite.generate_session(request_token.strip(), api_secret=self.API_SECRET)
+            data = kc.generate_session(request_token.strip(), api_secret=self.API_SECRET)
             access_token = data.get("access_token")
             if not access_token:
                 print("❌ No access_token received in session data")
                 return
             self.ACCESS_TOKEN = access_token
-            self.kite.set_access_token(access_token)
+            kc.set_access_token(access_token)
+            self.kite = kc
             self._save_token()
             logging.info("✅ Authentication successful and token saved.")
             try:

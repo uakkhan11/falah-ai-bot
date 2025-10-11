@@ -31,7 +31,7 @@ def unlock_dashboard(pin):
 def zerodha_show_login_url():
     try:
         # Minimal way: run a small Python one-liner that prints Config login URL if available
-        code = "from config import Config; c=Config(); print(getattr(c,'login_url','Login URL not available here.'))"
+        code = "from config import Config; c=Config(); print(c.get_login_url())"
         out = subprocess.check_output(["python3","-c",code], cwd=BASE_DIR, text=True)
         return out.strip()
     except Exception as e:

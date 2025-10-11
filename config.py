@@ -89,14 +89,14 @@ class Config:
             logging.warning(f"Could not save token: {e}")
 
     def get_login_url(self):
-    kc = self.kite if self.kite else KiteConnect(api_key=self.API_KEY)
-    try:
-    url = kc.login_url()
-    except Exception:
-    kc = KiteConnect(api_key=self.API_KEY)
-    url = kc.login_url()
-    self.kite = kc
-    return url
+        kc = self.kite if self.kite else KiteConnect(api_key=self.API_KEY)
+            try:
+            url = kc.login_url()
+            except Exception:
+            kc = KiteConnect(api_key=self.API_KEY)
+            url = kc.login_url()
+            self.kite = kc
+        return url
 
     # --------------- Authentication paths ---------------
 

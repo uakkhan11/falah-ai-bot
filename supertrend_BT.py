@@ -7,7 +7,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Configuration: Update path to match your directory structure
-DATADIR = 'falah-ai-bot/swing_data'  # Change this to your actual path
+DATA_DIR = 'falah-ai-bot/swing_data'  # Change this to your actual path
 END_DATE = datetime(2025, 8, 31)
 START_DATE = END_DATE - timedelta(days=5*365)
 

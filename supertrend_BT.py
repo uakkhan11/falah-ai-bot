@@ -7,7 +7,17 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Configuration: Update path to match your directory structure
-DATA_DIR = 'falah-ai-bot/swing_data'  # Change this to your actual path
+BASE_DIR = "/root/falah-ai-bot"
+TOKENS_FILE = os.path.join(BASE_DIR, "kite_tokens.json")  # Your existing token file
+
+DATA_DIRS = {
+    'daily': os.path.join(BASE_DIR, "swing_data"),
+    '15minute': os.path.join(BASE_DIR, "scalping_data"),
+    '1hour': os.path.join(BASE_DIR, "intraday_swing_data"),
+    '5minute': os.path.join(BASE_DIR, "five_minute_data"),
+    'backup': os.path.join(BASE_DIR, "data_backup")
+}
+
 END_DATE = datetime(2025, 8, 31)
 START_DATE = END_DATE - timedelta(days=5*365)
 

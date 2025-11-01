@@ -12,10 +12,10 @@ END_DATE = datetime(2025, 8, 31)
 START_DATE = END_DATE - timedelta(days=5*365)
 
 # Load all CSV files in the specified directory
-if not os.path.exists(DATADIR):
+if not os.path.exists(DATA_DIR):
     raise FileNotFoundError(f"Data directory not found: {DATA_DIR}")
 
-all_files = [f for f in os.listdir(DATADIR) if f.endswith('.csv')]
+all_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.csv')]
 
 # Load data for each symbol
 def load_data_for_backtest(directory, symbol_file, start_date, end_date):

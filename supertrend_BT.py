@@ -7,15 +7,20 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Configuration: Update path to match your directory structure
-DATADIR = 'swing_data'  # Change this to your actual path
+DATADIR = 'falah-ai-bot/swingdata'  # Use the correct path
 END_DATE = datetime(2025, 8, 31)
 START_DATE = END_DATE - timedelta(days=5*365)
 
-# Check if the data directory exists
-if not os.path.exists(DATADIR):  # Corrected variable name
-    raise FileNotFoundError(f"Data directory not found: {DATADIR}")
+# Parameters for testing
+ema_configs = [
+    {'atr_mult': 1.5, 'period': 10, 'short_ema': 10, 'long_ema': 21, 'volume_threshold': 1.1},
+    {'atr_mult': 2.0, 'period': 10, 'short_ema': 10, 'long_ema': 21, 'volume_threshold': 1.2},
+    {'atr_mult': 2.5, 'period': 14, 'short_ema': 12, 'long_ema': 25, 'volume_threshold': 1.3},
+]
 
-# Load all CSV files in the specified directory
+# Check if the data directory exists
+if not os.path.exists(DATADIR):
+    raise FileNotFoundError(f"Data directory not found: {DATADIR}")
 all_files = [f for f in os.listdir(DATADIR) if f.endswith('.csv')]
 
 # Load data for each symbol
@@ -25,6 +30,12 @@ def load_data_for_backtest(directory, symbol_file, start_date, end_date):
     df['date'] = pd.to_datetime(df['date'])
     df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
     df = df.sort_values('date').reset_index(drop=True)
+    # Calculate EMAs
+    df['ema_10'] = df['close'].ewm(span=10).mean()
+    df['ema_21'] = df['close'].ewm(span=21).mean()
+    df['ema_200'] = df['close'].ewm(span=200).mean()
+    df['volume_sma'] = df['volume'].rolling(20).mean()
+    df['volume_ratio'] = df['volume'] / df['volume_sma']
     return df
 
 # Supertrend indicator
@@ -46,9 +57,9 @@ def supertrend(df, period=10, multiplier=1.5):
             df['supertrend'].iloc[i] = df['supertrend'].iloc[i-1]
     return df
 
-# Backtest strategy with trailing stop loss and pyramiding
-def backtest_strategy(df, symbol, period=10, multiplier=1.5):
-    df = supertrend(df, period, multiplier)
+# Backtest strategy with multiple indicators and settings
+def backtest_strategy(df, symbol, config):
+    df = supertrend(df, config['period'], config['atr_mult'])
     df['position'] = 0
     df['pyramid_count'] = 0
     df['entry_price'] = np.nan
@@ -56,14 +67,19 @@ def backtest_strategy(df, symbol, period=10, multiplier=1.5):
     df['returns'] = np.nan
     df['cumulative_returns'] = 1
     df['profit'] = 0
-    df['symbol'] = symbol
     position = 0
     pyramid_count = 0
     trail_stop = np.nan
     entry_price = np.nan
-
+    
     for i in range(1, len(df)):
-        if df['supertrend'].iloc[i] and not df['supertrend'].iloc[i-1] and position == 0:
+        # Entry conditions
+        ema_cross = df['ema_10'].iloc[i] > df['ema_21'].iloc[i] and df['ema_10'].iloc[i-1] <= df['ema_21'].iloc[i-1]
+        above_200d = df['close'].iloc[i] > df['ema_200'].iloc[i]
+        volume_confirmed = df['volume_ratio'].iloc[i] >= config['volume_threshold']
+        supertrend_signal = df['supertrend'].iloc[i] and not df['supertrend'].iloc[i-1]
+
+        if ema_cross and above_200d and volume_confirmed and supertrend_signal and position == 0:
             position = 1
             df.at[i, 'position'] = 1
             entry_price = df['close'].iloc[i]
@@ -88,140 +104,51 @@ def backtest_strategy(df, symbol, period=10, multiplier=1.5):
 
         df.at[i, 'returns'] = df['profit'].iloc[i]
         df.at[i, 'cumulative_returns'] = df['cumulative_returns'].iloc[i-1] * (1 + df['profit'].iloc[i] / entry_price if entry_price != np.nan and df['profit'].iloc[i] != 0 else 1)
-
+    df['symbol'] = symbol
     return df
 
-# Backtest all symbols in folder
-combined_results = pd.DataFrame()
-summary_results = []
+# Backtest for all configs and symbols
+all_results = []
+all_configs = []
+for config in ema_configs:
+    combined_results = pd.DataFrame()
+    for file in all_files:
+        symbol = file.split('.')[0]
+        df = load_data_for_backtest(DATADIR, file, START_DATE, END_DATE)
+        if df.empty:
+            continue
+        result = backtest_strategy(df.copy(), symbol, config)
+        combined_results = pd.concat([combined_results, result], ignore_index=True)
+    
+    # Calculate summary stats for the config
+    if not combined_results.empty:
+        total_trades = combined_results[combined_results['profit'] != 0]['profit'].count()
+        winners = combined_results[combined_results['profit'] > 0]['profit']
+        losers = combined_results[combined_results['profit'] < 0]['profit']
+        total_profit = combined_results['profit'].sum()
+        gross_profit = winners.sum() if not winners.empty else 0
+        gross_loss = abs(losers.sum()) if not losers.empty else 0
+        profit_factor = gross_profit / gross_loss if gross_loss > 0 else np.nan
+        sharpe = combined_results['profit'].mean() / combined_results['profit'].std() if combined_results['profit'].std() > 0 else 0
+        sortino = combined_results['profit'].mean() / combined_results[combined_results['profit'] < 0]['profit'].std() if not combined_results[combined_results['profit'] < 0].empty else 0
+        
+        all_configs.append({
+            'atr_mult': config['atr_mult'],
+            'ema_short': config['short_ema'],
+            'ema_long': config['long_ema'],
+            'volume_threshold': config['volume_threshold'],
+            'total_trades': total_trades,
+            'total_profit': total_profit,
+            'gross_profit': gross_profit,
+            'gross_loss': gross_loss,
+            'profit_factor': round(profit_factor, 2) if not np.isnan(profit_factor) else 0,
+            'sharpe_ratio': round(sharpe, 2),
+            'sortino_ratio': round(sortino, 2),
+            'net_pnl': total_profit,
+            'open_pnl': 0,
+        })
 
-for file in all_files:
-    symbol = file.split('.')[0]
-    df = load_data_for_backtest(DATADIR, file, START_DATE, END_DATE)
-    if df.empty:
-        continue
-    result = backtest_strategy(df.copy(), symbol, period=10, multiplier=1.5)
-    combined_results = pd.concat([combined_results, result], ignore_index=True)
-
-    # Summary for each symbol
-    total_profit = result['profit'].sum()
-    wins = (result['profit'] > 0).sum()
-    losses = (result['profit'] < 0).sum()
-    trade_count = result['profit'].replace(0, np.nan).dropna().count()
-    win_rate = 0 if trade_count == 0 else (wins / trade_count) * 100
-    summary_results.append({
-        "Symbol": symbol,
-        "Total Trades": trade_count,
-        "Total Profit": total_profit,
-        "Winning Trades": wins,
-        "Losing Trades": losses,
-        "Win Rate": f"{win_rate:.2f}%",
-        "Cumulative Return": f"{result['cumulative_returns'].iloc[-1] if not result.empty else 1:.2f}"
-    })
-
-# Save results
-summary_df = pd.DataFrame(summary_results)
-summary_df.to_csv('all_symbols_summary.csv', index=False)
-combined_results.to_csv('all_symbols_backtest_detailed.csv', index=False)
-
-print("Backtest complete. Summary and detailed results saved.")
-
-import pandas as pd
-import numpy as np
-
-# Load your detailed backtest results
-df = pd.read_csv('all_symbols_backtest_detailed.csv')
-
-# Define parameters used in the strategy
-atr_mult = 1.5  # Replace with actual value used in strategy
-adx_threshold = 20  # Replace with actual value used
-trail = True  # Replace with actual trailing stop setting
-start_capital = 100000  # Replace with your starting capital
-symbol_list = df['symbol'].unique()
-total_trades = df[df['position'] == 1]['position'].sum()
-total_shares = total_trades + df['pyramid_count'].sum()
-total_pnl = df['profit'].sum()
-end_capital = start_capital + total_pnl
-net_pnl = total_pnl
-
-# Winners and losers
-winners = df[df['profit'] > 0]['profit']
-losers = df[df['profit'] < 0]['profit']
-winners_count = len(winners)
-losers_count = len(losers)
-percent_profitable = (winners_count / total_trades) * 100 if total_trades > 0 else 0
-avg_trade_pnl = total_pnl / total_trades if total_trades > 0 else 0
-avg_win = winners.mean() if len(winners) > 0 else 0
-avg_loss = losers.mean() if len(losers) > 0 else 0
-win_loss_ratio = winners_count / losers_count if losers_count > 0 else 0
-
-# Gross profit and loss
-gross_profit = winners.sum()
-gross_loss = abs(losers.sum())
-profit_factor = gross_profit / gross_loss if gross_loss > 0 else np.nan
-
-# Best and worst trades
-best_trade = winners.max() if len(winners) > 0 else 0
-worst_trade = losers.min() if len(losers) > 0 else 0
-
-# Trade duration (if you have entry/exit time in 'date' col, else use avg over sample)
-# For simplicity, if not available, use NaNs or estimate based on rows between entries/exits
-avg_trade_duration_days = np.nan
-median_trade_duration_days = np.nan
-
-# Time in market (fraction of days capital was deployed)
-# You can calculate it from position 1 days vs total days in df
-time_in_market_pct = (df['position'] == 1).sum() / len(df) * 100
-
-# Maximum drawdown (abs and %)
-capital_curve = df['cumulative_returns'].cumprod() * start_capital
-max_drawdown_abs = (capital_curve.cummax() - capital_curve).max()
-max_drawdown_pct = ((capital_curve.cummax() - capital_curve) / capital_curve.cummax()).max() * 100
-
-# Volatility, Sharpe, Sortino, CAGR, Calmar - annualized (approx)
-returns = df['returns'].dropna()
-volatility_annualized = returns.std() * np.sqrt(252) * 100  # 252 trading days
-sharpe = returns.mean() / returns.std() if returns.std() > 0 else 0
-sortino = returns.mean() / returns[returns < 0].std() if len(returns[returns < 0]) > 0 else 0
-cagr_pct = (end_capital / start_capital) ** (252 / len(df)) - 1
-cagr_pct = cagr_pct * 100
-calmar = cagr_pct / max_drawdown_pct if max_drawdown_pct > 0 else 0
-
-# Collect all results
-detail_report = {
-    "atr_mult": atr_mult,
-    "adx_threshold": adx_threshold,
-    "trail": trail,
-    "start_capital": start_capital,
-    "end_capital": end_capital,
-    "net_pnl": net_pnl,
-    "total_trades": total_trades,
-    "winners": winners_count,
-    "losers": losers_count,
-    "percent_profitable": round(percent_profitable, 2),
-    "avg_trade_pnl": round(avg_trade_pnl, 2),
-    "avg_win": round(avg_win, 2) if not np.isnan(avg_win) else 0,
-    "avg_loss": round(avg_loss, 2) if not np.isnan(avg_loss) else 0,
-    "win_loss_ratio": round(win_loss_ratio, 2),
-    "gross_profit": round(gross_profit, 2),
-    "gross_loss": round(gross_loss, 2),
-    "profit_factor": round(profit_factor, 2) if not np.isnan(profit_factor) else 0,
-    "best_trade": round(best_trade, 2),
-    "worst_trade": round(worst_trade, 2),
-    "avg_trade_duration_days": avg_trade_duration_days,
-    "median_trade_duration_days": median_trade_duration_days,
-    "time_in_market_pct": round(time_in_market_pct, 2),
-    "max_drawdown_abs": round(max_drawdown_abs, 2),
-    "max_drawdown_pct": round(max_drawdown_pct, 2),
-    "volatility_annualized": round(volatility_annualized, 2),
-    "sharpe": round(sharpe, 2),
-    "sortino": round(sortino, 2),
-    "cagr_pct": round(cagr_pct, 2),
-    "calmar": round(calmar, 2)
-}
-
-# Print and export to CSV for analysis
-detail_report_df = pd.DataFrame([detail_report])
-print(detail_report_df)
-detail_report_df.to_csv('detailed_performance_report.csv', index=False)
-
+# Export overall config summary
+all_configs_df = pd.DataFrame(all_configs)
+all_configs_df.to_csv('config_summary.csv', index=False)
+print("Backtest and config summary complete.")

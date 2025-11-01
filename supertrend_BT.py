@@ -7,25 +7,16 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Configuration: Update path to match your directory structure
-BASE_DIR = "/root/falah-ai-bot"
-TOKENS_FILE = os.path.join(BASE_DIR, "kite_tokens.json")  # Your existing token file
-
-DATA_DIR = {
-    'daily': os.path.join(BASE_DIR, "swing_data"),
-    '15minute': os.path.join(BASE_DIR, "scalping_data"),
-    '1hour': os.path.join(BASE_DIR, "intraday_swing_data"),
-    '5minute': os.path.join(BASE_DIR, "five_minute_data"),
-    'backup': os.path.join(BASE_DIR, "data_backup")
-}
-
+DATADIR = 'falah-ai-bot/swingdata'  # Change this to your actual path
 END_DATE = datetime(2025, 8, 31)
 START_DATE = END_DATE - timedelta(days=5*365)
 
-# Load all CSV files in the specified directory
-if not os.path.exists(DATA_DIR):
-    raise FileNotFoundError(f"Data directory not found: {DATA_DIR}")
+# Check if the data directory exists
+if not os.path.exists(DATADIR):  # Corrected variable name
+    raise FileNotFoundError(f"Data directory not found: {DATADIR}")
 
-all_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.csv')]
+# Load all CSV files in the specified directory
+all_files = [f for f in os.listdir(DATADIR) if f.endswith('.csv')]
 
 # Load data for each symbol
 def load_data_for_backtest(directory, symbol_file, start_date, end_date):

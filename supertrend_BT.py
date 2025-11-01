@@ -150,11 +150,11 @@ def load_data_for_backtest(directory, symbol_file, start_date, end_date):
     return df
 
 # Supertrend indicator
-def supertrend(df, period=10, multiplier=1.5):
+def supertrend(df, period=10, multiplier=3):
     df['tr'] = np.max((df['high'] - df['low'],
                       abs(df['high'] - df['close'].shift(1)),
                       abs(df['low'] - df['close'].shift(1))), axis=0)
-    df['atr'] = df['tr'].rolling(period).mean()
+    df['atr'] = df['tr'].ewm(span=period).mean()  # Use EMA for ATR
     hl2 = (df['high'] + df['low']) / 2
     df['upperband'] = hl2 + (multiplier * df['atr'])
     df['lowerband'] = hl2 - (multiplier * df['atr'])

@@ -13,7 +13,7 @@ START_DATE = END_DATE - timedelta(days=5*365)
 
 # Load all CSV files in the specified directory
 if not os.path.exists(DATADIR):
-    raise FileNotFoundError(f"Data directory not found: {DATADIR}")
+    raise FileNotFoundError(f"Data directory not found: {DATA_DIR}")
 
 all_files = [f for f in os.listdir(DATADIR) if f.endswith('.csv')]
 

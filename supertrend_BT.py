@@ -6,23 +6,23 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-# Configuration
-DATADIR = 'swing_data'  # Ensure this matches your improved_fetcher.py output directory
-DATATYPE = 'daily'     # Data should be fetched with TIMEFRAME='day' in improved_fetcher.py
-SYMBOLS = ['BHARTIARTL', 'SUNPHARMA', 'SHRIPISTON', 'REDTAPE', 'CONCOR', 'ACC']
+# Configuration: Update path to match your directory structure
+DATADIR = 'falah-ai-bot/swing_data'  # Change this to your actual path
 END_DATE = datetime(2025, 8, 31)
 START_DATE = END_DATE - timedelta(days=5*365)
 
+# Load all CSV files in the specified directory
+if not os.path.exists(DATADIR):
+    raise FileNotFoundError(f"Data directory not found: {DATADIR}")
+
+all_files = [f for f in os.listdir(DATADIR) if f.endswith('.csv')]
+
 # Load data for each symbol
-def load_symbol_data(symbol, datadir=DATADIR, datatype=DATATYPE):
-    filepath = os.path.join(datadir, f'{symbol}.csv')
-    if not os.path.exists(filepath):
-        print(f'Data file not found for {symbol}: {filepath}')
-        return None
+def load_data_for_backtest(directory, symbol_file, start_date, end_date):
+    filepath = os.path.join(directory, symbol_file)
     df = pd.read_csv(filepath)
-    df['date'] = pd.to_datetime(df['date'])  # Ensure correct date format
-    # Filter for 5 years up to August 2025
-    df = df[(df['date'] >= START_DATE) & (df['date'] <= END_DATE)]
+    df['date'] = pd.to_datetime(df['date'])
+    df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
     df = df.sort_values('date').reset_index(drop=True)
     return df
 
@@ -45,8 +45,8 @@ def supertrend(df, period=10, multiplier=1.5):
             df['supertrend'].iloc[i] = df['supertrend'].iloc[i-1]
     return df
 
-# Backtest strategy
-def backtest_strategy(df, period=10, multiplier=1.5):
+# Backtest strategy with trailing stop loss and pyramiding
+def backtest_strategy(df, symbol, period=10, multiplier=1.5):
     df = supertrend(df, period, multiplier)
     df['position'] = 0
     df['pyramid_count'] = 0
@@ -55,6 +55,7 @@ def backtest_strategy(df, period=10, multiplier=1.5):
     df['returns'] = np.nan
     df['cumulative_returns'] = 1
     df['profit'] = 0
+    df['symbol'] = symbol
     position = 0
     pyramid_count = 0
     trail_stop = np.nan
@@ -89,19 +90,19 @@ def backtest_strategy(df, period=10, multiplier=1.5):
 
     return df
 
-# Main backtest
-detailed_results = pd.DataFrame()
+# Backtest all symbols in folder
+combined_results = pd.DataFrame()
 summary_results = []
 
-for symbol in SYMBOLS:
-    df = load_symbol_data(symbol)
-    if df is None:
+for file in all_files:
+    symbol = file.split('.')[0]
+    df = load_data_for_backtest(DATADIR, file, START_DATE, END_DATE)
+    if df.empty:
         continue
-    result = backtest_strategy(df.copy(), period=10, multiplier=1.5)
-    result['symbol'] = symbol
-    detailed_results = pd.concat([detailed_results, result], ignore_index=True)
-    
-    # Summary statistics
+    result = backtest_strategy(df.copy(), symbol, period=10, multiplier=1.5)
+    combined_results = pd.concat([combined_results, result], ignore_index=True)
+
+    # Summary for each symbol
     total_profit = result['profit'].sum()
     wins = (result['profit'] > 0).sum()
     losses = (result['profit'] < 0).sum()
@@ -119,7 +120,7 @@ for symbol in SYMBOLS:
 
 # Save results
 summary_df = pd.DataFrame(summary_results)
-summary_df.to_csv('symbol_summary.csv', index=False)
-detailed_results.to_csv('symbol_backtest_detailed.csv', index=False)
+summary_df.to_csv('all_symbols_summary.csv', index=False)
+combined_results.to_csv('all_symbols_backtest_detailed.csv', index=False)
 
-print(summary_df)
+print("Backtest complete. Summary and detailed results saved.")

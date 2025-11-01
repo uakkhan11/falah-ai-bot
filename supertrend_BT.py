@@ -7,7 +7,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Configuration
-DATADIR = 'swingdata'  # Ensure this matches your improved_fetcher.py output directory
+DATADIR = 'swing_data'  # Ensure this matches your improved_fetcher.py output directory
 DATATYPE = 'daily'     # Data should be fetched with TIMEFRAME='day' in improved_fetcher.py
 SYMBOLS = ['BHARTIARTL', 'SUNPHARMA', 'SHRIPISTON', 'REDTAPE', 'CONCOR', 'ACC']
 END_DATE = datetime(2025, 8, 31)

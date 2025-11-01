@@ -10,7 +10,7 @@ warnings.filterwarnings('ignore')
 BASE_DIR = "/root/falah-ai-bot"
 TOKENS_FILE = os.path.join(BASE_DIR, "kite_tokens.json")  # Your existing token file
 
-DATA_DIRS = {
+DATA_DIR = {
     'daily': os.path.join(BASE_DIR, "swing_data"),
     '15minute': os.path.join(BASE_DIR, "scalping_data"),
     '1hour': os.path.join(BASE_DIR, "intraday_swing_data"),

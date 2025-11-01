@@ -1,23 +1,32 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import os
+from datetime import datetime, timedelta
 import warnings
 
 warnings.filterwarnings('ignore')
 
-# Simulate sample data for backtesting
-np.random.seed(42)
-rows = 500
-price = 100
-prices = [price]
-for i in range(1, rows):
-    price = price + np.random.normal(0.2, 1.5)
-    prices.append(price)
-df = pd.DataFrame({'close': prices})
-df['open'] = df['close'].shift(1) + np.random.uniform(-0.5, 0.5, len(df))
-df['high'] = np.maximum(df['open'], df['close']) + np.random.uniform(0, 0.5, len(df))
-df['low'] = np.minimum(df['open'], df['close']) - np.random.uniform(0, 0.5, len(df))
+# Configuration
+DATADIR = 'swingdata'  # Ensure this matches your improved_fetcher.py output directory
+DATATYPE = 'daily'     # Data should be fetched with TIMEFRAME='day' in improved_fetcher.py
+SYMBOLS = ['BHARTIARTL', 'SUNPHARMA', 'SHRIPISTON', 'REDTAPE', 'CONCOR', 'ACC']
+END_DATE = datetime(2025, 8, 31)
+START_DATE = END_DATE - timedelta(days=5*365)
 
+# Load data for each symbol
+def load_symbol_data(symbol, datadir=DATADIR, datatype=DATATYPE):
+    filepath = os.path.join(datadir, f'{symbol}.csv')
+    if not os.path.exists(filepath):
+        print(f'Data file not found for {symbol}: {filepath}')
+        return None
+    df = pd.read_csv(filepath)
+    df['date'] = pd.to_datetime(df['date'])  # Ensure correct date format
+    # Filter for 5 years up to August 2025
+    df = df[(df['date'] >= START_DATE) & (df['date'] <= END_DATE)]
+    df = df.sort_values('date').reset_index(drop=True)
+    return df
+
+# Supertrend indicator
 def supertrend(df, period=10, multiplier=1.5):
     df['tr'] = np.max((df['high'] - df['low'],
                       abs(df['high'] - df['close'].shift(1)),
@@ -36,6 +45,7 @@ def supertrend(df, period=10, multiplier=1.5):
             df['supertrend'].iloc[i] = df['supertrend'].iloc[i-1]
     return df
 
+# Backtest strategy
 def backtest_strategy(df, period=10, multiplier=1.5):
     df = supertrend(df, period, multiplier)
     df['position'] = 0
@@ -51,7 +61,6 @@ def backtest_strategy(df, period=10, multiplier=1.5):
     entry_price = np.nan
 
     for i in range(1, len(df)):
-        # Entry: Supertrend turns green
         if df['supertrend'].iloc[i] and not df['supertrend'].iloc[i-1] and position == 0:
             position = 1
             df.at[i, 'position'] = 1
@@ -60,13 +69,9 @@ def backtest_strategy(df, period=10, multiplier=1.5):
             trail_stop = df['lowerband'].iloc[i]
             df.at[i, 'stop_loss'] = trail_stop
             df.at[i, 'profit'] = 0
-
-        # Pyramiding: Count consecutive up closes
         elif position == 1 and df['close'].iloc[i] > df['close'].iloc[i-1]:
             pyramid_count += 1
             df.at[i, 'pyramid_count'] = pyramid_count
-
-        # Exit: Supertrend turns red or trailing stop hit
         if position == 1:
             if not df['supertrend'].iloc[i] or df['close'].iloc[i] <= trail_stop:
                 df.at[i, 'position'] = 0
@@ -84,26 +89,37 @@ def backtest_strategy(df, period=10, multiplier=1.5):
 
     return df
 
-# Run backtest
-result = backtest_strategy(df.copy(), period=10, multiplier=1.5)
+# Main backtest
+detailed_results = pd.DataFrame()
+summary_results = []
 
-# Calculate summary statistics
-summary = {
-    "Total Trades": result['profit'].replace(0, np.nan).dropna().count(),
-    "Total Profit": result['profit'].sum(),
-    "Winning Trades": (result['profit'] > 0).sum(),
-    "Losing Trades": (result['profit'] < 0).sum(),
-    "Win Rate": f"{(result['profit'] > 0).sum() / result['profit'].replace(0, np.nan).dropna().count() * 100:.2f}%" if result['profit'].replace(0, np.nan).dropna().count() > 0 else "0%",
-    "Max Profit per Trade": result['profit'].max(),
-    "Max Loss per Trade": result['profit'].min(),
-    "Average Profit per Trade": result['profit'].mean(),
-    "Cumulative Return": f"{result['cumulative_returns'].iloc[-1]:.2f}"
-}
+for symbol in SYMBOLS:
+    df = load_symbol_data(symbol)
+    if df is None:
+        continue
+    result = backtest_strategy(df.copy(), period=10, multiplier=1.5)
+    result['symbol'] = symbol
+    detailed_results = pd.concat([detailed_results, result], ignore_index=True)
+    
+    # Summary statistics
+    total_profit = result['profit'].sum()
+    wins = (result['profit'] > 0).sum()
+    losses = (result['profit'] < 0).sum()
+    trade_count = result['profit'].replace(0, np.nan).dropna().count()
+    win_rate = 0 if trade_count == 0 else (wins / trade_count) * 100
+    summary_results.append({
+        "Symbol": symbol,
+        "Total Trades": trade_count,
+        "Total Profit": total_profit,
+        "Winning Trades": wins,
+        "Losing Trades": losses,
+        "Win Rate": f"{win_rate:.2f}%",
+        "Cumulative Return": f"{result['cumulative_returns'].iloc[-1] if not result.empty else 1:.2f}"
+    })
 
-# Export results
-summary_df = pd.DataFrame([summary])
-summary_df.to_csv('backtest_summary.csv', index=False)
-result.to_csv('backtest_detailed.csv', index=False)
+# Save results
+summary_df = pd.DataFrame(summary_results)
+summary_df.to_csv('symbol_summary.csv', index=False)
+detailed_results.to_csv('symbol_backtest_detailed.csv', index=False)
 
-# Display summary
 print(summary_df)

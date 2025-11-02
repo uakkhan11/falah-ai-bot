@@ -1,3 +1,5 @@
+import pandas as pd
+
 symbol = 'BHARTIARTL'  # Replace with your symbol
 df = pd.read_csv(f'swingdata/{symbol}.csv')
 df = supertrend(df, period=10, multiplier=3)

@@ -45,21 +45,27 @@ def load_data_for_backtest(directory, symbol_file, start_date, end_date):
 
 # Supertrend indicator
 def supertrend(df, period=10, multiplier=3):
+    # True Range
     df['tr'] = np.max((df['high'] - df['low'],
                       abs(df['high'] - df['close'].shift(1)),
                       abs(df['low'] - df['close'].shift(1))), axis=0)
+    # Use EMA for ATR (matches TradingView)
     df['atr'] = df['tr'].ewm(span=period).mean()
+    # Basis
     hl2 = (df['high'] + df['low']) / 2
+    # Bands
     df['upperband'] = hl2 + (multiplier * df['atr'])
     df['lowerband'] = hl2 - (multiplier * df['atr'])
-    df['supertrend'] = 1  # Initialize as bullish
+    # Initialize SuperTrend
+    df['supertrend'] = 1
+    # Calculate SuperTrend for each bar
     for i in range(1, len(df)):
-        if df['close'].iloc[i] > df['upperband'].iloc[i-1]:
-            df['supertrend'].iloc[i] = 1  # Bullish
-        elif df['close'].iloc[i] < df['lowerband'].iloc[i-1]:
-            df['supertrend'].iloc[i] = -1  # Bearish
+        if df.loc[i, 'close'] > df.loc[i-1, 'upperband']:
+            df.loc[i, 'supertrend'] = 1  # Bullish
+        elif df.loc[i, 'close'] < df.loc[i-1, 'lowerband']:
+            df.loc[i, 'supertrend'] = -1  # Bearish
         else:
-            df['supertrend'].iloc[i] = df['supertrend'].iloc[i-1]
+            df.loc[i, 'supertrend'] = df.loc[i-1, 'supertrend']
     return df
 
 # Backtest strategy with reason tracking
